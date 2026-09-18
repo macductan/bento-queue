@@ -1,0 +1,11 @@
+[workflow]
+persistent_facts = [
+
+  "Do NOT automatically commit code at the end of the workflow. Leave the changes uncommitted and HALT.",
+  "CRITICAL MANDATORY STEP: You MUST execute the sprint_plan.py command (detailed in the on_complete section) to update the sprint status file IMMEDIATELY BEFORE you HALT. Do not end the workflow without running this command."
+]
+on_complete = """
+You must update the sprint status file if the story's final status is valid for the board (`backlog`, `ready-for-dev`, `in-progress`, `review`, or `done`). Replace `<story-id>`, `<epic-id>`, and `<current-status>` with the actual keys and the spec's current status:
+uv run "{project-root}/.agent/skills/bmad-sprint-planning/scripts/sprint_plan.py" generate --epic-file "{project-root}/_bmad-output/planning-artifacts/epics.md" --status-file "{project-root}/_bmad-output/implementation-artifacts/sprint-status.yaml" --stories-dir "{project-root}/_bmad-output/implementation-artifacts" --project "hecto-api" --date "$(date +'%Y-%m-%d %H:%M')" --set "<story-id>=<current-status>" --set "<epic-id>=in-progress"
+If the status is something else (like `blocked`), do not run the command.
+"""

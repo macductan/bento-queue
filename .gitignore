@@ -1,0 +1,47 @@
+# Skill directories (gitignored per policy)
+.agent/skills
+.agents/skills
+.claude/skills
+.kiro/skills
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Wails build output
+projects/build/bin
+
+# Frontend
+projects/frontend/dist
+projects/frontend/wailsjs/
+projects/frontend/package.json.md5
+node_modules
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files from atomic writes
+.tmp-*
+
+# BMad render cache
+_bmad/render/
+projects/frontend/package-lock.json
+
+# OS Packages
+*.deb
+*.AppImage
+projects/build/hecto-api_*
+projects/build/*.deb
+

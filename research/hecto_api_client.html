@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>hecto-api | Minimal HTTP Client</title>
+    
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        // Custom slate palette based on user request
+                        slate: {
+                            750: '#293548', // Custom middle ground
+                            850: '#151e2e',
+                            900: '#0f172a',
+                            950: '#020617',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Scrollbar for Dark Mode */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569; 
+        }
+        
+        /* Syntax highlighting overrides for v-html */
+        .json-key { color: #93c5fd; } /* blue-300 */
+        .json-string { color: #86efac; } /* green-300 */
+        .json-number { color: #fdba74; } /* orange-300 */
+        .json-boolean { color: #c084fc; } /* purple-400 */
+        .json-null { color: #f87171; } /* red-400 */
+
+        /* Prevent text selection on UI elements */
+        .no-select {
+            user-select: none;
+            -webkit-user-select: none;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-300 font-sans h-screen w-screen overflow-hidden flex flex-col antialiased selection:bg-blue-500/30">
+    <div id="app" class="h-full flex flex-col">
+
+        <header class="h-12 border-b border-slate-800 bg-slate-900 flex items-center justify-between px-3 flex-shrink-0">
+            <!-- Logo & Title -->
+            <div class="flex items-center gap-3">
+                <div class="flex items-center justify-center w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold text-lg shadow-sm">
+                    h
+                </div>
+                <div class="flex flex-col justify-center">
+                    <span class="font-semibold text-slate-200 leading-tight">hecto-api</span>
+                    <span class="text-[10px] text-slate-500 font-mono tracking-wider">v1.0 - offline</span>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="flex items-center gap-2">
+                <button class="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md transition-colors border border-slate-700/50 flex items-center gap-1.5">
+                    <i class="ph ph-plus font-bold"></i> Request mới
+                </button>
+                <button class="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-md transition-colors border border-slate-700/50 flex items-center gap-1.5">
+                    <i class="ph ph-folder-plus font-bold"></i> Thư mục
+                </button>
+                <div class="w-px h-4 bg-slate-700 mx-1"></div>
+                <button class="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors flex items-center gap-1.5">
+                    <i class="ph ph-download-simple"></i> Import Postman
+                </button>
+            </div>
+
+            <!-- Environment Selector -->
+            <div class="flex items-center gap-2">
+                <div class="relative flex items-center bg-slate-800 rounded-md border border-slate-700/50 h-8">
+                    <select v-model="currentEnv" class="appearance-none bg-transparent text-xs font-medium text-slate-300 pl-3 pr-8 outline-none cursor-pointer h-full">
+                        <option value="none">Không dùng env</option>
+                        <option value="dev">Dev Local</option>
+                        <option value="staging">Staging</option>
+                    </select>
+                    <i class="ph ph-caret-down absolute right-2.5 text-slate-500 pointer-events-none"></i>
+                </div>
+                <button @click="isEnvModalOpen = true" class="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors" title="Quản lý môi trường">
+                    <i class="ph ph-gear text-lg"></i>
+                </button>
+            </div>
+        </header>
+
+        <main class="flex-1 flex overflow-hidden">
+            
+            <aside class="w-[260px] border-r border-slate-800 bg-slate-900 flex flex-col flex-shrink-0">
+                <div class="p-3 border-b border-slate-800/50 flex items-center justify-between group">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="ph ph-books text-sm"></i> Default Collection
+                    </span>
+                    <button class="text-slate-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                        <i class="ph ph-dots-three text-lg"></i>
+                    </button>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto py-2">
+                    <!-- Tree Folder Render -->
+                    <div v-for="folder in collections" :key="folder.id" class="mb-1">
+                        <!-- Folder Header -->
+                        <div @click="folder.isOpen = !folder.isOpen" class="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-slate-800/50 text-sm no-select group">
+                            <i :class="['ph text-slate-500 transition-transform', folder.isOpen ? 'ph-caret-down' : 'ph-caret-right']"></i>
+                            <i class="ph ph-folder-notch text-slate-400 text-lg"></i>
+                            <span class="font-medium text-slate-300 group-hover:text-slate-100 truncate flex-1">{{ folder.name }}</span>
+                        </div>
+                        
+                        <!-- Folder Contents (Requests) -->
+                        <div v-show="folder.isOpen" class="pl-7 mt-0.5 space-y-0.5">
+                            <div v-for="req in folder.requests" :key="req.id" 
+                                 @click="selectRequest(req)"
+                                 :class="['flex items-center justify-between pr-2 py-1.5 cursor-pointer rounded-l-sm border-l-2 text-sm group', 
+                                          activeRequest?.id === req.id ? 'bg-slate-800 border-blue-500 text-white' : 'border-transparent hover:bg-slate-800/50 text-slate-400 hover:text-slate-200']">
+                                <div class="flex items-center gap-2 overflow-hidden">
+                                    <span :class="['font-mono text-[10px] font-bold w-12 text-right', getMethodColor(req.method)]">{{ req.method }}</span>
+                                    <span class="truncate">{{ req.name }}</span>
+                                </div>
+                                <button class="text-slate-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <i class="ph ph-dots-three"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="flex-1 flex flex-col min-w-0 border-r border-slate-800 bg-slate-900/80">
+                <template v-if="activeRequest">
+                    <!-- Request Header Area -->
+                    <div class="p-4 pb-2 flex-shrink-0">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center gap-2 group cursor-text">
+                                <h2 class="text-lg font-semibold text-slate-100 border-b border-transparent group-hover:border-slate-500">{{ activeRequest.name }}</h2>
+                                <i class="ph ph-pencil-simple text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity text-sm"></i>
+                                <span v-if="hasUnsavedChanges" class="w-2 h-2 rounded-full bg-amber-500" title="Chưa lưu"></span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button class="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition-colors" title="Lưu (Ctrl+S)">
+                                    <i class="ph ph-floppy-disk text-lg"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- URL Bar -->
+                        <div class="flex items-stretch shadow-sm rounded-md overflow-hidden bg-slate-950 border border-slate-700/60 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50 transition-all">
+                            <!-- Method Dropdown -->
+                            <div class="relative bg-slate-800/80 border-r border-slate-700/60 flex items-center hover:bg-slate-700/80 transition-colors">
+                                <select v-model="activeRequest.method" :class="['appearance-none bg-transparent font-mono text-sm font-bold pl-3 pr-7 py-2.5 outline-none cursor-pointer h-full', getMethodColor(activeRequest.method)]">
+                                    <option value="GET" class="text-slate-900">GET</option>
+                                    <option value="POST" class="text-slate-900">POST</option>
+                                    <option value="PUT" class="text-slate-900">PUT</option>
+                                    <option value="PATCH" class="text-slate-900">PATCH</option>
+                                    <option value="DELETE" class="text-slate-900">DELETE</option>
+                                </select>
+                                <i class="ph ph-caret-down absolute right-2 text-slate-400 pointer-events-none text-xs"></i>
+                            </div>
+                            <!-- URL Input -->
+                            <div class="flex-1 flex items-center relative">
+                                <input v-model="activeRequest.url" type="text" class="w-full h-full bg-transparent border-none text-slate-200 font-mono text-sm px-3 py-2.5 outline-none placeholder-slate-600" placeholder="https://api.example.com/v1/...">
+                                <!-- Mock Syntax Highlighting for {{variable}} (Visual trick for prototype) -->
+                                <div class="absolute inset-0 pointer-events-none px-3 py-2.5 font-mono text-sm flex items-center overflow-hidden whitespace-nowrap opacity-0 focus-within:opacity-0" aria-hidden="true">
+                                    <!-- This is just illustrative in a real app, implementing a full rich text editor for a single line is complex. 
+                                         We stick to standard input for functional mockup. -->
+                                </div>
+                            </div>
+                            <!-- Send Button -->
+                            <button @click="sendRequest" class="bg-blue-600 hover:bg-blue-500 text-white font-medium px-6 py-2.5 flex items-center gap-2 transition-colors focus:outline-none">
+                                Gửi <i class="ph ph-paper-plane-right"></i>
+                            </button>
+                        </div>
+
+                        <!-- Warning Banner -->
+                        <div v-if="activeRequest.method === 'GET' && activeBodyType !== 'none'" class="mt-3 flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-400/90 text-xs px-3 py-2 rounded-md">
+                            <i class="ph ph-warning text-base mt-0.5"></i>
+                            <p><strong>Cảnh báo:</strong> Request GET không nên đi kèm Body. Một số server có thể bỏ qua hoặc từ chối request này.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex-1 flex flex-col min-h-0 border-t border-slate-800/50 mt-2">
+                        <!-- Tab Headers -->
+                        <div class="flex items-center px-4 gap-6 border-b border-slate-800/80 bg-slate-900/50 pt-2 no-select">
+                            <button v-for="tab in reqTabs" :key="tab.id"
+                                    @click="activeReqTab = tab.id"
+                                    :class="['pb-2 text-sm font-medium border-b-2 transition-colors relative', 
+                                             activeReqTab === tab.id ? 'border-blue-500 text-blue-400' : 'border-transparent text-slate-400 hover:text-slate-200']">
+                                {{ tab.name }}
+                                <!-- Badge for count -->
+                                <span v-if="tab.count" class="ml-1.5 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full">{{ tab.count }}</span>
+                            </button>
+                        </div>
+
+                        <!-- Tab Content -->
+                        <div class="flex-1 overflow-y-auto p-4 custom-scrollbar bg-slate-900/30">
+                            
+                            <!-- Params & Headers Table View (Shared layout concept) -->
+                            <div v-show="activeReqTab === 'params' || activeReqTab === 'headers'" class="space-y-2">
+                                <div class="grid grid-cols-[auto_1fr_1fr_auto] gap-2 mb-2 px-2 text-xs font-semibold text-slate-500">
+                                    <div class="w-6"></div>
+                                    <div>KEY</div>
+                                    <div>VALUE</div>
+                                    <div class="w-8"></div>
+                                </div>
+                                
+                                <div v-for="(item, index) in getActiveKVPData" :key="index" class="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-center group">
+                                    <div class="w-6 flex justify-center">
+                                        <input type="checkbox" v-model="item.active" class="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900 cursor-pointer accent-blue-500">
+                                    </div>
+                                    <div>
+                                        <input type="text" v-model="item.key" placeholder="Key" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-sm font-mono text-slate-300 placeholder-slate-600 focus:border-blue-500/50 outline-none transition-colors">
+                                    </div>
+                                    <div>
+                                        <input type="text" v-model="item.value" placeholder="Value" class="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-sm font-mono text-slate-300 placeholder-slate-600 focus:border-blue-500/50 outline-none transition-colors">
+                                    </div>
+                                    <div class="w-8 flex justify-center">
+                                        <button @click="removeKVPItem(index)" class="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-1">
+                                            <i class="ph ph-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- Add New Row Button -->
+                                <button @click="addKVPItem" class="mt-3 ml-8 text-xs font-medium text-slate-400 hover:text-blue-400 flex items-center gap-1 transition-colors">
+                                    <i class="ph ph-plus"></i> Thêm mới
+                                </button>
+                            </div>
+
+                            <!-- Body Tab -->
+                            <div v-show="activeReqTab === 'body'" class="h-full flex flex-col">
+                                <!-- Body Type Selector -->
+                                <div class="flex items-center gap-2 mb-3 no-select">
+                                    <label class="flex items-center gap-1.5 cursor-pointer">
+                                        <input type="radio" v-model="activeBodyType" value="none" class="hidden peer">
+                                        <span class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-400 peer-checked:bg-slate-800 peer-checked:text-slate-100 peer-checked:border-slate-600 transition-all">None</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer">
+                                        <input type="radio" v-model="activeBodyType" value="json" class="hidden peer">
+                                        <span class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-400 peer-checked:bg-slate-800 peer-checked:text-slate-100 peer-checked:border-slate-600 transition-all">JSON</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer">
+                                        <input type="radio" v-model="activeBodyType" value="text" class="hidden peer">
+                                        <span class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-400 peer-checked:bg-slate-800 peer-checked:text-slate-100 peer-checked:border-slate-600 transition-all">Text</span>
+                                    </label>
+                                </div>
+
+                                <!-- Body Editor Area -->
+                                <div v-if="activeBodyType !== 'none'" class="flex-1 relative border border-slate-800 rounded bg-[#0d1117] overflow-hidden focus-within:border-slate-600 transition-colors">
+                                    <!-- Fake Line Numbers -->
+                                    <div class="absolute left-0 top-0 bottom-0 w-10 bg-slate-900/80 border-r border-slate-800 text-right pr-2 py-3 select-none text-slate-600 font-mono text-[13px] leading-relaxed">
+                                        1<br>2<br>3<br>4<br>5
+                                    </div>
+                                    <!-- Textarea representing Code Editor -->
+                                    <textarea v-model="requestBody" class="w-full h-full bg-transparent text-slate-300 font-mono text-[13px] leading-relaxed pl-12 pr-4 py-3 outline-none resize-none custom-scrollbar" spellcheck="false"></textarea>
+                                </div>
+                                <div v-else class="flex-1 flex items-center justify-center text-slate-500 text-sm">
+                                    Request này không có body.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                
+                <!-- Empty State -->
+                <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-500">
+                    <i class="ph ph-paper-plane-tilt text-6xl mb-4 opacity-20"></i>
+                    <p class="text-lg font-medium text-slate-400">Chọn một Request để bắt đầu</p>
+                    <p class="text-sm mt-2">Hoặc tạo request mới bằng phím tắt <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-xs">Ctrl+N</kbd></p>
+                </div>
+            </section>
+
+            <section class="flex-1 flex flex-col min-w-0 bg-[#0f1523]">
+                <template v-if="hasResponse">
+                    <!-- Response Meta Bar -->
+                    <div class="h-[52px] px-4 border-b border-slate-800/80 bg-slate-900/50 flex items-center gap-4 flex-shrink-0 text-sm font-mono mt-4">
+                        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                            <div class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+                            <span class="font-bold">200 OK</span>
+                        </div>
+                        <div class="flex items-center gap-1.5 text-slate-400">
+                            <i class="ph ph-clock text-slate-500"></i>
+                            <span class="font-medium text-slate-300">45 ms</span>
+                        </div>
+                        <div class="flex items-center gap-1.5 text-slate-400">
+                            <i class="ph ph-hard-drives text-slate-500"></i>
+                            <span class="font-medium text-slate-300">1.2 KB</span>
+                        </div>
+                        <div class="ml-auto text-xs text-slate-500 font-sans">
+                            Hôm nay, 14:32:05
+                        </div>
+                    </div>
+
+                    <!-- Response Tabs -->
+                    <div class="flex items-center px-4 gap-6 border-b border-slate-800/80 bg-slate-900/30 pt-2 no-select flex-shrink-0">
+                        <button @click="activeResTab = 'body'" :class="['pb-2 text-sm font-medium border-b-2 transition-colors relative', activeResTab === 'body' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-400 hover:text-slate-200']">
+                            Body
+                        </button>
+                        <button @click="activeResTab = 'headers'" :class="['pb-2 text-sm font-medium border-b-2 transition-colors relative', activeResTab === 'headers' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-400 hover:text-slate-200']">
+                            Headers <span class="ml-1 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full">8</span>
+                        </button>
+                    </div>
+
+                    <!-- Response Content -->
+                    <div class="flex-1 overflow-hidden flex flex-col bg-[#0b0f19]">
+                        
+                        <!-- Body Tab -->
+                        <div v-show="activeResTab === 'body'" class="flex-1 flex flex-col min-h-0">
+                            <!-- Body View Actions -->
+                            <div class="flex items-center justify-between p-2 pl-4 border-b border-slate-800/40 bg-slate-900/40 no-select">
+                                <div class="flex bg-slate-950 rounded border border-slate-800 overflow-hidden">
+                                    <button class="px-3 py-1 text-xs font-medium bg-slate-800 text-white">Pretty</button>
+                                    <button class="px-3 py-1 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50">Raw</button>
+                                </div>
+                                <button class="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors">
+                                    <i class="ph ph-copy"></i> Sao chép
+                                </button>
+                            </div>
+                            
+                            <!-- JSON Viewer Fake Editor -->
+                            <div class="flex-1 relative overflow-auto custom-scrollbar">
+                                <div class="absolute left-0 top-0 bottom-0 w-12 bg-[#090d15] border-r border-slate-800/50 text-right pr-3 pt-4 pb-4 select-none text-slate-600 font-mono text-[13px] leading-[1.6]">
+                                    1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9
+                                </div>
+                                <pre class="pl-16 pr-4 py-4 font-mono text-[13px] leading-[1.6] text-slate-300 m-0"><code v-html="highlightedResponse"></code></pre>
+                            </div>
+                        </div>
+
+                        <!-- Headers Tab -->
+                        <div v-show="activeResTab === 'headers'" class="flex-1 overflow-auto custom-scrollbar p-4">
+                            <table class="w-full text-left text-sm font-mono">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-500">
+                                        <th class="pb-2 font-medium w-1/3">Key</th>
+                                        <th class="pb-2 font-medium">Value</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(val, key) in resHeaders" :key="key" class="border-b border-slate-800/50 hover:bg-slate-800/20 group">
+                                        <td class="py-2 pr-4 text-slate-300 group-hover:text-blue-300 transition-colors">{{ key }}</td>
+                                        <td class="py-2 text-slate-400 break-all">{{ val }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+                
+                <!-- Empty Response State -->
+                <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-600 bg-slate-900/30">
+                    <i class="ph ph-terminal-window text-5xl mb-4 opacity-30"></i>
+                    <p class="text-sm font-medium">Nhấn Gửi để xem kết quả phản hồi</p>
+                </div>
+            </section>
+        </main>
+
+        <div v-if="isEnvModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div class="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-[800px] h-[500px] flex flex-col overflow-hidden animate-[fadeIn_0.2s_ease-out]">
+                <!-- Modal Header -->
+                <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-800/50">
+                    <h3 class="text-base font-semibold text-white flex items-center gap-2">
+                        <i class="ph ph-gear-six"></i> Quản lý Môi trường
+                    </h3>
+                    <button @click="isEnvModalOpen = false" class="text-slate-400 hover:text-white p-1 rounded-md hover:bg-slate-700 transition-colors">
+                        <i class="ph ph-x text-lg"></i>
+                    </button>
+                </div>
+                
+                <!-- Modal Body (Split view) -->
+                <div class="flex-1 flex overflow-hidden">
+                    <!-- Env List -->
+                    <div class="w-[220px] border-r border-slate-800 bg-slate-900/50 flex flex-col">
+                        <div class="p-2 border-b border-slate-800 flex justify-between items-center">
+                            <span class="text-xs font-semibold text-slate-400 uppercase">Môi trường</span>
+                            <button class="text-slate-400 hover:text-white"><i class="ph ph-plus"></i></button>
+                        </div>
+                        <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                            <div class="px-3 py-2 text-sm font-medium rounded-md cursor-pointer bg-slate-800 text-white flex justify-between items-center group">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-blue-500"></div>
+                                    Dev Local
+                                </div>
+                                <i class="ph ph-check-circle text-blue-400"></i>
+                            </div>
+                            <div class="px-3 py-2 text-sm font-medium rounded-md cursor-pointer text-slate-400 hover:bg-slate-800/50 hover:text-slate-200 flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-slate-600"></div>
+                                    Staging
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Env Variables -->
+                    <div class="flex-1 flex flex-col bg-slate-900">
+                        <div class="p-4 border-b border-slate-800">
+                            <h4 class="text-lg font-medium text-white mb-1">Dev Local</h4>
+                            <p class="text-xs text-slate-500">Các biến được ưu tiên sử dụng trong môi trường này.</p>
+                        </div>
+                        <div class="flex-1 p-4 overflow-y-auto custom-scrollbar">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-xs font-semibold text-slate-500 uppercase border-b border-slate-800">
+                                        <th class="text-left pb-2 w-1/3">Biến (Variable)</th>
+                                        <th class="text-left pb-2">Giá trị (Value)</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody class="font-mono">
+                                    <tr class="border-b border-slate-800/50 group">
+                                        <td class="py-2 pr-2">
+                                            <input type="text" value="base_url" class="w-full bg-transparent text-blue-300 focus:outline-none focus:border-b focus:border-blue-500">
+                                        </td>
+                                        <td class="py-2">
+                                            <input type="text" value="http://localhost:3000" class="w-full bg-transparent text-slate-300 focus:outline-none focus:border-b focus:border-blue-500">
+                                        </td>
+                                        <td class="py-2 text-right">
+                                            <button class="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100"><i class="ph ph-trash"></i></button>
+                                        </td>
+                                    </tr>
+                                    <tr class="border-b border-slate-800/50 group">
+                                        <td class="py-2 pr-2">
+                                            <input type="text" value="api_token" class="w-full bg-transparent text-blue-300 focus:outline-none focus:border-b focus:border-blue-500">
+                                        </td>
+                                        <td class="py-2">
+                                            <input type="text" value="ey..." class="w-full bg-transparent text-slate-300 focus:outline-none focus:border-b focus:border-blue-500">
+                                        </td>
+                                        <td class="py-2 text-right">
+                                            <button class="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100"><i class="ph ph-trash"></i></button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <button class="mt-4 text-xs font-medium text-slate-400 hover:text-blue-400 flex items-center gap-1 transition-colors">
+                                <i class="ph ph-plus"></i> Thêm biến
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                // State
+                const currentEnv = ref('dev');
+                const isEnvModalOpen = ref(false);
+                const hasUnsavedChanges = ref(true); // Mock state
+                
+                // Active Tabs
+                const activeReqTab = ref('params');
+                const activeResTab = ref('body');
+                const activeBodyType = ref('json');
+                
+                // Simulate Response State
+                const hasResponse = ref(false);
+
+                // Mock Data: Collections & Tree
+                const collections = reactive([
+                    {
+                        id: 'c1',
+                        name: 'Xác thực (Auth)',
+                        isOpen: true,
+                        requests: [
+                            { id: 'r1', name: 'Đăng nhập', method: 'POST', url: '{{base_url}}/api/v1/auth/login' },
+                            { id: 'r2', name: 'Lấy thông tin User', method: 'GET', url: '{{base_url}}/api/v1/users/me' }
+                        ]
+                    },
+                    {
+                        id: 'c2',
+                        name: 'Sản phẩm (Products)',
+                        isOpen: true,
+                        requests: [
+                            { id: 'r3', name: 'Danh sách sản phẩm', method: 'GET', url: '{{base_url}}/api/v1/products?limit=10' },
+                            { id: 'r4', name: 'Tạo sản phẩm mới', method: 'POST', url: '{{base_url}}/api/v1/products' },
+                            { id: 'r5', name: 'Cập nhật giá', method: 'PATCH', url: '{{base_url}}/api/v1/products/102' },
+                            { id: 'r6', name: 'Xóa sản phẩm', method: 'DELETE', url: '{{base_url}}/api/v1/products/102' }
+                        ]
+                    }
+                ]);
+
+                // Current Active Request
+                const activeRequest = ref(null);
+                
+                // Form Data (Mocking binding to active request)
+                const requestParams = reactive([
+                    { key: 'limit', value: '10', active: true },
+                    { key: 'page', value: '1', active: true },
+                    { key: '', value: '', active: false }
+                ]);
+                
+                const requestHeaders = reactive([
+                    { key: 'Content-Type', value: 'application/json', active: true },
+                    { key: 'Authorization', value: 'Bearer {{api_token}}', active: true },
+                    { key: '', value: '', active: false }
+                ]);
+
+                const requestBody = ref('{\n  "username": "admin",\n  "password": "password123"\n}');
+
+                // Response Data (Mock)
+                const resHeaders = reactive({
+                    'server': 'nginx/1.18.0',
+                    'content-type': 'application/json; charset=utf-8',
+                    'x-ratelimit-remaining': '99',
+                    'content-length': '124',
+                    'date': 'Wed, 21 Oct 2026 07:28:00 GMT'
+                });
+
+                const rawJsonResponse = `{\n  "status": "success",\n  "data": {\n    "user_id": 1042,\n    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",\n    "is_active": true\n  },\n  "message": "Đăng nhập thành công"\n}`;
+
+                // Computed
+                const reqTabs = computed(() => [
+                    { id: 'params', name: 'Params', count: requestParams.filter(p => p.key).length },
+                    { id: 'headers', name: 'Headers', count: requestHeaders.filter(h => h.key).length },
+                    { id: 'body', name: 'Body' }
+                ]);
+
+                const getActiveKVPData = computed(() => {
+                    return activeReqTab.value === 'params' ? requestParams : requestHeaders;
+                });
+
+                // Simple JSON Syntax Highlighter for Output
+                const highlightedResponse = computed(() => {
+                    if (!rawJsonResponse) return '';
+                    let html = rawJsonResponse
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') // Escape HTML
+                        .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                            let cls = 'json-number';
+                            if (/^"/.test(match)) {
+                                if (/:$/.test(match)) {
+                                    cls = 'json-key';
+                                } else {
+                                    cls = 'json-string';
+                                }
+                            } else if (/true|false/.test(match)) {
+                                cls = 'json-boolean';
+                            } else if (/null/.test(match)) {
+                                cls = 'json-null';
+                            }
+                            return '<span class="' + cls + '">' + match + '</span>';
+                        });
+                    return html;
+                });
+
+                // Methods
+                const getMethodColor = (method) => {
+                    const colors = {
+                        'GET': 'text-emerald-500',
+                        'POST': 'text-blue-500',
+                        'PUT': 'text-orange-500',
+                        'PATCH': 'text-amber-500',
+                        'DELETE': 'text-red-500'
+                    };
+                    return colors[method] || 'text-slate-400';
+                };
+
+                const selectRequest = (req) => {
+                    activeRequest.value = { ...req };
+                    hasResponse.value = false; // Reset response view
+                    // Mock adapting body based on method
+                    if(req.method === 'GET') {
+                        activeBodyType.value = 'none';
+                    } else if (req.method === 'POST') {
+                        activeBodyType.value = 'json';
+                    }
+                };
+
+                const sendRequest = () => {
+                    // Simulate network delay
+                    setTimeout(() => {
+                        hasResponse.value = true;
+                    }, 400);
+                };
+
+                const addKVPItem = () => {
+                    const target = activeReqTab.value === 'params' ? requestParams : requestHeaders;
+                    target.push({ key: '', value: '', active: true });
+                };
+
+                const removeKVPItem = (index) => {
+                    const target = activeReqTab.value === 'params' ? requestParams : requestHeaders;
+                    target.splice(index, 1);
+                    if (target.length === 0) addKVPItem(); // Keep at least one row
+                };
+
+                // Initialize
+                onMounted(() => {
+                    // Select first request by default
+                    selectRequest(collections[0].requests[0]);
+                });
+
+                return {
+                    currentEnv, isEnvModalOpen, hasUnsavedChanges,
+                    activeReqTab, activeResTab, activeBodyType, hasResponse,
+                    collections, activeRequest, reqTabs,
+                    requestParams, requestHeaders, requestBody, getActiveKVPData,
+                    resHeaders, highlightedResponse,
+                    getMethodColor, selectRequest, sendRequest, addKVPItem, removeKVPItem
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

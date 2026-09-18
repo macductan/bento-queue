@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hành trình Brainstorm: Mascot Rùa Sấm Sét</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --text: #f8fafc;
+            --accent: #fbbf24;
+            --accent-glow: rgba(251, 191, 36, 0.4);
+            --turtle: #10b981;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 3rem;
+            margin-bottom: 10px;
+            color: var(--accent);
+            text-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .subtitle {
+            text-align: center;
+            font-size: 1.2rem;
+            color: #94a3b8;
+            margin-bottom: 60px;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 30px;
+            border-left: 2px dashed #334155;
+        }
+
+        .node {
+            position: relative;
+            margin-bottom: 50px;
+            background: var(--surface);
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease;
+        }
+
+        .node:hover {
+            transform: translateY(-5px);
+        }
+
+        .node::before {
+            content: '';
+            position: absolute;
+            left: -41px;
+            top: 30px;
+            width: 20px;
+            height: 20px;
+            background: var(--accent);
+            border-radius: 50%;
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        .technique {
+            display: inline-block;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: rgba(255,255,255,0.1);
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            color: #cbd5e1;
+        }
+
+        .idea {
+            font-size: 1.2rem;
+            font-weight: 500;
+        }
+
+        .climax {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 2px solid var(--accent);
+            text-align: center;
+            padding: 40px 20px;
+            border-radius: 20px;
+            margin-top: 80px;
+            box-shadow: 0 0 40px var(--accent-glow);
+        }
+
+        .climax::before {
+            display: none;
+        }
+
+        .climax h2 {
+            color: var(--accent);
+            font-size: 2.5rem;
+            margin-top: 0;
+        }
+
+        .lightning {
+            font-size: 4rem;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { text-shadow: 0 0 20px var(--accent-glow); transform: scale(1); }
+            50% { text-shadow: 0 0 40px var(--accent); transform: scale(1.1); }
+            100% { text-shadow: 0 0 20px var(--accent-glow); transform: scale(1); }
+        }
+
+        .mascot-icon {
+            display: inline-block;
+            font-size: 5rem;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .mascot-icon .turtle {
+            color: var(--turtle);
+        }
+        
+        .mascot-icon .bolt {
+            position: absolute;
+            color: var(--accent);
+            font-size: 3rem;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-shadow: 0 0 15px rgba(0,0,0,0.8);
+        }
+
+        .tags {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tag {
+            background: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Khởi Nguồn Ý Tưởng</h1>
+        <div class="subtitle">Hành trình đi tìm bản thể cho Hecto-API Mascot</div>
+
+        <div class="timeline">
+            <div class="node">
+                <div class="technique">SCAMPER: Substitute</div>
+                <div class="idea">Khởi đầu bằng khao khát về <strong>Tốc độ</strong> chớp nhoáng và sự <strong>Mượt mà</strong> (không độ trễ).</div>
+            </div>
+
+            <div class="node">
+                <div class="technique">SCAMPER: Combine & Modify</div>
+                <div class="idea">Hình ảnh <strong>Tia Sấm Sét</strong> bắt đầu xuất hiện, càn quét mọi rào cản. Tượng trưng cho sự truyền tải API tối thượng.</div>
+            </div>
+
+            <div class="node">
+                <div class="technique">SCAMPER: Reverse</div>
+                <div class="idea">Sự tương phản đột phá nổ ra: <strong>Sấm sét cõng... một con rùa?</strong> App chạy mượt đến nỗi máy cùi (như rùa) vẫn load nhanh (như chớp).</div>
+            </div>
+
+            <div class="node">
+                <div class="technique">Mind Mapping</div>
+                <div class="idea">Chuyển hướng sang sự "Gọn gàng" & "Dễ dùng": Xuất hiện hình ảnh <strong>Viên bi hoàn hảo</strong> (không tì vết) và <strong>Ống hút 2 đầu</strong> (nắm bắt luồng data cực đoan).</div>
+            </div>
+
+            <div class="node">
+                <div class="technique">Crazy 8s & Random Stimulation</div>
+                <div class="idea">Vô số hình thái kỳ dị được thả trôi: Số 8 sấm sét, Con rùa mặc giáp, Rùa dùng skill sấm sét, và đỉnh điểm là chiếc <strong>Nam châm sấm sét</strong> hút dữ liệu mãnh liệt!</div>
+            </div>
+        </div>
+
+        <div class="climax">
+            <h2>ĐIỂM HỘI TỤ</h2>
+            <div class="mascot-icon">
+                <span class="turtle">🐢</span>
+                <span class="bolt">⚡</span>
+            </div>
+            <div class="idea">
+                Sự ra đời của một Mascot đặc biệt: <br/>
+                <strong>Chú Rùa mang Giáp Sấm Sét</strong>.
+            </div>
+            <p style="margin-top: 20px; color: #cbd5e1; max-width: 600px; margin-left: auto; margin-right: auto;">
+                Sự hòa quyện tuyệt vời giữa độ tin cậy, vững chắc, sự thân thiện (Rùa) và tốc độ xử lý API vô song (Sấm sét). Đạp đổ mọi rào cản về định kiến ứng dụng kỹ thuật khô khan.
+            </p>
+            <div class="tags">
+                <span class="tag">Friendly</span>
+                <span class="tag">Lightning-fast</span>
+                <span class="tag">Optimized</span>
+                <span class="tag">Reliable</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

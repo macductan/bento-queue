@@ -1,0 +1,1549 @@
+{
+	"info": {
+		"_postman_id": "ba38878a-a388-4046-9908-f812588d6477",
+		"name": "Third party",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "23547843"
+	},
+	"item": [
+		{
+			"name": "TKT",
+			"item": [
+				{
+					"name": "Tracking more",
+					"item": [
+						{
+							"name": "Get detail",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.trackingmore.com/v4/trackings/get?tracking_numbers=33YGF537507901000931507",
+									"protocol": "https",
+									"host": [
+										"api",
+										"trackingmore",
+										"com"
+									],
+									"path": [
+										"v4",
+										"trackings",
+										"get"
+									],
+									"query": [
+										{
+											"key": "tracking_numbers",
+											"value": "33YGF537507901000931507"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create tracking",
+							"request": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"tracking_number\": \"1LSDBVU000YPBSJ\",\n    \"courier_code\": \"ontrac\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.trackingmore.com/v4/trackings/create",
+									"protocol": "https",
+									"host": [
+										"api",
+										"trackingmore",
+										"com"
+									],
+									"path": [
+										"v4",
+										"trackings",
+										"create"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete tracking",
+							"request": {
+								"method": "DELETE",
+								"header": [],
+								"url": {
+									"raw": "https://api.trackingmore.com/v4/trackings/delete/a0c7164ee064a9a10a234658a4f05cd8",
+									"protocol": "https",
+									"host": [
+										"api",
+										"trackingmore",
+										"com"
+									],
+									"path": [
+										"v4",
+										"trackings",
+										"delete",
+										"a0c7164ee064a9a10a234658a4f05cd8"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Detect carrirer",
+							"request": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"tracking_number\": \"1LSDBVU000YPBSJ\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.trackingmore.com/v4/couriers/detect",
+									"protocol": "https",
+									"host": [
+										"api",
+										"trackingmore",
+										"com"
+									],
+									"path": [
+										"v4",
+										"couriers",
+										"detect"
+									]
+								}
+							},
+							"response": []
+						}
+					],
+					"auth": {
+						"type": "apikey",
+						"apikey": [
+							{
+								"key": "value",
+								"value": "f8x6po21-3w8o-qhww-i69m-8gvns54rkjow",
+								"type": "string"
+							},
+							{
+								"key": "key",
+								"value": "Tracking-Api-Key",
+								"type": "string"
+							}
+						]
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"packages": {},
+								"exec": [
+									""
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"packages": {},
+								"exec": [
+									""
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Canada post",
+					"item": [
+						{
+							"name": "Get detail",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept-language",
+										"value": "en-CA"
+									},
+									{
+										"key": "Authorization",
+										"value": "Basic NzQyNjlmODA3NzFkY2YzMTpkNzZiZWVkNjJlZmRiNTdlMmNlODgy"
+									}
+								],
+								"url": {
+									"raw": "https://soa-gw.canadapost.ca/vis/track/pin/7321315481500635/detail",
+									"protocol": "https",
+									"host": [
+										"soa-gw",
+										"canadapost",
+										"ca"
+									],
+									"path": [
+										"vis",
+										"track",
+										"pin",
+										"7321315481500635",
+										"detail"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get summary",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "Accept-language",
+										"value": "en-CA"
+									},
+									{
+										"key": "Authorization",
+										"value": "Basic NzQyNjlmODA3NzFkY2YzMTpkNzZiZWVkNjJlZmRiNTdlMmNlODgy"
+									}
+								],
+								"url": {
+									"raw": "https://soa-gw.canadapost.ca/vis/track/pin/9261290316855419119110/summary",
+									"protocol": "https",
+									"host": [
+										"soa-gw",
+										"canadapost",
+										"ca"
+									],
+									"path": [
+										"vis",
+										"track",
+										"pin",
+										"9261290316855419119110",
+										"summary"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Asendia USA",
+					"item": [
+						{
+							"name": "Get detail",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "authorization",
+										"value": "Basic Q3VzdEJyYW5kLlRyYWNraW5nQGFzZW5kaWEuY29tOjJ3cmZzelk4cXBBQW5UVkI="
+									},
+									{
+										"key": "x-asendiaone-apikey",
+										"value": "32337AB0-45DD-44A2-8601-547439EF9B55"
+									}
+								],
+								"url": {
+									"raw": "https://a1reportapi.asendiaprod.com/api/A1/TrackingBranded/Tracking?trackingKey=AE654169-0B14-45F9-8498-A8E464E13D26&trackingNumber=4FWRUQTVALVYTBVHME5KE6",
+									"protocol": "https",
+									"host": [
+										"a1reportapi",
+										"asendiaprod",
+										"com"
+									],
+									"path": [
+										"api",
+										"A1",
+										"TrackingBranded",
+										"Tracking"
+									],
+									"query": [
+										{
+											"key": "trackingKey",
+											"value": "AE654169-0B14-45F9-8498-A8E464E13D26"
+										},
+										{
+											"key": "trackingNumber",
+											"value": "4FWRUQTVALVYTBVHME5KE6"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "USPS",
+					"item": [
+						{
+							"name": "detail",
+							"event": [
+								{
+									"listen": "prerequest",
+									"script": {
+										"exec": [
+											""
+										],
+										"type": "text/javascript",
+										"packages": {},
+										"requests": {}
+									}
+								},
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											""
+										],
+										"type": "text/javascript",
+										"packages": {},
+										"requests": {}
+									}
+								}
+							],
+							"protocolProfileBehavior": {
+								"disableCookies": true
+							},
+							"request": {
+								"auth": {
+									"type": "bearer",
+									"bearer": [
+										{
+											"key": "token",
+											"value": "{{usps_token}}",
+											"type": "string"
+										}
+									]
+								},
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://apis-tem.usps.com/tracking/v3/tracking/:trackingNumber?expand=DETAIL",
+									"protocol": "https",
+									"host": [
+										"apis-tem",
+										"usps",
+										"com"
+									],
+									"path": [
+										"tracking",
+										"v3",
+										"tracking",
+										":trackingNumber"
+									],
+									"query": [
+										{
+											"key": "expand",
+											"value": "DETAIL"
+										}
+									],
+									"variable": [
+										{
+											"key": "trackingNumber",
+											"value": "9200190398940700128448"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "summary",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.usps.com/tracking/v3/tracking/9400150899563100825098?expand=SUMMARY",
+									"protocol": "https",
+									"host": [
+										"api",
+										"usps",
+										"com"
+									],
+									"path": [
+										"tracking",
+										"v3",
+										"tracking",
+										"9400150899563100825098"
+									],
+									"query": [
+										{
+											"key": "expand",
+											"value": "SUMMARY"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "auth",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"const res = pm.response.json()\r",
+											"if(res.access_token) {\r",
+											"    pm.collectionVariables.set('usps_token', res.access_token)\r",
+											"}"
+										],
+										"type": "text/javascript",
+										"packages": {},
+										"requests": {}
+									}
+								},
+								{
+									"listen": "prerequest",
+									"script": {
+										"exec": [
+											""
+										],
+										"type": "text/javascript",
+										"packages": {},
+										"requests": {}
+									}
+								}
+							],
+							"protocolProfileBehavior": {
+								"disableCookies": true
+							},
+							"request": {
+								"auth": {
+									"type": "noauth"
+								},
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "urlencoded",
+									"urlencoded": [
+										{
+											"key": "grant_type",
+											"value": "client_credentials",
+											"type": "text"
+										},
+										{
+											"key": "scope",
+											"value": "tracking",
+											"type": "text"
+										},
+										{
+											"key": "client_id",
+											"value": "0ONxtOaAmVEvaZFh8FIuNUwj9EyloE6LeTvyYIUOCx5AxSqo",
+											"type": "text"
+										},
+										{
+											"key": "client_secret",
+											"value": "rN49zK6MWoKX7WfPKVOTNALywE8GfUg6efTGlDyG4HxfAJGXyjlEVTmzXHOFAeLm",
+											"type": "text"
+										}
+									]
+								},
+								"url": {
+									"raw": "https://apis-tem.usps.com/oauth2/v3/token",
+									"protocol": "https",
+									"host": [
+										"apis-tem",
+										"usps",
+										"com"
+									],
+									"path": [
+										"oauth2",
+										"v3",
+										"token"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "tracking v3",
+							"request": {
+								"auth": {
+									"type": "bearer",
+									"bearer": [
+										{
+											"key": "token",
+											"value": "{{usps_token}}",
+											"type": "string"
+										}
+									]
+								},
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "[\n    {\n        \"trackingNumber\": \"9241990109329603875894\"\n    }\n]",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://apis-tem.usps.com/tracking/v3r2/tracking",
+									"protocol": "https",
+									"host": [
+										"apis-tem",
+										"usps",
+										"com"
+									],
+									"path": [
+										"tracking",
+										"v3r2",
+										"tracking"
+									]
+								}
+							},
+							"response": []
+						}
+					],
+					"auth": {
+						"type": "noauth"
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"requests": {},
+								"exec": [
+									""
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"requests": {},
+								"exec": [
+									""
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Australia Post",
+					"item": [
+						{
+							"name": "getPointsByPostcode",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://digitalapi.auspost.com.au/locations/v2/points/postcode/:postcode?pc=string&usage_types=1%2C2&types=PO",
+									"protocol": "https",
+									"host": [
+										"digitalapi",
+										"auspost",
+										"com",
+										"au"
+									],
+									"path": [
+										"locations",
+										"v2",
+										"points",
+										"postcode",
+										":postcode"
+									],
+									"query": [
+										{
+											"key": "pc",
+											"value": "string"
+										},
+										{
+											"key": "usage_types",
+											"value": "1%2C2"
+										},
+										{
+											"key": "types",
+											"value": "PO"
+										}
+									],
+									"variable": [
+										{
+											"key": "postcode",
+											"value": "9993"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "getPointsByLocationCode",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://digitalapi.auspost.com.au/locations/v2/points/:location_code?pc=string&usage_types=1%2C2",
+									"protocol": "https",
+									"host": [
+										"digitalapi",
+										"auspost",
+										"com",
+										"au"
+									],
+									"path": [
+										"locations",
+										"v2",
+										"points",
+										":location_code"
+									],
+									"query": [
+										{
+											"key": "pc",
+											"value": "string"
+										},
+										{
+											"key": "usage_types",
+											"value": "1%2C2"
+										}
+									],
+									"variable": [
+										{
+											"key": "location_code",
+											"value": "33YGF521281801000931504"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					],
+					"auth": {
+						"type": "apikey",
+						"apikey": [
+							{
+								"key": "value",
+								"value": "Bndv2S31aBPLGU5YqvULe8IpFGzNF41K",
+								"type": "string"
+							},
+							{
+								"key": "key",
+								"value": "AUTH-KEY",
+								"type": "string"
+							}
+						]
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"packages": {},
+								"exec": [
+									""
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"packages": {},
+								"exec": [
+									""
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "DHL",
+					"item": [
+						{
+							"name": "get detail",
+							"request": {
+								"auth": {
+									"type": "apikey",
+									"apikey": [
+										{
+											"key": "value",
+											"value": "3EPUNnOjfEGII47GjjE5GDmiZ9tWxami",
+											"type": "string"
+										},
+										{
+											"key": "key",
+											"value": "DHL-API-Key",
+											"type": "string"
+										}
+									]
+								},
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api-eu.dhl.com/track/shipments?trackingNumber=00340434775432791047",
+									"protocol": "https",
+									"host": [
+										"api-eu",
+										"dhl",
+										"com"
+									],
+									"path": [
+										"track",
+										"shipments"
+									],
+									"query": [
+										{
+											"key": "service",
+											"value": "ecommerce",
+											"disabled": true
+										},
+										{
+											"key": "trackingNumber",
+											"value": "00340434775432791047"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "get detail v2",
+							"request": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"trackedValue\": \"00340434775432791047\",\n    \"offset\": 0,\n    \"locale\": \"en-US\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.dhlecs.com/webtrack/v4/tracking",
+									"protocol": "https",
+									"host": [
+										"api",
+										"dhlecs",
+										"com"
+									],
+									"path": [
+										"webtrack",
+										"v4",
+										"tracking"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Asendia",
+					"item": [
+						{
+							"name": "Get detail",
+							"request": {
+								"auth": {
+									"type": "apikey",
+									"apikey": [
+										{
+											"key": "value",
+											"value": "Basic Q3VzdEJyYW5kLlRyYWNraW5nQGFzZW5kaWEuY29tOjJ3cmZzelk4cXBBQW5UVkI=",
+											"type": "string"
+										},
+										{
+											"key": "key",
+											"value": "authorization",
+											"type": "string"
+										}
+									]
+								},
+								"method": "GET",
+								"header": [
+									{
+										"key": "x-asendiaone-apikey",
+										"value": "32337AB0-45DD-44A2-8601-547439EF9B55",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "https://a1reportapi.asendiaprod.com/api/A1/TrackingBranded/Tracking?trackingKey=AE654169-0B14-45F9-8498-A8E464E13D26&trackingNumber=LF108139913FR",
+									"protocol": "https",
+									"host": [
+										"a1reportapi",
+										"asendiaprod",
+										"com"
+									],
+									"path": [
+										"api",
+										"A1",
+										"TrackingBranded",
+										"Tracking"
+									],
+									"query": [
+										{
+											"key": "trackingKey",
+											"value": "AE654169-0B14-45F9-8498-A8E464E13D26"
+										},
+										{
+											"key": "trackingNumber",
+											"value": "LF108139913FR"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get detail v2",
+							"protocolProfileBehavior": {
+								"disableCookies": true
+							},
+							"request": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"ids\": [\n        \"LS946062814CH\"\n    ],\n    \"id\": 1,\n    \"subsidiary\": [\n        \"Asendia HQ\"\n    ],\n    \"subsidiary_id\": [\n        1\n    ],\n    \"brand_id\": \"*\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://track.asendia.com/api/1.0/branded-url/branded-parcel-search",
+									"protocol": "https",
+									"host": [
+										"track",
+										"asendia",
+										"com"
+									],
+									"path": [
+										"api",
+										"1.0",
+										"branded-url",
+										"branded-parcel-search"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "HW",
+					"item": [
+						{
+							"name": "Get data",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "X-HPW-Client-Id",
+										"value": "143_037",
+										"type": "text"
+									},
+									{
+										"key": "X-HPW-Service-Type",
+										"value": "2",
+										"type": "text"
+									}
+								],
+								"url": {
+									"raw": "https://api.hpwcargo.com.vn/p1/shipments/:trackingCode/status",
+									"protocol": "https",
+									"host": [
+										"api",
+										"hpwcargo",
+										"com",
+										"vn"
+									],
+									"path": [
+										"p1",
+										"shipments",
+										":trackingCode",
+										"status"
+									],
+									"variable": [
+										{
+											"key": "trackingCode",
+											"value": "GV482275844GB"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "NS Log",
+					"item": [
+						{
+							"name": "Get data",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "CODE",
+										"value": "MERCHIZE"
+									},
+									{
+										"key": "TOKEN",
+										"value": "ztQ35WRsdcrFrmQ2WdJSFnaDR8nW7ysZ"
+									}
+								],
+								"url": {
+									"raw": "https://nslogvietnam.com/api/track?orderNo=9200190412380454058698",
+									"protocol": "https",
+									"host": [
+										"nslogvietnam",
+										"com"
+									],
+									"path": [
+										"api",
+										"track"
+									],
+									"query": [
+										{
+											"key": "orderNo",
+											"value": "9200190412380454058698"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "GE Standard",
+					"item": [
+						{
+							"name": "Get data",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://service.interchains.vn/api/v1/tracking?filter=9200190412380454058698",
+									"protocol": "https",
+									"host": [
+										"service",
+										"interchains",
+										"vn"
+									],
+									"path": [
+										"api",
+										"v1",
+										"tracking"
+									],
+									"query": [
+										{
+											"key": "filter",
+											"value": "9200190412380454058698"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "SPUS",
+					"item": [
+						{
+							"name": "Subscribe to Webhook",
+							"request": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n    \"url\": \"https://fulfillment.bymerchize.com/spus/order\",\n    // \"event\": \"order_notify\", \n    \"name\": \"SPUS Webhook\"\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "https://api.swiftpod.com/v1/webhooks/subscribe",
+									"protocol": "https",
+									"host": [
+										"api",
+										"swiftpod",
+										"com"
+									],
+									"path": [
+										"v1",
+										"webhooks",
+										"subscribe"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "List Webhooks",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.swiftpod.com/v1/webhooks/subscribe",
+									"protocol": "https",
+									"host": [
+										"api",
+										"swiftpod",
+										"com"
+									],
+									"path": [
+										"v1",
+										"webhooks",
+										"subscribe"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "New Request",
+							"request": {
+								"method": "DELETE",
+								"header": [],
+								"url": {
+									"raw": "https://api.swiftpod.com/v1/webhooks/subscribe/{{event}}",
+									"protocol": "https",
+									"host": [
+										"api",
+										"swiftpod",
+										"com"
+									],
+									"path": [
+										"v1",
+										"webhooks",
+										"subscribe",
+										"{{event}}"
+									]
+								}
+							},
+							"response": []
+						}
+					],
+					"auth": {
+						"type": "bearer",
+						"bearer": [
+							{
+								"key": "token",
+								"value": "QXZJR3B0UW55TmUyVWJ5NkdkWTFlQT09",
+								"type": "string"
+							}
+						]
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {},
+								"exec": [
+									""
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {},
+								"exec": [
+									""
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "ITC",
+					"item": [
+						{
+							"name": "Get data",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://service.interchains.vn/api/v1/tracking?filter=420600269214490374019001053897",
+									"protocol": "https",
+									"host": [
+										"service",
+										"interchains",
+										"vn"
+									],
+									"path": [
+										"api",
+										"v1",
+										"tracking"
+									],
+									"query": [
+										{
+											"key": "filter",
+											"value": "420600269214490374019001053897"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "SSactive",
+			"item": [
+				{
+					"name": "inventory",
+					"item": [
+						{
+							"name": ":product",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.ssactivewear.com/v2/inventory/:product?Warehouses=TX",
+									"protocol": "https",
+									"host": [
+										"api",
+										"ssactivewear",
+										"com"
+									],
+									"path": [
+										"v2",
+										"inventory",
+										":product"
+									],
+									"query": [
+										{
+											"key": "Warehouses",
+											"value": "TX"
+										}
+									],
+									"variable": [
+										{
+											"key": "product",
+											"value": "B00060671"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "products",
+					"item": [
+						{
+							"name": "/",
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "https://api.ssactivewear.com/v2/products/?style=Fan Dark Green",
+									"protocol": "https",
+									"host": [
+										"api",
+										"ssactivewear",
+										"com"
+									],
+									"path": [
+										"v2",
+										"products",
+										""
+									],
+									"query": [
+										{
+											"key": "style",
+											"value": "Fan Dark Green"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "paymentprofiles",
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "password",
+									"value": "e43bcac9-c3c5-412a-8149-4c7753fea748",
+									"type": "string"
+								},
+								{
+									"key": "username",
+									"value": "873921",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.ssactivewear.com/v2/paymentprofiles?email=divudallas@gmail.com",
+							"protocol": "https",
+							"host": [
+								"api",
+								"ssactivewear",
+								"com"
+							],
+							"path": [
+								"v2",
+								"paymentprofiles"
+							],
+							"query": [
+								{
+									"key": "email",
+									"value": "divudallas@gmail.com",
+									"description": "divudallas@gmail.com"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "get orders by po",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.ssactivewear.com/v2/orders/:po",
+							"protocol": "https",
+							"host": [
+								"api",
+								"ssactivewear",
+								"com"
+							],
+							"path": [
+								"v2",
+								"orders",
+								":po"
+							],
+							"variable": [
+								{
+									"key": "po",
+									"value": "2-S-GPT-tik-260906-1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "delete by order number",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "https://api.ssactivewear.com/v2/orders/:orderNumber",
+							"protocol": "https",
+							"host": [
+								"api",
+								"ssactivewear",
+								"com"
+							],
+							"path": [
+								"v2",
+								"orders",
+								":orderNumber"
+							],
+							"variable": [
+								{
+									"key": "orderNumber",
+									"value": ""
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"auth": {
+				"type": "basic",
+				"basic": [
+					{
+						"key": "password",
+						"value": "e43bcac9-c3c5-412a-8149-4c7753fea748",
+						"type": "string"
+					},
+					{
+						"key": "username",
+						"value": "873921",
+						"type": "string"
+					}
+				]
+			},
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {},
+						"exec": [
+							""
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {},
+						"exec": [
+							""
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "Sanmar",
+			"item": [
+				{
+					"name": "Get order status",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/xml; charset=utf-8",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \nxmlns:ns=\"http://www.promostandards.org/WSDL/OrderStatus/2.0.0/\" \nxmlns:shar=\"http://www.promostandards.org/WSDL/OrderStatus/2.0.0/SharedObjects/\"> \n   <soapenv:Header /> \n   <soapenv:Body> \n      <ns:GetOrderStatusRequest> \n         <shar:wsVersion>2.0.0</shar:wsVersion> \n         <shar:id>{{sanmar_username}}</shar:id> \n         <shar:password>{{sanmar_password}}</shar:password> \n         <shar:queryType>lastUpdate</shar:queryType> \n         <shar:statusTimeStamp>2026-09-23T00:00:00</shar:statusTimeStamp> \n         <shar:returnIssueDetailType>allIssues</shar:returnIssueDetailType> \n         <shar:returnProductDetail>true</shar:returnProductDetail> \n      </ns:GetOrderStatusRequest> \n   </soapenv:Body> \n</soapenv:Envelope>",
+							"options": {
+								"raw": {
+									"language": "xml"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{sanmar_url}}/promostandards/OrderStatusServiceBindingV2?wsdl",
+							"host": [
+								"{{sanmar_url}}"
+							],
+							"path": [
+								"promostandards",
+								"OrderStatusServiceBindingV2"
+							],
+							"query": [
+								{
+									"key": "wsdl",
+									"value": null
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get shipment info",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/xml; charset=utf-8"
+							},
+							{
+								"key": "SOAPAction",
+								"value": "\"\""
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\"\nxmlns:ns=\"http://www.promostandards.org/WSDL/OrderShipmentNotificationService/1.0.0/\"\nxmlns:shar=\"http://www.promostandards.org/WSDL/OrderShipmentNotificationService/1.0.0/SharedObjects/\">\n  <soapenv:Header/>\n  <soapenv:Body>\n    <ns:GetOrderShipmentNotificationRequest>\n      <shar:wsVersion>1.0.0</shar:wsVersion>\n      <shar:id>285648-dev</shar:id>\n      <shar:password>tFO0H9ibo5ngS2</shar:password>\n      <ns:queryType>1</ns:queryType>\n      <ns:referenceNumber>1-SM-DTF-nor-LU-260923-1</ns:referenceNumber>\n    </ns:GetOrderShipmentNotificationRequest>\n  </soapenv:Body>\n</soapenv:Envelope>",
+							"options": {
+								"raw": {
+									"language": "xml"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://edev-ws.sanmar.com:8080/promostandards/OrderShipmentNotificationServiceBinding?wsdl",
+							"protocol": "https",
+							"host": [
+								"edev-ws",
+								"sanmar",
+								"com"
+							],
+							"port": "8080",
+							"path": [
+								"promostandards",
+								"OrderShipmentNotificationServiceBinding"
+							],
+							"query": [
+								{
+									"key": "wsdl",
+									"value": null
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get pack info",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/xml; charset=utf-8"
+							},
+							{
+								"key": "SOAPAction",
+								"value": "\"\""
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:pac=\"http://ws.sanmar.com/webservices/PackingSlip\">\n  <soapenv:Header/>\n  <soapenv:Body>\n    <pac:GetPackingSlip>\n      <pac:wsVersion>1.0.0</pac:wsVersion>\n      <pac:UserId>285648-dev</pac:UserId>\n      <pac:Password>tFO0H9ibo5ngS2</pac:Password>\n      <pac:PackingSlipId>LP0911228601</pac:PackingSlipId>\n    </pac:GetPackingSlip>\n  </soapenv:Body>\n</soapenv:Envelope>",
+							"options": {
+								"raw": {
+									"language": "xml"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://edev-ws.sanmar.com:8080/SanMarWebService/webservices/PackingSlipService?wsdl",
+							"protocol": "https",
+							"host": [
+								"edev-ws",
+								"sanmar",
+								"com"
+							],
+							"port": "8080",
+							"path": [
+								"SanMarWebService",
+								"webservices",
+								"PackingSlipService"
+							],
+							"query": [
+								{
+									"key": "wsdl",
+									"value": null
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get invoice range",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/xml; charset=utf-8"
+							},
+							{
+								"key": "SOAPAction",
+								"value": "\"\""
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" \nxmlns:web=\"http://webservice.integration.sanmar.com/\">\n    <soapenv:Header />\n    <soapenv:Body>\n        <web:GetInvoicesByInvoiceDateRange>\n            <web:CustomerNo>285648</web:CustomerNo>\n            <web:UserName>285648-dev</web:UserName>\n            <web:Password>tFO0H9ibo5ngS2</web:Password>\n            <web:StartDate>2026-09-20</web:StartDate>\n            <web:EndDate>2026-09-27</web:EndDate>\n        </web:GetInvoicesByInvoiceDateRange>\n    </soapenv:Body>\n</soapenv:Envelope>",
+							"options": {
+								"raw": {
+									"language": "xml"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://edev-ws.sanmar.com:8080/SanMarWebService/InvoicePort",
+							"protocol": "https",
+							"host": [
+								"edev-ws",
+								"sanmar",
+								"com"
+							],
+							"port": "8080",
+							"path": [
+								"SanMarWebService",
+								"InvoicePort"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "usps_token",
+			"value": ""
+		},
+		{
+			"key": "sanmar_url",
+			"value": "https://edev-ws.sanmar.com:8080"
+		},
+		{
+			"key": "sanmar_username",
+			"value": "285648-dev"
+		},
+		{
+			"key": "sanmar_password",
+			"value": "tFO0H9ibo5ngS2"
+		},
+		{
+			"key": "sanmar_customer_number",
+			"value": ""
+		}
+	]
+}

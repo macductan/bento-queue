@@ -1,0 +1,5 @@
+[workflow]
+on_complete = """
+If the retrospective verdict was 'accepted' or 'accepted-with-open-items', you must update sprint-status.yaml to mark the epic itself as done (since bmad-retrospective only marks the retro key by default). Run the following command:
+uv run "{project-root}/.agent/skills/bmad-sprint-planning/scripts/sprint_plan.py" generate --epic-file "{project-root}/_bmad-output/planning-artifacts/epics.md" --status-file "{project-root}/_bmad-output/implementation-artifacts/sprint-status.yaml" --stories-dir "{project-root}/_bmad-output/implementation-artifacts" --project "hecto-api" --date "$(date +'%Y-%m-%d %H:%M')" --set "epic-{{epic_number}}=done"
+"""
