@@ -28,7 +28,7 @@ cache:
 # Lint stage
 lint:backend:
   stage: lint
-  image: golang:1.24
+  image: golang:1.25
   script:
     - cd projects
     - go vet ./...
@@ -44,7 +44,7 @@ lint:frontend:
 # Test stage
 test:backend:
   stage: test
-  image: golang:1.24
+  image: golang:1.25
   needs:
     - lint:backend
   script:
@@ -85,13 +85,11 @@ test:frontend:unit:
 test:frontend:e2e:shard-1:
   <<: *frontend-e2e-template
   script:
-    - cd projects/frontend
     - bun run test:e2e -- --shard=1/2
 
 test:frontend:e2e:shard-2:
   <<: *frontend-e2e-template
   script:
-    - cd projects/frontend
     - bun run test:e2e -- --shard=2/2
 
 # Burn-in stage
@@ -109,7 +107,6 @@ burn-in:frontend:
     - bun install --frozen-lockfile
     - bunx playwright install --with-deps chromium
   script:
-    - cd projects/frontend
     - echo "🔥 Starting burn-in loop using @seontechnologies/playwright-utils"
     - bun run scripts/burn-in-changed.ts
   artifacts:

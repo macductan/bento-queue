@@ -31,7 +31,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'cd .. && wails dev -tags webkit2_41',
+    command: process.env.CI ? 'bun run dev' : (process.env.E2E_SERVER_COMMAND || 'bun run dev'),
     url: 'http://localhost:34115',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
