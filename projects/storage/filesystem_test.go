@@ -435,9 +435,9 @@ func TestIndexRebuild_IgnoresCorruptedAndUnreadable(t *testing.T) {
 		t.Fatalf("failed to write corrupted file: %v", err)
 	}
 
-	// Create unreadable file (if not Windows)
+	// Create unreadable file (if not Windows and not root)
 	unreadablePath := filepath.Join(root, "unreadable.json")
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && os.Getuid() != 0 {
 		if err := os.WriteFile(unreadablePath, []byte(`{"id": "unreadable-id"}`), 0000); err != nil {
 			t.Fatalf("failed to write unreadable file: %v", err)
 		}
@@ -458,7 +458,9 @@ func TestIndexRebuild_IgnoresCorruptedAndUnreadable(t *testing.T) {
 		t.Errorf("expected 5 items in index, got %d items", len(fs.index))
 	}
 	
-	if _, err := fs.FindByUUID("unreadable-id"); err == nil {
-		t.Errorf("expected error for unreadable-id, got no error")
+	if runtime.GOOS != "windows" && os.Getuid() != 0 {
+		if _, err := fs.FindByUUID("unreadable-id"); err == nil {
+			t.Errorf("expected error for unreadable-id, got no error")
+		}
 	}
 }

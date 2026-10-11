@@ -256,6 +256,10 @@ func TestCreateFolder(t *testing.T) {
 }
 
 func TestCreate_DiskError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping permission test as root")
+	}
+
 	svc, _, root := setupCollectionService(t)
 
 	// Make a read-only directory

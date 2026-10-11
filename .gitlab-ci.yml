@@ -105,6 +105,8 @@ burn-in:frontend:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
   before_script:
+    - export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get install -y --no-install-recommends git
+    - git fetch origin develop:develop || true
     - cd projects/frontend
     - bun install --frozen-lockfile
     - bunx playwright install --with-deps chromium
