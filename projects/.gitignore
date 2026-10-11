@@ -3,7 +3,8 @@ build/bin
 
 # Frontend
 node_modules
-frontend/dist
+frontend/dist/*
+!frontend/dist/.gitkeep
 frontend/package.json.md5
 
 # Go

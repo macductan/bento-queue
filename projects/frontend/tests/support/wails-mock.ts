@@ -2,7 +2,7 @@ export function setupWailsMock() {
   if (typeof window === 'undefined') return;
 
   if (!window['go']) {
-    let tree: any[] = [];
+    const tree: any[] = [];
     const requestDetails = new Map<string, any>();
     let counter = 1;
 
@@ -148,9 +148,9 @@ export function setupWailsMock() {
           }),
           UpdateFolder: async (folder: any) => ({ success: true, data: clone(folder) }),
           ListEnvironments: async () => ({ success: true, data: [] }),
-          GetEnvironment: async (_id: string) => ({ success: true, data: null }),
+          GetEnvironment: async () => ({ success: true, data: null }),
           SaveEnvironment: async (env: any) => ({ success: true, data: clone(env) }),
-          DeleteEnvironment: async (_id: string) => ({ success: true, data: null }),
+          DeleteEnvironment: async () => ({ success: true, data: null }),
           GetCollectionRoot: async () => ({ success: true, data: '/mock/storage' }),
           UpdateCollectionRoot: async () => ({ success: true, data: '/mock/storage' }),
           SelectDirectoryDialog: async () => ({ success: true, data: '/mock/storage' }),

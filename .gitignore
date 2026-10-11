@@ -11,7 +11,8 @@
 projects/build/bin
 
 # Frontend
-projects/frontend/dist
+projects/frontend/dist/*
+!projects/frontend/dist/.gitkeep
 projects/frontend/package.json.md5
 node_modules
 
