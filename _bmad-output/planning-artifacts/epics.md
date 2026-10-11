@@ -48,9 +48,9 @@ NFR-7: Response time và size luôn dùng integer, không float. Size: < 1024B �
 
 - AR-1: Wails v2 project setup — Go 1.27.1 backend, Vue 3 + TypeScript frontend, Pinia state management, Tailwind CSS v4, native webview.
 - AR-2: Go package structure layered: `app.go` (thin Wails adapter) → `service/` (business logic) → `storage/` (file I/O abstraction) → `model/` (shared data structs). Service testable mà không cần Wails context.
-- AR-3: Entity identity = UUID v4 cho mọi entity (request, folder, environment). UUID sinh bởi Go lúc create, không đổi suốt lifecycle. Filename trên disk = slug (readable, Git-friendly) nhưng không phải ID.
+- AR-3: Entity identity = UUID v4 cho mọi entity (request, folder, environment). UUID sinh bởi Go lúc create, không đổi suốt lifecycle. Filename trên disk = slug (readable, Git-friendly) nhưng không phải ID. (Note: Đã cân nhắc dùng UUID làm filename nhưng quyết định giữ slug để tối ưu readability).
 - AR-4: Structured error contract — mọi Wails binding trả `Result{Success: bool, Data: T, Error: {Code: string, Message: string}}`. Error codes: NOT_FOUND, VALIDATION, IO_ERROR, PARSE_ERROR, CONNECTION_ERROR, TIMEOUT, ABORTED.
-- AR-5: Ranh giới Go/Vue — Go chỉ nhận dữ liệu đã resolve (URL, headers, body không còn `{{...}}`). Vue sở hữu toàn bộ variable substitution. File trên disk luôn lưu raw template.
+- AR-5: Ranh giới Go/Vue — Go chỉ nhận dữ liệu đã resolve (URL, headers, body không còn `{{...}}`). Vue sở hữu toàn bộ variable substitution (sẽ đệ quy từ Request -> Folder -> Active Env). File trên disk luôn lưu raw template.
 - AR-6: Wails bindings entity-oriented CRUD — tên hàm = Verb + Entity. 19 bindings: GetCollectionTree, GetRequest, SaveRequest, DeleteRequest, DuplicateRequest, MoveRequest, CreateFolder, RenameFolder, DeleteFolder, ListEnvironments, GetEnvironment, SaveEnvironment, DeleteEnvironment, SendRequest, AbortRequest, ImportPostman, OpenFileDialog, GetAppConfig.
 - AR-7: Vue state: 5 Pinia stores — collectionStore (tree + active request ref), requestStore (form state, dirty check), environmentStore (env list, active env, variables map), responseStore (response data, loading state), uiStore (tabs, modals, toasts).
 - AR-8: Collection root dùng OS app data directory — config tại `{os.UserConfigDir()}/hecto-api/config.json`, data tại `{dataDir}/hecto-api/collections/default/` (XDG convention).
@@ -235,7 +235,7 @@ So that I know how to get started using the app.
 
 As a developer,
 I want reliable slug generation for Vietnamese filenames and O(1) UUID lookup,
-So that file names are Git-friendly and entity lookup is fast.
+So that file names are Git-friendly and entity lookup is fast. (Note: Using slug instead of UUID for filenames to maximize readability).
 
 **Acceptance Criteria:**
 
@@ -267,6 +267,32 @@ So that no technical debt accumulates across epics.
 **And** design tokens in CSS match DESIGN.md spec exactly (spot-check 10 tokens)
 **And** `wails dev` starts cleanly with no console errors or warnings
 **And** manual smoke test: app launches < 2s, shows 3-pane layout, default collection created on disk
+
+
+### Story 1.8: Change Storage Location
+
+As a user,
+I want to change the storage folder for my collections and environments,
+So that I can separate data across different projects and avoid using the default XDG location.
+
+**Acceptance Criteria:**
+
+**Given** the user opens the Settings modal
+**When** they click to change the storage location
+**Then** an OS directory selection dialog opens via Go `SelectDirectoryDialog` binding
+**And** upon selection, the `UpdateCollectionRoot` binding is called with the new path
+**And** the new path is persisted to `config.json` via atomic write
+**And** `ensureDefaultCollection` initializes the new folder (if empty)
+**And** Vue stores (`collectionStore`, `environmentStore`) trigger a `refresh()` action
+**And** the UI (sidebar tree, editor) clears the active request and reloads from the new location
+
+**Given** the user selects a read-only directory
+**When** saving fails
+**Then** an IO error toast is shown and the path remains unchanged
+
+**Given** the user cancels the OS directory dialog
+**When** the dialog closes
+**Then** nothing happens and the path remains unchanged
 
 ## Epic 2: Collection Management & Sidebar Navigation
 
@@ -402,7 +428,8 @@ So that I can perform actions efficiently and never lose my edits.
 
 **Given** a folder in the sidebar
 **When** I right-click on it
-**Then** context menu appears with: "Đổi tên", "Tạo request mới", "Tạo thư mục con", separator, "Xóa"
+**Then** context menu appears with: "Đổi tên", "Tạo request mới", "Tạo thư mục con", "Cài đặt thư mục", separator, "Xóa"
+**And** clicking "Cài đặt thư mục" opens the Folder Settings view in the main editor pane (to edit folder variables)
 
 **Given** a request in the sidebar
 **When** I right-click on it
@@ -467,7 +494,7 @@ So that I can configure my request with the right parameters and headers.
 
 **Given** a request is loaded and Params or Headers tab is active
 **When** the KVP editor renders
-**Then** it displays a grid with 4 columns: checkbox (24px) + Key input + Value input + Delete button (32px)
+**Then** it displays a flex row for each entry with proper proportions: checkbox (24px) + Key input (flex-1 max-w-[200px]) + Value input (flex-2, expands) + Delete button (32px), with `items-center` alignment so inputs are vertically centered and not misaligned.
 **And** column headers show "KEY" / "VALUE" (ui-xs, uppercase, text-muted)
 **And** checkbox toggles enabled/disabled state (accent brand-primary), disabled rows are visually dimmed
 **And** inputs use surface-base background, mono-sm font, border on focus
@@ -509,7 +536,7 @@ So that I can test and debug my API endpoints.
 
 **Given** a request with URL, method, headers, params, body configured
 **When** I click "Gửi" button or press Ctrl+Enter
-**Then** Vue resolves all `{{variables}}` from active environment (or passes raw if no env active) — per AR-5
+**Then** Vue resolves all `{{variables}}` by recursively looking up the variable in the tree: Active Environment -> Immediate Parent Folder -> Grandparent Folder (per FR-14)
 **And** disabled headers and params are excluded from the request
 **And** query params are appended to URL: `?key=value&key2=value2`
 **And** Go `SendRequest` binding receives `ExecuteRequest{Method, URL, Headers, Body}` with all data pre-resolved
@@ -729,6 +756,7 @@ So that I can migrate my existing API workspace without re-creating everything m
 **And** Postman `item` array is converted: items with `request` → Request files, items with `item` children → Folders
 **And** each request preserves: name, method, URL (raw), headers (key/value/enabled), body (raw content + mode)
 **And** Postman `{{variable}}` syntax is preserved as-is (compatible with hecto-api format)
+**And** folder `variable` array from Postman is parsed and mapped to `_folder.json`'s `variables` field
 **And** folder structure is preserved: nested Postman folders → nested disk folders
 **And** slug filenames are generated for each request and folder, collision handling with "-1", "-2" suffix
 **And** collection with ≥ 10 requests imports successfully (per PRD acceptance criteria)
@@ -773,3 +801,40 @@ So that the Postman import feature is complete and handles real-world collection
 **And** large import (50+ requests) completes without UI freeze
 **And** Go + Vue linting passes with zero errors
 **And** manual smoke test: export a real Postman collection → import into hecto-api → verify all requests load and send correctly
+
+
+## Epic 6: Test Quality & NFR Hardening
+
+Thực hiện giải quyết các khoản nợ kỹ thuật (Tech Debt) được phát hiện trong quá trình Audit NFR và Review E2E Tests. Đảm bảo ứng dụng đáp ứng tiêu chuẩn hiệu năng và có độ phủ test toàn diện cho các thao tác trên folder.
+
+### Story 6.1: E2E Tests for Folder Operations & Edge Cases
+
+As a QA Engineer,
+I want to add missing E2E test scenarios for folder operations and editor state,
+So that regressions in the collection tree and editor behaviors are caught by the CI pipeline.
+
+**Acceptance Criteria:**
+
+**Given** the test suite is running
+**When** the E2E folder tests execute
+**Then** scenarios for creating nested folders and deleting folders are covered
+**And** rename edge cases (duplicate names, empty names, extremely long names) are verified
+**And** the "unsaved changes" indicator (amber dot) is verified on the context menu and tab
+**And** clearing the editor state when the selected request is deleted is verified
+**And** the CI pipeline passes all these new scenarios consistently
+
+### Story 6.2: NFR Performance Benchmarking & Evidence
+
+As a Performance Engineer,
+I want to establish performance baselines and automated metrics collection in the CI pipeline,
+So that we can prove the application boots in under 2 seconds and consumes less than 100MB of RAM.
+
+**Acceptance Criteria:**
+
+**Given** the CI pipeline is running the automated test suite
+**When** the application starts and executes the test scenarios
+**Then** boot time is measured and recorded as an artifact
+**And** memory consumption (RAM) is sampled during execution
+**And** the CI job fails if boot time exceeds 2.0 seconds
+**And** the CI job fails or warns if baseline RAM consumption exceeds 100MB
+**And** the collected metrics are published to the test-results artifact directory for auditing

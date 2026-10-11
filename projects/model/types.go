@@ -50,38 +50,71 @@ type Body struct {
 	Content string `json:"content"`
 }
 
+// BearerAuth stores Bearer token auth configuration.
+type BearerAuth struct {
+	Token string `json:"token"`
+}
+
+// BasicAuth stores Basic authentication credentials.
+type BasicAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// APIKeyAuth stores API Key configuration (header or query parameter).
+type APIKeyAuth struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	AddTo string `json:"addTo"` // "header" or "query"
+}
+
+// AuthConfig represents authentication settings for a Request or Folder.
+type AuthConfig struct {
+	Type   string      `json:"type"`             // "inherit", "none", "bearer", "basic", "apiKey"
+	Bearer *BearerAuth `json:"bearer,omitempty"`
+	Basic  *BasicAuth  `json:"basic,omitempty"`
+	APIKey *APIKeyAuth `json:"apiKey,omitempty"`
+}
+
 // Request represents an API request entity stored as a JSON file on disk.
 // Identity is UUID v4, filename is slug (AD-4).
 type Request struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Method    string    `json:"method"`
-	URL       string    `json:"url"`
-	Headers   []KVPair  `json:"headers"`
-	Params    []KVPair  `json:"params"`
-	Body      Body      `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string      `json:"id"`
+	Name      string      `json:"name"`
+	Method    string      `json:"method"`
+	URL       string      `json:"url"`
+	Headers   []KVPair    `json:"headers"`
+	Params    []KVPair    `json:"params"`
+	Body      Body        `json:"body"`
+	Auth      *AuthConfig `json:"auth,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 // TreeNode represents a node in the collection tree (folder or request) (Story 2.1).
 type TreeNode struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Type      string     `json:"type"` // "folder" or "request"
-	Method    string     `json:"method,omitempty"`
-	Path      string     `json:"path"`
-	Children  []TreeNode `json:"children,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID        string      `json:"id"`
+	Name      string      `json:"name"`
+	Type      string      `json:"type"` // "folder" or "request"
+	Method    string      `json:"method,omitempty"`
+	Path      string      `json:"path"`
+	Children  []TreeNode  `json:"children,omitempty"`
+	Variables []KVPair    `json:"variables,omitempty"`
+	Headers   []KVPair    `json:"headers,omitempty"`
+	Auth      *AuthConfig `json:"auth,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
 }
 
 // Folder represents a folder in the collection tree.
 // Stored as _folder.json on disk.
 type Folder struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string      `json:"id"`
+	Name      string      `json:"name"`
+	Variables []KVPair    `json:"variables"`
+	Headers   []KVPair    `json:"headers"`
+	Auth      *AuthConfig `json:"auth,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 }
 
 // Environment represents a set of key-value variables for variable substitution.

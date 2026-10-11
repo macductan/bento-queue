@@ -305,3 +305,64 @@ func TestInitialize_FullFlow(t *testing.T) {
 		t.Error("environments/ should exist at configured path")
 	}
 }
+
+// TestUpdateCollectionRoot — tests both success and failure (e.g. read-only directory) cases.
+func TestUpdateCollectionRoot(t *testing.T) {
+	svc, tmpDir := setupTestConfigService(t)
+	ctx := context.Background()
+
+	// Override OS config dirs for this test
+	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
+	origCacheHome := os.Getenv("XDG_CACHE_HOME")
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
+	os.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
+	t.Cleanup(func() {
+		os.Setenv("XDG_CONFIG_HOME", origConfigHome)
+		os.Setenv("XDG_CACHE_HOME", origCacheHome)
+	})
+
+	// Success case
+	newRoot := filepath.Join(tmpDir, "new-root")
+	updatedRoot, err := svc.UpdateCollectionRoot(ctx, newRoot)
+	if err != nil {
+		t.Fatalf("expected success, got err: %v", err)
+	}
+	if updatedRoot != newRoot {
+		t.Errorf("expected %q, got %q", newRoot, updatedRoot)
+	}
+
+	// Verify it wrote to config.json
+	configPath, _ := svc.resolveConfigPath()
+	var cfg model.AppConfig
+	if err := svc.fs.ReadJSON(configPath, &cfg); err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	if cfg.CollectionRoot != newRoot {
+		t.Errorf("config has %q, want %q", cfg.CollectionRoot, newRoot)
+	}
+
+	// Failure case: Read-only directory
+	if os.Getuid() != 0 {
+		readOnlyDir := filepath.Join(tmpDir, "readonly")
+		if err := os.MkdirAll(readOnlyDir, 0555); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(readOnlyDir, 0755)
+
+		failRoot := filepath.Join(readOnlyDir, "fail-root")
+		_, err := svc.UpdateCollectionRoot(ctx, failRoot)
+		if err == nil {
+			t.Error("expected error when updating to read-only directory")
+		}
+
+		// Verify config wasn't modified
+		var cfgAfter model.AppConfig
+		if err := svc.fs.ReadJSON(configPath, &cfgAfter); err != nil {
+			t.Fatalf("failed to read config: %v", err)
+		}
+		if cfgAfter.CollectionRoot != newRoot {
+			t.Errorf("config should remain %q, but got %q", newRoot, cfgAfter.CollectionRoot)
+		}
+	}
+}
+

@@ -35,3 +35,14 @@ Thumbs.db
 build/hecto-api_*
 build/*.deb
 
+
+# Playwright auth
+.auth/
+playwright/.auth/
+
+# Testing
+playwright-report/
+test-results/
+
+# Env
+.env

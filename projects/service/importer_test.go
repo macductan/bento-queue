@@ -42,7 +42,7 @@ func TestImportPostman(t *testing.T) {
 		filePath := filepath.Join(root, "valid.json")
 		os.WriteFile(filePath, []byte(jsonContent), 0644)
 
-		res := impSvc.ImportPostman(root, filePath)
+		res := impSvc.ImportPostman(root, filePath, nil)
 		if !res.Success {
 			t.Fatalf("expected success, got error: %v", res.Error)
 		}
@@ -97,7 +97,7 @@ func TestImportPostman(t *testing.T) {
 		filePath := filepath.Join(root, "invalid_schema.json")
 		os.WriteFile(filePath, []byte(jsonContent), 0644)
 
-		res := impSvc.ImportPostman(root, filePath)
+		res := impSvc.ImportPostman(root, filePath, nil)
 		if res.Success {
 			t.Fatalf("expected error for invalid schema")
 		}
@@ -133,7 +133,7 @@ func TestImportPostman(t *testing.T) {
 		filePath := filepath.Join(root, "malformed.json")
 		os.WriteFile(filePath, []byte(jsonContent), 0644)
 
-		res := impSvc.ImportPostman(root, filePath)
+		res := impSvc.ImportPostman(root, filePath, nil)
 		if !res.Success {
 			t.Fatalf("expected success with skip")
 		}
@@ -180,7 +180,7 @@ func TestImportPostman(t *testing.T) {
 		filePath := filepath.Join(root, "collision.json")
 		os.WriteFile(filePath, []byte(jsonContent), 0644)
 
-		res := impSvc.ImportPostman(root, filePath)
+		res := impSvc.ImportPostman(root, filePath, nil)
 		if !res.Success {
 			t.Fatalf("expected success")
 		}
@@ -255,7 +255,7 @@ func TestImportPostman(t *testing.T) {
 		filePath := filepath.Join(root, "auth.json")
 		os.WriteFile(filePath, []byte(jsonContent), 0644)
 
-		res := impSvc.ImportPostman(root, filePath)
+		res := impSvc.ImportPostman(root, filePath, nil)
 		if !res.Success {
 			t.Fatalf("expected success")
 		}
@@ -312,6 +312,65 @@ func TestImportPostman(t *testing.T) {
 		}
 		if !hasAuth3 {
 			t.Errorf("expected request override token in headers, got %+v", req3.Headers)
+		}
+	})
+
+	t.Run("Progress Callback", func(t *testing.T) {
+		logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+		root := t.TempDir()
+		fs := storage.NewFileSystem()
+		impSvc := NewImporterService(fs, logger)
+
+		jsonContent := `{
+			"info": {
+				"name": "Progress Test",
+				"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+			},
+			"item": [
+				{
+					"name": "Folder 1",
+					"item": [
+						{
+							"name": "Request 1",
+							"request": {
+								"method": "GET",
+								"url": "https://a"
+							}
+						}
+					]
+				},
+				{
+					"name": "Request 2",
+					"request": {
+						"method": "GET",
+						"url": "https://b"
+					}
+				}
+			]
+		}`
+		filePath := filepath.Join(root, "progress.json")
+		os.WriteFile(filePath, []byte(jsonContent), 0644)
+
+		callbackCount := 0
+		expectedTotal := 4 // Root Folder + Folder 1 + Request 1 + Request 2
+
+		onProgress := func(count int, total int, text string) {
+			callbackCount++
+			if total != expectedTotal {
+				t.Errorf("expected total %d, got %d", expectedTotal, total)
+			}
+			if count != callbackCount {
+				t.Errorf("expected count %d, got %d", callbackCount, count)
+			}
+		}
+
+		res := impSvc.ImportPostman(root, filePath, onProgress)
+		if !res.Success {
+			t.Fatalf("expected success")
+		}
+
+		if callbackCount != expectedTotal {
+			t.Errorf("expected %d callbacks, got %d", expectedTotal, callbackCount)
 		}
 	})
 }

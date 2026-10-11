@@ -129,12 +129,14 @@ type Body struct {
 }
 
 type Folder struct {
-    ID       string    `json:"id"`
-    Name     string    `json:"name"`
-    Path     string    `json:"path"`     // relative path from collection root
-    Requests []Request `json:"requests"`
-    Folders  []Folder  `json:"folders"`  // nested
-    CreatedAt  string    `json:"created_at"`
+    ID                   string                          `json:"id"`
+    Name                 string                          `json:"name"`
+    Path                 string                          `json:"path"`     // relative path from collection root
+    Variables            []KVPair                        `json:"variables"` // Biến áp dụng chung cho mọi env
+    EnvironmentOverrides map[string][]KVPair             `json:"environment_overrides"` // Biến override theo Env ID
+    Requests             []Request                       `json:"requests"`
+    Folders              []Folder                        `json:"folders"`  // nested
+    CreatedAt            string                          `json:"created_at"`
 }
 
 type Environment struct {
@@ -293,7 +295,7 @@ Tên request/folder tiếng Việt → filename slug:
 
 Logic: lowercase → strip diacritics → replace spaces/special chars with `-` → dedup hyphens → trim. Nếu slug trùng trong cùng folder: append `-1`, `-2`... Collision check chạy synchronously trong `CreateFolder`/`SaveRequest` — Wails main goroutine đã serialize nên không có race condition.
 
-**Lưu ý:** Slug filename sinh lúc create và **không đổi khi rename**. Rename request/folder chỉ cập nhật field `name` trong file JSON, filename/directory name trên disk giữ nguyên. UUID là identity — slug chỉ phục vụ Git-readability.
+**Lưu ý (Quyết định kiến trúc):** Mặc dù UUID là identity thực sự của các entity (request, folder), tên file (filename) trên ổ đĩa vẫn sẽ giữ định dạng slug. Lý do: Giữ cho người dùng có thể dễ dàng đọc/hiểu trên file explorer và khi thực hiện git diff. Slug filename sinh lúc create và **không đổi khi rename** (rename chỉ cập nhật field `name` trong JSON).
 
 ---
 
@@ -552,12 +554,12 @@ flowchart LR
 1. Read file → parse JSON
 2. Validate format = Postman Collection v2.1 (`info.schema` field)
 3. Walk `item` array recursively (folders + requests)
-4. For each request: map Postman fields → hecto-api format, generate UUID, generate slug filename. Giữ nguyên `name` từ Postman — coi như bulk create qua luồng CRUD bình thường
-5. For each folder: create directory + `_folder.json`
+4. For each request: map Postman fields → hecto-api format, generate UUID, generate slug filename. Giữ nguyên `name` từ Postman — coi như bulk create qua luồng CRUD bình thường.
+5. For each folder: create directory (theo slug) + `_folder.json`. Parse mảng `variable` của Postman (nếu có) và map vào field `variables` của Folder.
 6. Item lai (có cả `item[]` và `request`): tạo folder + request bên trong, mỗi entity nhận UUID riêng
 7. Item không có cả `item[]` lẫn `request` (malformed): skip, ghi vào `ImportResult.Warnings[]`
 8. Preserve `{{variable}}` syntax (same between Postman and hecto-api)
-9. **Collision handling:** Trước khi write, check file/folder đã tồn tại chưa. Nếu slug trùng: append `-imported`, `-imported-1`, `-imported-2`... Không bao giờ overwrite file có sẵn
+9. **Collision handling:** Trước khi write, check file/folder đã tồn tại chưa. Nếu slug trùng: append `-imported`, `-imported-1`, `-imported-2`... Không bao giờ overwrite file có sẵn.
 10. Write all files to collection root
 11. Return count summary + warnings
 

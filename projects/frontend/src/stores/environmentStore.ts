@@ -83,9 +83,15 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
+  async function refresh() {
+    environments.value = []
+    activeEnvId.value = null
+    await loadAll()
+  }
+
   function setActive(id: string | null) {
     activeEnvId.value = id
   }
 
-  return { environments, activeEnvId, variablesMap, loadAll, save, remove, setActive }
+  return { environments, activeEnvId, variablesMap, loadAll, refresh, save, remove, setActive }
 })

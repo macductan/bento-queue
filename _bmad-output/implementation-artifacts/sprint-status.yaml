@@ -1,35 +1,5 @@
-# STATUS DEFINITIONS:
-# ==================
-# Epic Status:
-#   - backlog: Epic not yet started
-#   - in-progress: Epic actively being worked on
-#   - done: All stories in epic completed
-
-# Story Status:
-#   - backlog: Story only exists in epic file
-#   - ready-for-dev: Story file created, ready for development
-#   - in-progress: Developer actively working on implementation
-#   - review: Implementation complete, ready for review
-#   - done: Story completed
-
-# Retrospective Status:
-#   - optional: Can be completed but not required
-#   - done: Retrospective has been completed
-
-# Action Item Status:
-#   - open: Committed during a retrospective, not yet addressed
-#   - in-progress: Actively being worked on
-#   - done: Completed
-
-# WORKFLOW NOTES:
-# ===============
-# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
-# - Stories can be worked in parallel if team capacity allows
-# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
-# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
-# - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-24-2026 16:36
-last_updated: '2026-10-08 11:30'
+last_updated: 10-09-2026 18:36
 project: hecto-api
 project_key: NOKEY
 tracking_system: file-system
@@ -43,9 +13,10 @@ development_status:
   1-5-empty-state-toast-components: done
   1-6-slug-generation-utility-uuid-path-index: done
   1-7-epic-1-deferred-work-cleanup: done
+  1-8-change-storage-location: done
   epic-1-retrospective: done
 
-  epic-2: in-progress
+  epic-2: done
   2-1-collection-tree-loading-sidebar-rendering: done
   2-2-create-request-create-folder: done
   2-3-select-request-load-into-editor: done
@@ -56,7 +27,7 @@ development_status:
   2-8-epic-2-deferred-work-cleanup: done
   epic-2-retrospective: done
 
-  epic-3: in-progress
+  epic-3: done
   3-1-url-bar-method-selector: done
   3-2-kvp-editor-for-params-headers: done
   3-3-body-editor-with-type-selector: done
@@ -80,86 +51,96 @@ development_status:
   5-2-import-feedback-error-handling: done
   5-3-epic-5-deferred-work-cleanup: done
   epic-5-retrospective: done
+
+  bug-fix-tech-debt: done
+  epic-6: backlog
+  6-1-e2e-tests-for-folder-operations-edge-cases: backlog
+  6-2-nfr-performance-benchmarking-evidence: backlog
+  epic-6-retrospective: optional
 action_items:
-  - id: "epic-1-retro-item-1-thống-nhất-convention-error-message-cho"
+  - id: epic-1-retro-item-1-thống-nhất-convention-error-message-cho
     epic: 1
-    action: "Thống nhất convention error message cho service layer trước khi Epic
-      2 implement service bodies"
-    owner: "tanmac"
-    status: in-progress
-    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md"
-  - id: "epic-1-retro-item-2-sửa-collection-data-path-từ-os-usercache"
+    action: Thống nhất convention error message cho service layer trước khi Epic
+      2 implement service bodies
+    owner: tanmac
+    status: in-review
+    ref: _bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md
+  - id: epic-1-retro-item-2-sửa-collection-data-path-từ-os-usercache
     epic: 1
-    action: "Sửa collection data path từ os.UserCacheDir() sang XDG data dir (~/.local/share
-      trên Linux) trước release production"
-    owner: "tanmac"
-    status: open
-    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md"
-  - id: "epic-1-retro-item-3-ghi-vào-spec-2-1-wire-s-fs-indexrebuild"
+    action: Sửa collection data path từ os.UserCacheDir() sang XDG data dir 
+      (~/.local/share trên Linux) trước release production
+    owner: tanmac
+    status: done
+    ref: _bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md
+  - id: epic-1-retro-item-3-ghi-vào-spec-2-1-wire-s-fs-indexrebuild
     epic: 1
-    action: "Ghi vào spec 2.1: wire s.fs.IndexRebuild(collectionRoot) tại đầu CollectionService.GetTree"
-    owner: "tanmac"
+    action: 'Ghi vào spec 2.1: wire s.fs.IndexRebuild(collectionRoot) tại đầu CollectionService.GetTree'
+    owner: tanmac
     status: done
-    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md"
-  - id: "epic-1-retro-item-4-findbyuuid-early-return-errnotfound-nếu"
+    ref: _bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md
+  - id: epic-1-retro-item-4-findbyuuid-early-return-errnotfound-nếu
     epic: 1
-    action: "FindByUUID: early return ErrNotFound nếu uuid rỗng"
-    owner: "tanmac"
+    action: 'FindByUUID: early return ErrNotFound nếu uuid rỗng'
+    owner: tanmac
     status: done
-    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md"
-  - id: "epic-1-retro-item-5-thêm-test-case-indexrebuild-với-corrupte"
+    ref: _bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md
+  - id: epic-1-retro-item-5-thêm-test-case-indexrebuild-với-corrupte
     epic: 1
-    action: "Thêm test case IndexRebuild với corrupted JSON và file không đọc được"
-    owner: "tanmac"
-    status: open
-    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md"
-  - id: "epic-2-retro-item-6-hoàn-tất-review-cho-story-2-5-2-7-2-8-ưu"
-    epic: 2
-    action: "Hoàn tất review cho story 2.5, 2.7, 2.8 (ưu tiên sub-agent, chấp nhận
-      một session nếu không có), ghi Review Triage Log, đồng bộ status spec với sprint-status;
-      thống nhất câu chữ review gate trong AGENTS.md"
-    owner: "tanmac"
-    status: open
-    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md"
-  - id: "epic-2-retro-item-7-cài-đường-xóa-không-hỏi-cho-request-acti"
-    epic: 2
-    action: "Cài đường xóa không hỏi cho request active dirty (force hoặc reset current/original)
-      trong collectionStore.selectRequest/selectNextRequestOrClear trước khi editor
-      chỉnh sửa được"
-    owner: "tanmac"
+    action: Thêm test case IndexRebuild với corrupted JSON và file không đọc 
+      được
+    owner: tanmac
     status: done
-    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md"
-  - id: "epic-2-retro-item-8-reconcile-spec-2-7-với-as-built-vị-trí-a"
+    ref: _bmad-output/implementation-artifacts/epic-1-retro-2026-10-02.md
+  - id: epic-2-retro-item-6-hoàn-tất-review-cho-story-2-5-2-7-2-8-ưu
     epic: 2
-    action: "Reconcile spec 2.7 với as-built (vị trí amber dot, token màu, câu dialog,
-      tên API) hoặc chuyển dot vào RequestEditor ở Epic 3"
-    owner: "tanmac"
+    action: Hoàn tất review cho story 2.5, 2.7, 2.8 (ưu tiên sub-agent, chấp 
+      nhận một session nếu không có), ghi Review Triage Log, đồng bộ status spec
+      với sprint-status; thống nhất câu chữ review gate trong AGENTS.md
+    owner: tanmac
     status: done
-    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md"
-  - id: "epic-2-retro-item-9-import-tĩnh-uistore-và-helper-chung-cho"
+    ref: _bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md
+  - id: epic-2-retro-item-7-cài-đường-xóa-không-hỏi-cho-request-acti
     epic: 2
-    action: "Import tĩnh uiStore và helper chung cho toast/try-catch trong collectionStore/requestStore
-      trước khi Epic 3 thêm action mới"
-    owner: "tanmac"
+    action: Cài đường xóa không hỏi cho request active dirty (force hoặc reset 
+      current/original) trong 
+      collectionStore.selectRequest/selectNextRequestOrClear trước khi editor 
+      chỉnh sửa được
+    owner: tanmac
     status: done
-    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md"
-  - id: "epic-2-retro-item-10-quy-ước-subject-commit-chứa-story-key-dạ"
+    ref: _bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md
+  - id: epic-2-retro-item-8-reconcile-spec-2-7-với-as-built-vị-trí-a
     epic: 2
-    action: "Quy ước subject commit chứa story key dạng 2-7 (ví dụ feat(2-7): ...)"
-    owner: "tanmac"
-    status: open
-    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md"
-  - id: "epic-2-retro-item-11-điền-mục-running-and-verifying-trong-age"
+    action: Reconcile spec 2.7 với as-built (vị trí amber dot, token màu, câu 
+      dialog, tên API) hoặc chuyển dot vào RequestEditor ở Epic 3
+    owner: tanmac
+    status: done
+    ref: _bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md
+  - id: epic-2-retro-item-9-import-tĩnh-uistore-và-helper-chung-cho
     epic: 2
-    action: "Điền mục Running and verifying trong AGENTS.md (wails dev -tags webkit2_41,
-      phiên bản Go) và thêm checklist smoke UI cho Epic 2"
-    owner: "tanmac"
-    status: open
-    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md"
-  - id: "epic-5-retro-item-12-cân-nhắc-thêm-một-cơ-chế-theo-dõi-tiến-đ"
+    action: Import tĩnh uiStore và helper chung cho toast/try-catch trong 
+      collectionStore/requestStore trước khi Epic 3 thêm action mới
+    owner: tanmac
+    status: done
+    ref: _bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md
+  - id: epic-2-retro-item-10-quy-ước-subject-commit-chứa-story-key-dạ
+    epic: 2
+    action: 'Quy ước subject commit chứa story key dạng 2-7 (ví dụ feat(2-7): ...)'
+    owner: tanmac
+    status: done
+    ref: _bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md
+  - id: epic-2-retro-item-11-điền-mục-running-and-verifying-trong-age
+    epic: 2
+    action: Điền mục Running and verifying trong AGENTS.md (wails dev -tags 
+      webkit2_41, phiên bản Go) và thêm checklist smoke UI cho Epic 2
+    owner: tanmac
+    status: done
+    ref: _bmad-output/implementation-artifacts/epic-2-retro-2026-10-06.md
+  - id: epic-5-retro-item-12-cân-nhắc-thêm-một-cơ-chế-theo-dõi-tiến-đ
     epic: 5
-    action: "Cân nhắc thêm một cơ chế theo dõi tiến độ import (progress bar) trong
-      tương lai nếu hỗ trợ import Swagger/OpenAPI hoặc collection cực kỳ lớn."
-    owner: "tanmac"
-    status: open
-    ref: "/home/dev/mdt/hecto-api/_bmad-output/implementation-artifacts/epic-5-retro-2026-10-08.md"
+    action: Cân nhắc thêm một cơ chế theo dõi tiến độ import (progress bar) 
+      trong tương lai nếu hỗ trợ import Swagger/OpenAPI hoặc collection cực kỳ 
+      lớn.
+    owner: tanmac
+    status: done
+    ref: 
+      /home/dev/mdt/hecto-api/_bmad-output/implementation-artifacts/epic-5-retro-2026-10-08.md

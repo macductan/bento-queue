@@ -51,6 +51,13 @@ const handleRename = () => {
   uiStore.closeContextMenu()
 }
 
+const handleFolderSettings = () => {
+  if (uiStore.contextMenu && uiStore.contextMenu.nodeId !== '') {
+    collectionStore.setActiveFolderId(uiStore.contextMenu.nodeId)
+    uiStore.closeContextMenu()
+  }
+}
+
 const handleDuplicate = () => {
   if (uiStore.contextMenu?.nodeId) {
     collectionStore.duplicateRequest(uiStore.contextMenu.nodeId)
@@ -187,6 +194,13 @@ onUnmounted(() => {
         @click="handleRename"
       >
         Đổi tên
+      </button>
+      <button 
+        v-if="uiStore.contextMenu.nodeId !== ''"
+        class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
+        @click="handleFolderSettings"
+      >
+        Cài đặt thư mục
       </button>
       <button 
         v-if="uiStore.contextMenu.nodeId !== ''"

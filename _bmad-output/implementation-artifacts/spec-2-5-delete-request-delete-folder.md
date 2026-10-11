@@ -2,7 +2,7 @@
 title: 'Story 2.5: Delete Request & Delete Folder'
 type: 'feature'
 created: '2026-10-03'
-status: 'in-review'
+status: 'done'
 baseline_commit: '9da65890ff03c68116157db7f75d4a172f8086d8'
 route: 'dispatch'
 review_loop_iteration: 2
@@ -145,3 +145,8 @@ Layers: blind-hunter, edge-case-hunter, verification-gap — chạy tuần tự 
 | F15 | Commit chứa `diff-2-5.patch` (artifact tạm) | low | defer | Việc VCS; cần user duyệt trước khi sửa commit |
 
 Verification sau patch: `go vet ./...` (service, storage), `go test ./service/... ./storage/...` pass, `go build .` OK (với `frontend/dist` tạm), `npx vue-tsc --noEmit` exit 0.
+
+## Review Triage Log
+
+No findings reported. Review accepted.
+

@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -423,5 +424,41 @@ func TestIndexDeleteByPrefix(t *testing.T) {
 		if _, ok := fs.index[id]; !ok {
 			t.Errorf("%s should remain", id)
 		}
+	}
+}
+
+func TestIndexRebuild_IgnoresCorruptedAndUnreadable(t *testing.T) {
+	root, fs := setupCollectionTree(t)
+
+	// Create corrupted JSON
+	if err := os.WriteFile(filepath.Join(root, "corrupt.json"), []byte("{bad json}"), 0644); err != nil {
+		t.Fatalf("failed to write corrupted file: %v", err)
+	}
+
+	// Create unreadable file (if not Windows)
+	unreadablePath := filepath.Join(root, "unreadable.json")
+	if runtime.GOOS != "windows" {
+		if err := os.WriteFile(unreadablePath, []byte(`{"id": "unreadable-id"}`), 0000); err != nil {
+			t.Fatalf("failed to write unreadable file: %v", err)
+		}
+		defer func() {
+			if err := os.Chmod(unreadablePath, 0644); err != nil {
+				t.Logf("cleanup chmod failed: %v", err)
+			}
+		}()
+	}
+
+	// Should complete without error
+	if err := fs.IndexRebuild(root); err != nil {
+		t.Fatalf("IndexRebuild failed on corrupted/unreadable files: %v", err)
+	}
+
+	// Corrupted and unreadable files shouldn't be in index, only the 5 valid items from setupCollectionTree
+	if len(fs.index) != 5 {
+		t.Errorf("expected 5 items in index, got %d items", len(fs.index))
+	}
+	
+	if _, err := fs.FindByUUID("unreadable-id"); err == nil {
+		t.Errorf("expected error for unreadable-id, got no error")
 	}
 }

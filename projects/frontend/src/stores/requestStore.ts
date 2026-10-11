@@ -8,6 +8,8 @@ export interface KVPair {
   _isAuto?: boolean
 }
 
+import type { AuthConfig } from './collectionStore'
+
 export interface Body {
   type: string
   content: string
@@ -21,6 +23,7 @@ export interface Request {
   headers: KVPair[]
   params: KVPair[]
   body: Body
+  auth?: AuthConfig
   created_at: string
   updated_at: string
 }
@@ -72,6 +75,9 @@ export const useRequestStore = defineStore('request', {
         const result = await GetRequest(id)
         if (result.success && result.data) {
           this.original = result.data as Request
+          if (!this.original.auth) {
+            this.original.auth = { type: 'inherit' }
+          }
           this.current = JSON.parse(JSON.stringify(this.original))
           
           if (this.current?.body?.type === 'json' && this.current.headers && this.current.headers.length > 0) {
@@ -106,10 +112,13 @@ export const useRequestStore = defineStore('request', {
       this.saving = true
       this.error = null
       try {
-        const snapshot = JSON.parse(JSON.stringify(this.current))
-        const result = await SaveRequest(this.current as any)
+        const toSave = JSON.parse(JSON.stringify(this.current))
+        if (toSave.headers) {
+          toSave.headers = toSave.headers.filter((h: any) => !h._isAuto)
+        }
+        const result = await SaveRequest(toSave as any)
         if (result.success) {
-          this.original = snapshot
+          this.original = JSON.parse(JSON.stringify(this.current))
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast('Đã lưu')
           // Trigger tree reload in collectionStore

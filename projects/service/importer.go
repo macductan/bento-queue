@@ -56,6 +56,12 @@ type postmanAuth struct {
 	Basic  []postmanAuthParam `json:"basic,omitempty"`
 }
 
+type postmanVariable struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	Type  string `json:"type,omitempty"`
+}
+
 type postmanRequest struct {
 	Method string          `json:"method"`
 	URL    interface{}     `json:"url"`
@@ -69,33 +75,46 @@ type postmanItem struct {
 	Item    []postmanItem   `json:"item,omitempty"`
 	Request *postmanRequest `json:"request,omitempty"`
 	Auth    *postmanAuth    `json:"auth,omitempty"`
+	Variable []postmanVariable `json:"variable,omitempty"`
 }
 
 type postmanCollection struct {
 	Info postmanInfo   `json:"info"`
 	Item []postmanItem `json:"item"`
 	Auth *postmanAuth  `json:"auth,omitempty"`
+	Variable []postmanVariable `json:"variable,omitempty"`
 }
 
 // ImportPostman parses a Postman v2.1 collection JSON file and converts it
 // to the internal format.
-func (s *ImporterService) ImportPostman(rootPath, filePath string) model.Result {
+func countTotalItems(items []postmanItem) int {
+	total := 0
+	for _, item := range items {
+		total++ // Count this item (folder or request)
+		if len(item.Item) > 0 {
+			total += countTotalItems(item.Item)
+		}
+	}
+	return total
+}
+
+func (s *ImporterService) ImportPostman(rootPath, filePath string, onProgress func(count int, total int, text string)) model.Result {
 	s.logger.Info("ImportPostman called", "file", filePath)
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		s.logger.Error("Failed to read postman collection file", "error", err)
-		return model.NewError(model.ErrIO, fmt.Sprintf("Không thể đọc file: %v", err))
+		return model.NewError(model.ErrIO, fmt.Sprintf(ErrFileReadFailed, err))
 	}
 
 	var coll postmanCollection
 	if err := json.Unmarshal(data, &coll); err != nil {
 		s.logger.Error("Failed to parse postman collection JSON", "error", err)
-		return model.NewError(model.ErrParse, fmt.Sprintf("File JSON không hợp lệ: %v", err))
+		return model.NewError(model.ErrParse, fmt.Sprintf(ErrJSONInvalid, err))
 	}
 
 	if coll.Info.Schema == "" || !strings.Contains(coll.Info.Schema, "v2.1.0") {
-		return model.NewError(model.ErrValidation, "Chỉ hỗ trợ Postman Collection v2.1.0")
+		return model.NewError(model.ErrValidation, ErrPostmanVersionInvalid)
 	}
 
 	count := 0
@@ -108,12 +127,30 @@ func (s *ImporterService) ImportPostman(rootPath, filePath string) model.Result 
 	}
 	
 	rootItem := postmanItem{
-		Name: collName,
-		Item: coll.Item,
-		Auth: coll.Auth,
+		Name:     collName,
+		Item:     coll.Item,
+		Auth:     coll.Auth,
+		Variable: coll.Variable,
 	}
 	
-	c, fID := s.processItem(rootPath, rootItem, nil)
+	
+	totalItems := countTotalItems(rootItem.Item)
+	if rootItem.Request != nil || len(rootItem.Item) > 0 {
+		totalItems++
+	}
+	if totalItems == 0 {
+		totalItems = 1 // Prevent div by zero
+	}
+	processedCount := 0
+	
+	onItemProcessed := func(itemName string) {
+		processedCount++
+		if onProgress != nil {
+			onProgress(processedCount, totalItems, fmt.Sprintf("Đang import %s...", itemName))
+		}
+	}
+
+	c, fID := s.processItem(rootPath, rootItem, nil, onItemProcessed)
 	if c > 0 {
 		count += c
 		firstReqID = fID
@@ -125,7 +162,7 @@ func (s *ImporterService) ImportPostman(rootPath, filePath string) model.Result 
 	})
 }
 
-func (s *ImporterService) processItem(currentDir string, item postmanItem, inheritedAuth *postmanAuth) (int, string) {
+func (s *ImporterService) processItem(currentDir string, item postmanItem, inheritedAuth *postmanAuth, onProcessed func(string)) (int, string) {
 	if item.Request == nil && len(item.Item) == 0 {
 		// Malformed item
 		s.logger.Warn("Skipping malformed postman item", "name", item.Name)
@@ -148,13 +185,28 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 
 		if err := s.fs.MakeDir(folderPath); err != nil {
 			s.logger.Error("Failed to create folder directory", "path", folderPath, "error", err)
+			if onProcessed != nil {
+				onProcessed(item.Name)
+			}
 			return count, firstReqID
 		}
 
 		folderID := uuid.New().String()
+		
+		vars := []model.KVPair{}
+		for _, v := range item.Variable {
+			vars = append(vars, model.KVPair{
+				Key:     v.Key,
+				Value:   v.Value,
+				Enabled: true,
+			})
+		}
+		
 		folderMeta := model.Folder{
 			ID:        folderID,
 			Name:      item.Name,
+			Variables: vars,
+			Headers:   []model.KVPair{},
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
@@ -165,6 +217,9 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 		} else {
 			s.fs.IndexSet(folderID, folderPath)
 			count++
+		}
+		if onProcessed != nil {
+			onProcessed(item.Name)
 		}
 		
 		nextDir = folderPath
@@ -312,12 +367,15 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 				firstReqID = reqID
 			}
 		}
+		if onProcessed != nil {
+			onProcessed(item.Name)
+		}
 	}
 
 	if len(item.Item) > 0 {
 		// Process children
 		for _, child := range item.Item {
-			c, fID := s.processItem(nextDir, child, currentAuth)
+			c, fID := s.processItem(nextDir, child, currentAuth, onProcessed)
 			count += c
 			if firstReqID == "" && fID != "" {
 				firstReqID = fID

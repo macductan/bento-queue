@@ -15,11 +15,21 @@ const paramsCount = computed(() => {
 
 const headersCount = computed(() => {
   if (!req.value?.headers) return 0
-  return req.value.headers.filter(h => h.key.trim() !== '').length
+  return req.value.headers.filter(h => h && h.enabled && !h._isAuto && typeof h.key === 'string' && h.key.trim() !== '').length
+})
+
+const authCount = computed(() => {
+  const a = req.value?.auth
+  if (!a || a.type === 'none' || a.type === 'inherit') return 0
+  if (a.type === 'bearer') return a.bearer?.token?.trim() ? 1 : 0
+  if (a.type === 'basic') return (a.basic?.username?.trim() || a.basic?.password?.trim()) ? 1 : 0
+  if (a.type === 'apiKey') return a.apiKey?.key?.trim() ? 1 : 0
+  return 0
 })
 
 const tabs = computed(() => [
   { id: 'params', label: 'Params', count: paramsCount.value },
+  { id: 'auth', label: 'Auth', count: authCount.value },
   { id: 'headers', label: 'Headers', count: headersCount.value },
   { id: 'body', label: 'Body', count: 0 }
 ])
@@ -39,7 +49,7 @@ const activeTab = computed({
       :aria-selected="activeTab === tab.id"
       :aria-controls="`panel-${tab.id}`"
       :id="`tab-${tab.id}`"
-      @click="activeTab = tab.id as 'params' | 'headers' | 'body'"
+      @click="activeTab = tab.id as 'params' | 'auth' | 'headers' | 'body'"
       class="flex items-center gap-2 px-4 h-10 border-b-2 outline-none font-medium ui-sm"
       :class="[
         activeTab === tab.id 

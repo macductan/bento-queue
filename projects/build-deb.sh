@@ -1,17 +1,22 @@
 #!/bin/bash
 set -e
 
-APP_NAME="hecto-api"
-APP_VERSION="1.0.0"
-MAINTAINER="tanmd@foobla.com"
-ARCH="amd64"
-
 # Di chuyển vào đúng thư mục projects
 cd "$(dirname "$0")"
 
+APP_NAME="hecto-api"
+# Nguồn version duy nhất: frontend/package.json
+APP_VERSION=$(grep -m1 '"version"' frontend/package.json | awk -F '"' '{print $4}')
+if [[ -z "$APP_VERSION" ]]; then
+  echo "❌ Lỗi: Không thể lấy version từ frontend/package.json"
+  exit 1
+fi
+MAINTAINER="tanmd@foobla.com"
+ARCH="amd64"
+
 DEB_DIR="build/${APP_NAME}_${APP_VERSION}_${ARCH}"
 
-echo "🔥 Bắt đầu build package .deb cho ${APP_NAME}..."
+echo "🔥 Bắt đầu build package .deb cho ${APP_NAME} v${APP_VERSION}..."
 
 echo "1. Build ứng dụng bằng Wails..."
 source ~/.nvm/nvm.sh && nvm use
