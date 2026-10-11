@@ -30,13 +30,17 @@ func NewRequestService(fs *storage.FileSystem, logger *slog.Logger) *RequestServ
 func (s *RequestService) Get(id string) model.Result {
 	path, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(storageErrCode(err), "Request không tìm thấy")
+		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
 
 	var req model.Request
 	if err := s.fs.ReadJSON(path, &req); err != nil {
 		s.logger.Error("failed to read request", "id", id, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể đọc dữ liệu request")
+		return model.NewError(storageErrCode(err), ErrRequestReadFailed)
+	}
+
+	if req.Auth == nil {
+		req.Auth = &model.AuthConfig{Type: "inherit"}
 	}
 
 	return model.NewSuccess(req)
@@ -46,17 +50,18 @@ func (s *RequestService) Get(id string) model.Result {
 func (s *RequestService) Save(req model.Request) model.Result {
 	path, err := s.fs.FindByUUID(req.ID)
 	if err != nil {
-		return model.NewError(storageErrCode(err), "Request không tìm thấy")
+		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
 
 	if !s.fs.Exists(path) {
 		s.fs.IndexDelete(req.ID)
-		return model.NewError(model.ErrNotFound, "Request không tìm thấy")
+		return model.NewError(model.ErrNotFound, ErrRequestNotFound)
 	}
 
+	req.UpdatedAt = time.Now()
 	if err := s.fs.WriteJSON(path, req); err != nil {
 		s.logger.Error("failed to save request", "id", req.ID, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể lưu request")
+		return model.NewError(storageErrCode(err), ErrRequestSaveFailed)
 	}
 
 	return model.NewSuccess(nil)
@@ -66,20 +71,20 @@ func (s *RequestService) Save(req model.Request) model.Result {
 func (s *RequestService) Delete(id string) model.Result {
 	path, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(storageErrCode(err), "Request không tìm thấy")
+		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
 
 	if !strings.HasSuffix(path, ".json") {
-		return model.NewError(model.ErrValidation, "ID không trỏ tới một file request hợp lệ")
+		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
 	if err := s.fs.Delete(path); err != nil {
 		if storageErrCode(err) == model.ErrNotFound {
 			s.fs.IndexDelete(id)
-			return model.NewError(model.ErrNotFound, "Request không tìm thấy")
+			return model.NewError(model.ErrNotFound, ErrRequestNotFound)
 		}
 		s.logger.Error("failed to delete request", "id", id, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể xóa request")
+		return model.NewError(storageErrCode(err), ErrRequestDeleteFailed)
 	}
 
 	s.fs.IndexDelete(id)
@@ -90,7 +95,7 @@ func (s *RequestService) Delete(id string) model.Result {
 func (s *RequestService) Rename(id, newName string) model.Result {
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
-		return model.NewError(model.ErrValidation, "Tên request không được để trống")
+		return model.NewError(model.ErrValidation, ErrRequestNameEmpty)
 	}
 	if len([]rune(newName)) > 255 {
 		newName = string([]rune(newName)[:255])
@@ -98,13 +103,13 @@ func (s *RequestService) Rename(id, newName string) model.Result {
 
 	path, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(storageErrCode(err), "Request không tìm thấy")
+		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
 
 	var req model.Request
 	if err := s.fs.ReadJSON(path, &req); err != nil {
 		s.logger.Error("failed to read request for rename", "id", id, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể đọc dữ liệu request")
+		return model.NewError(storageErrCode(err), ErrRequestReadFailed)
 	}
 
 	if req.Name == newName {
@@ -116,7 +121,7 @@ func (s *RequestService) Rename(id, newName string) model.Result {
 
 	if err := s.fs.WriteJSON(path, req); err != nil {
 		s.logger.Error("failed to update request name", "id", id, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể lưu tên request mới")
+		return model.NewError(storageErrCode(err), ErrRequestRenameFailed)
 	}
 
 	return model.NewSuccess(nil)
@@ -125,21 +130,21 @@ func (s *RequestService) Rename(id, newName string) model.Result {
 // Duplicate creates a copy of a request in the same folder.
 func (s *RequestService) Duplicate(id string) model.Result {
 	if id == "" {
-		return model.NewError(model.ErrValidation, "ID không hợp lệ")
+		return model.NewError(model.ErrValidation, ErrIDInvalid)
 	}
 
 	path, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(storageErrCode(err), "Request không tìm thấy")
+		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
 	if !strings.HasSuffix(path, ".json") {
-		return model.NewError(model.ErrValidation, "ID không trỏ tới một file request hợp lệ")
+		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
 	var req model.Request
 	if err := s.fs.ReadJSON(path, &req); err != nil {
 		s.logger.Error("failed to read request for duplicate", "id", id, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể đọc dữ liệu request")
+		return model.NewError(storageErrCode(err), ErrRequestReadFailed)
 	}
 
 	newName := req.Name + " (bản sao)"
@@ -159,7 +164,7 @@ func (s *RequestService) Duplicate(id string) model.Result {
 
 	if err := s.fs.WriteJSON(newPath, req); err != nil {
 		s.logger.Error("failed to write duplicated request", "newId", req.ID, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể lưu request bản sao")
+		return model.NewError(storageErrCode(err), ErrRequestDuplicateFailed)
 	}
 
 	s.fs.IndexSet(req.ID, newPath)

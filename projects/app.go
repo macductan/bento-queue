@@ -65,6 +65,12 @@ func (a *App) startup(ctx context.Context) {
 // Each binding = one operation on one entity. Name = Verb + Entity.
 
 // GetCollectionTree returns the collection tree structure.
+// GetCollectionRoot returns the current collection root path.
+func (a *App) GetCollectionRoot() string {
+	return a.collRoot
+}
+
+// GetCollectionTree returns the collection tree structure.
 func (a *App) GetCollectionTree() model.Result {
 	return a.collSvc.GetTree(a.collRoot)
 }
@@ -169,5 +175,44 @@ func (a *App) SelectPostmanFile() string {
 
 // ImportPostman imports a Postman v2.1 collection file.
 func (a *App) ImportPostman(filePath string) model.Result {
-	return a.impSvc.ImportPostman(a.collRoot, filePath)
+	return a.impSvc.ImportPostman(a.collRoot, filePath, func(count int, total int, text string) {
+		runtime.EventsEmit(a.ctx, "import:progress", map[string]interface{}{
+			"count": count,
+			"total": total,
+			"text":  text,
+		})
+	})
+}
+
+// SelectDirectoryDialog opens a folder dialog for selecting a storage directory.
+func (a *App) SelectDirectoryDialog() string {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Storage Location",
+	})
+	if err != nil {
+		a.logger.Error("SelectDirectoryDialog failed", "error", err)
+		return ""
+	}
+	return dir
+}
+
+// UpdateCollectionRoot updates the collection root and reinitializes default collection.
+func (a *App) UpdateCollectionRoot(newRoot string) model.Result {
+	updatedRoot, err := a.cfgSvc.UpdateCollectionRoot(a.ctx, newRoot)
+	if err != nil {
+		a.logger.Error("UpdateCollectionRoot failed", "error", err, "newRoot", newRoot)
+		return model.NewError(model.ErrIO, "Không thể cập nhật thư mục lưu trữ")
+	}
+	a.collRoot = updatedRoot
+	return model.NewSuccess(a.collRoot)
+}
+
+// LoadFolder loads a folder's details (including variables).
+func (a *App) LoadFolder(id string) model.Result {
+	return a.collSvc.LoadFolder(id)
+}
+
+// UpdateFolder updates a folder's details (variables).
+func (a *App) UpdateFolder(folder model.Folder) model.Result {
+	return a.collSvc.UpdateFolder(folder)
 }

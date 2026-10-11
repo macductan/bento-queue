@@ -136,7 +136,7 @@ Người dùng có thể tạo, đổi tên, xóa Folder trong Collection. Folde
 Người dùng có thể tạo, sao chép, đổi tên, xóa, di chuyển Request giữa các Folder.
 
 **Consequences (testable):**
-- Mỗi Request lưu thành một file JSON riêng trên disk (YAML deferred v2+)
+- Mỗi Request lưu thành một file JSON riêng trên disk (tên file được sinh theo định dạng "slug" dễ đọc, UUID chỉ đóng vai trò identity nội bộ). Quyết định giữ nguyên slug thay vì UUID để tối ưu tính dễ đọc (readability) khi xem trên file explorer và git diff.
 - File Request đọc được bằng text editor, chứa đầy đủ method, URL, headers, params, body
 
 #### FR-9: Sidebar navigation
@@ -178,6 +178,14 @@ Biến dạng `{{key}}` trong URL, Headers, Body được thay thế bằng giá
 - Variable không tồn tại giữ nguyên dạng `{{key}}`, hiển thị highlight đỏ + in nghiêng để dễ nhận biết
 - Variable substitution xảy ra lúc gửi, không thay đổi nội dung đã lưu trong file
 
+#### FR-14: Quản lý biến môi trường cấp Folder
+
+Người dùng có thể định nghĩa biến môi trường ở cấp folder. Các request con sẽ kế thừa các biến này.
+
+**Consequences (testable):**
+- Có thể set biến global cho folder hoặc set riêng cho từng môi trường (environment override).
+- Khi resolve biến `{{key}}`, app sẽ tìm theo thứ tự: Active Environment -> Thư mục cha trực tiếp -> Các thư mục cha cao hơn.
+
 ### 4.4 Import
 
 **Mô tả:** Cho phép chuyển từ Postman sang hecto-api mà không mất dữ liệu. Realizes UJ-4.
@@ -192,6 +200,7 @@ Người dùng có thể import file Postman Collection v2.1 (JSON). App chuyể
 - Import collection có ≥ 10 requests thành công
 - Giữ nguyên method, URL, headers, body, folder structure
 - Variables dạng `{{var}}` trong Postman được giữ nguyên cú pháp
+- Biến môi trường ở cấp folder từ file Postman cũng được import thành công vào `_folder.json`
 - File kết quả trên disk đúng format nội bộ của hecto-api
 
 **Out of Scope:** Import từ Bruno, OpenAPI, cURL (v2+).

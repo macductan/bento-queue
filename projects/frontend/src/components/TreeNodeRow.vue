@@ -161,6 +161,7 @@ const paddingLeft = computed(() => {
     <div 
       class="flex items-center py-1.5 pr-2 cursor-pointer transition-colors select-none group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
       data-tree-row="true"
+      :data-active="isActive ? 'true' : undefined"
       :class="{
         'border-l-2 border-brand-primary bg-surface-hover text-text-primary': isActive,
         'border-l-2 border-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary': !isActive && !isFolder,

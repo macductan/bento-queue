@@ -3,8 +3,8 @@ build/bin
 
 # Frontend
 node_modules
-frontend/dist
-frontend/wailsjs/
+frontend/dist/*
+!frontend/dist/.gitkeep
 frontend/package.json.md5
 
 # Go
@@ -35,3 +35,14 @@ Thumbs.db
 build/hecto-api_*
 build/*.deb
 
+
+# Playwright auth
+.auth/
+playwright/.auth/
+
+# Testing
+playwright-report/
+test-results/
+
+# Env
+.env

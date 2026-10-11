@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,8 +107,12 @@ func TestExecutorService_Send_Validation(t *testing.T) {
 }
 
 func TestExecutorService_Send_Inflight(t *testing.T) {
+	started := make(chan struct{})
+	finishHandler := make(chan struct{})
+	var once sync.Once
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+		once.Do(func() { close(started) })
+		<-finishHandler
 	}))
 	defer ts.Close()
 
@@ -115,7 +120,6 @@ func TestExecutorService_Send_Inflight(t *testing.T) {
 	req := model.ExecuteRequest{Method: "GET", URL: ts.URL}
 
 	errChan := make(chan *model.AppError)
-
 	go func() {
 		res := exec.Send(req)
 		if !res.Success {
@@ -125,7 +129,11 @@ func TestExecutorService_Send_Inflight(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for first request to reach server")
+	}
 
 	res2 := exec.Send(req)
 	if res2.Success {
@@ -135,12 +143,16 @@ func TestExecutorService_Send_Inflight(t *testing.T) {
 		t.Errorf("Expected inflight validation error, got %v", res2.Error)
 	}
 
+	close(finishHandler)
 	<-errChan
 }
 
 func TestExecutorService_Abort(t *testing.T) {
+	started := make(chan struct{})
+	var once sync.Once
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
+		once.Do(func() { close(started) })
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -152,7 +164,12 @@ func TestExecutorService_Abort(t *testing.T) {
 		resChan <- exec.Send(req)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for request to reach server")
+	}
+
 	abortRes := exec.Abort()
 	if !abortRes.Success {
 		t.Errorf("Abort failed")
@@ -160,7 +177,7 @@ func TestExecutorService_Abort(t *testing.T) {
 
 	res := <-resChan
 	if res.Success {
-		t.Errorf("Expected error from aborted request")
+		t.Fatalf("Expected error from aborted request")
 	}
 	if res.Error.Code != model.ErrAborted {
 		t.Errorf("Expected ABORTED, got %s", res.Error.Code)
@@ -169,7 +186,7 @@ func TestExecutorService_Abort(t *testing.T) {
 
 func TestExecutorService_Timeout(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -362,10 +379,13 @@ func TestExecutorService_Binary(t *testing.T) {
 }
 
 func TestExecutorService_AbortDuringBody(t *testing.T) {
+	started := make(chan struct{})
+	var once sync.Once
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.(http.Flusher).Flush()
-		time.Sleep(200 * time.Millisecond)
+		once.Do(func() { close(started) })
+		<-r.Context().Done()
 	}))
 	defer ts.Close()
 
@@ -377,7 +397,12 @@ func TestExecutorService_AbortDuringBody(t *testing.T) {
 		resChan <- exec.Send(req)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for request to reach server")
+	}
+
 	abortRes := exec.Abort()
 	if !abortRes.Success {
 		t.Errorf("Abort failed")
@@ -385,7 +410,7 @@ func TestExecutorService_AbortDuringBody(t *testing.T) {
 
 	res := <-resChan
 	if res.Success {
-		t.Errorf("Expected error from aborted request")
+		t.Fatalf("Expected error from aborted request")
 	}
 	if res.Error.Code != model.ErrAborted {
 		t.Errorf("Expected ABORTED, got %s", res.Error.Code)

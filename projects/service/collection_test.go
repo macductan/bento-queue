@@ -13,6 +13,7 @@ import (
 	"hecto-api/storage"
 )
 
+
 func setupCollectionService(t *testing.T) (*service.CollectionService, *storage.FileSystem, string) {
 	root := t.TempDir()
 	fs := storage.NewFileSystem()
@@ -42,7 +43,7 @@ func TestGetTree_NestedStructure(t *testing.T) {
 	svc, fs, root := setupCollectionService(t)
 
 	// Create root level request
-	req1 := model.Request{ID: "req1", Name: "Root Req", Method: "GET", CreatedAt: time.Now()}
+	req1 := createTestRequest("req1", "Root Req", "GET")
 	fs.WriteJSON(filepath.Join(root, "root-req.json"), req1)
 
 	// Create folder 1
@@ -52,7 +53,7 @@ func TestGetTree_NestedStructure(t *testing.T) {
 	fs.WriteJSON(filepath.Join(folder1Path, "_folder.json"), folder1)
 
 	// Create request in folder 1
-	req2 := model.Request{ID: "req2", Name: "Nested Req", Method: "POST", CreatedAt: time.Now()}
+	req2 := createTestRequest("req2", "Nested Req", "POST")
 	fs.WriteJSON(filepath.Join(folder1Path, "nested-req.json"), req2)
 
 	// Create folder 2 nested in folder 1
@@ -62,7 +63,7 @@ func TestGetTree_NestedStructure(t *testing.T) {
 	fs.WriteJSON(filepath.Join(folder2Path, "_folder.json"), folder2)
 
 	// Create request in folder 2 (3 levels deep)
-	req3 := model.Request{ID: "req3", Name: "Deep Req", Method: "PUT", CreatedAt: time.Now()}
+	req3 := createTestRequest("req3", "Deep Req", "PUT")
 	fs.WriteJSON(filepath.Join(folder2Path, "deep-req.json"), req3)
 
 	res := svc.GetTree(root)
@@ -112,7 +113,7 @@ func TestGetTree_CorruptedFiles(t *testing.T) {
 	svc, fs, root := setupCollectionService(t)
 
 	// Valid request
-	req1 := model.Request{ID: "req1", Name: "Root Req", Method: "GET", CreatedAt: time.Now()}
+	req1 := createTestRequest("req1", "Root Req", "GET")
 	fs.WriteJSON(filepath.Join(root, "root-req.json"), req1)
 
 	// Corrupted request
@@ -194,7 +195,7 @@ func TestCreateRequest(t *testing.T) {
 
 	// Test create with request as parent
 	reqPath := filepath.Join(root, "req.json")
-	fs.WriteJSON(reqPath, model.Request{ID: "req-id"})
+	fs.WriteJSON(reqPath, createTestRequest("req-id", "", ""))
 	svc.GetTree(root)
 	res5 := svc.CreateRequest(root, "req-id")
 	if res5.Success {
@@ -255,6 +256,10 @@ func TestCreateFolder(t *testing.T) {
 }
 
 func TestCreate_DiskError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping permission test as root")
+	}
+
 	svc, _, root := setupCollectionService(t)
 
 	// Make a read-only directory
@@ -290,9 +295,9 @@ func TestDeleteFolder_RecursiveAndIndexCleanup(t *testing.T) {
 	f2 := filepath.Join(f1, "f2")
 	writeFolder(t, fs, f1, "f1", "F1")
 	writeFolder(t, fs, f2, "f2", "F2")
-	fs.WriteJSON(filepath.Join(f1, "a.json"), model.Request{ID: "ra", Name: "A", Method: "GET"})
-	fs.WriteJSON(filepath.Join(f2, "b.json"), model.Request{ID: "rb", Name: "B", Method: "GET"})
-	fs.WriteJSON(filepath.Join(root, "keep.json"), model.Request{ID: "rk", Name: "K", Method: "GET"})
+	fs.WriteJSON(filepath.Join(f1, "a.json"), createTestRequest("ra", "A", "GET"))
+	fs.WriteJSON(filepath.Join(f2, "b.json"), createTestRequest("rb", "B", "GET"))
+	fs.WriteJSON(filepath.Join(root, "keep.json"), createTestRequest("rk", "K", "GET"))
 
 	if res := svc.GetTree(root); !res.Success {
 		t.Fatalf("GetTree: %v", res.Error)
@@ -338,7 +343,7 @@ func TestDeleteFolder_UUIDAfterRestart(t *testing.T) {
 
 func TestDeleteFolder_Guards(t *testing.T) {
 	svc, fs, root := setupCollectionService(t)
-	fs.WriteJSON(filepath.Join(root, "req.json"), model.Request{ID: "r1", Name: "R", Method: "GET"})
+	fs.WriteJSON(filepath.Join(root, "req.json"), createTestRequest("r1", "R", "GET"))
 	writeFolder(t, fs, filepath.Join(root, "environments"), "env-folder", "Env")
 	outside := t.TempDir()
 	writeFolder(t, fs, filepath.Join(outside, "ext"), "ext", "Ext")
@@ -388,7 +393,7 @@ func TestMoveRequest(t *testing.T) {
 	f1 := filepath.Join(root, "f1")
 	writeFolder(t, fs, f1, "f1", "Folder 1")
 
-	req1 := model.Request{ID: "r1", Name: "Req 1", Method: "GET"}
+	req1 := createTestRequest("r1", "Req 1", "GET")
 	fs.WriteJSON(filepath.Join(root, "r1.json"), req1)
 
 	// Build index
@@ -433,7 +438,7 @@ func TestGetTree_Symlink(t *testing.T) {
 	// Create a folder and a request
 	f1 := filepath.Join(root, "f1")
 	writeFolder(t, fs, f1, "f1", "Folder 1")
-	fs.WriteJSON(filepath.Join(f1, "r1.json"), model.Request{ID: "r1", Name: "Req 1"})
+	fs.WriteJSON(filepath.Join(f1, "r1.json"), createTestRequest("r1", "Req 1", ""))
 
 	// Create symlink to root
 	symlinkPath := filepath.Join(root, "link_to_root")
@@ -579,3 +584,193 @@ func TestRenameFolder_AfterIndexRebuild(t *testing.T) {
 		t.Errorf("Folder not renamed correctly")
 	}
 }
+
+func TestFolder_Headers_CRUD(t *testing.T) {
+	svc, _, root := setupCollectionService(t)
+
+	// Create folder
+	res := svc.CreateFolder(root, "")
+	if !res.Success {
+		t.Fatalf("CreateFolder failed: %v", res.Error)
+	}
+	node := res.Data.(model.TreeNode)
+
+	// Load folder
+	loadRes := svc.LoadFolder(node.ID)
+	if !loadRes.Success {
+		t.Fatalf("LoadFolder failed: %v", loadRes.Error)
+	}
+	folder := loadRes.Data.(model.Folder)
+	if folder.Headers == nil {
+		t.Fatalf("expected Headers not to be nil")
+	}
+
+	// Update folder with headers
+	folder.Headers = []model.KVPair{
+		{Key: "X-Custom", Value: "123", Enabled: true},
+		{Key: "Authorization", Value: "Bearer token", Enabled: false},
+	}
+	updRes := svc.UpdateFolder(folder)
+	if !updRes.Success {
+		t.Fatalf("UpdateFolder failed: %v", updRes.Error)
+	}
+
+	// Reload folder and verify
+	loadRes2 := svc.LoadFolder(node.ID)
+	if !loadRes2.Success {
+		t.Fatalf("LoadFolder reload failed: %v", loadRes2.Error)
+	}
+	folder2 := loadRes2.Data.(model.Folder)
+	if len(folder2.Headers) != 2 {
+		t.Fatalf("expected 2 headers, got %d", len(folder2.Headers))
+	}
+	if folder2.Headers[0].Key != "X-Custom" || folder2.Headers[0].Value != "123" || !folder2.Headers[0].Enabled {
+		t.Errorf("header 0 mismatch: %+v", folder2.Headers[0])
+	}
+
+	// Verify GetTree includes headers in TreeNode
+	treeRes := svc.GetTree(root)
+	if !treeRes.Success {
+		t.Fatalf("GetTree failed: %v", treeRes.Error)
+	}
+	treeNodes := treeRes.Data.([]model.TreeNode)
+	if len(treeNodes) == 0 {
+		t.Fatalf("expected at least 1 node in tree")
+	}
+	if len(treeNodes[0].Headers) != 2 {
+		t.Fatalf("expected tree node to have 2 headers, got %d", len(treeNodes[0].Headers))
+	}
+}
+
+func TestFolderAndRequest_Auth_CRUD(t *testing.T) {
+	svc, _, root := setupCollectionService(t)
+
+	// Create folder
+	createRes := svc.CreateFolder(root, "")
+	if !createRes.Success {
+		t.Fatalf("CreateFolder failed: %v", createRes.Error)
+	}
+	folderNode := createRes.Data.(model.TreeNode)
+	if folderNode.Auth == nil || folderNode.Auth.Type != "inherit" {
+		t.Fatalf("expected folder default Auth type inherit, got %+v", folderNode.Auth)
+	}
+
+	// Load folder
+	loadRes := svc.LoadFolder(folderNode.ID)
+	if !loadRes.Success {
+		t.Fatalf("LoadFolder failed: %v", loadRes.Error)
+	}
+	folder := loadRes.Data.(model.Folder)
+	if folder.Auth == nil || folder.Auth.Type != "inherit" {
+		t.Fatalf("expected loaded folder Auth inherit, got %+v", folder.Auth)
+	}
+
+	// Update folder with Bearer Auth
+	folder.Auth = &model.AuthConfig{
+		Type: "bearer",
+		Bearer: &model.BearerAuth{
+			Token: "test-token-123",
+		},
+	}
+	updRes := svc.UpdateFolder(folder)
+	if !updRes.Success {
+		t.Fatalf("UpdateFolder failed: %v", updRes.Error)
+	}
+
+	// Reload folder and verify
+	loadRes2 := svc.LoadFolder(folderNode.ID)
+	if !loadRes2.Success {
+		t.Fatalf("LoadFolder reload failed: %v", loadRes2.Error)
+	}
+	folder2 := loadRes2.Data.(model.Folder)
+	if folder2.Auth == nil || folder2.Auth.Type != "bearer" || folder2.Auth.Bearer == nil || folder2.Auth.Bearer.Token != "test-token-123" {
+		t.Fatalf("expected Bearer Auth with token test-token-123, got %+v", folder2.Auth)
+	}
+
+	// Create request in folder
+	reqRes := svc.CreateRequest(root, folderNode.ID)
+	if !reqRes.Success {
+		t.Fatalf("CreateRequest failed: %v", reqRes.Error)
+	}
+
+	// Verify GetTree returns Auth for both folder and request
+	treeRes := svc.GetTree(root)
+	if !treeRes.Success {
+		t.Fatalf("GetTree failed: %v", treeRes.Error)
+	}
+	treeNodes := treeRes.Data.([]model.TreeNode)
+	if len(treeNodes) == 0 {
+		t.Fatalf("expected at least 1 node in tree")
+	}
+	if treeNodes[0].Auth == nil || treeNodes[0].Auth.Type != "bearer" {
+		t.Fatalf("expected folder tree node to have Bearer auth, got %+v", treeNodes[0].Auth)
+	}
+	if len(treeNodes[0].Children) == 0 {
+		t.Fatalf("expected folder to have 1 child request")
+	}
+	childReq := treeNodes[0].Children[0]
+	if childReq.Auth == nil || childReq.Auth.Type != "inherit" {
+		t.Fatalf("expected request tree node to have inherit auth, got %+v", childReq.Auth)
+	}
+
+	// Update folder to APIKey Auth
+	folder.Auth = &model.AuthConfig{
+		Type: "apiKey",
+		APIKey: &model.APIKeyAuth{
+			Key:   "X-API-KEY",
+			Value: "my-val",
+			AddTo: "header",
+		},
+	}
+	svc.UpdateFolder(folder)
+	loadRes3 := svc.LoadFolder(folderNode.ID)
+	folder3 := loadRes3.Data.(model.Folder)
+	if folder3.Auth == nil || folder3.Auth.Type != "apiKey" || folder3.Auth.APIKey.Key != "X-API-KEY" {
+		t.Fatalf("expected apiKey Auth, got %+v", folder3.Auth)
+	}
+}
+
+func TestLegacyFiles_WithoutAuth_DefaultsToInherit(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+
+	// Create legacy folder JSON without "auth" key
+	fDir := filepath.Join(root, "legacy-folder")
+	fs.MakeDir(fDir)
+	rawFolderJSON := `{"id":"leg-folder","name":"Legacy Folder","created_at":"2026-01-01T00:00:00Z"}`
+	os.WriteFile(filepath.Join(fDir, "_folder.json"), []byte(rawFolderJSON), 0644)
+
+	// Create legacy request JSON without "auth" key
+	rawReqJSON := `{"id":"leg-req","name":"Legacy Req","method":"GET","url":"https://example.com","created_at":"2026-01-01T00:00:00Z"}`
+	os.WriteFile(filepath.Join(fDir, "req.json"), []byte(rawReqJSON), 0644)
+
+	// Build tree
+	res := svc.GetTree(root)
+	if !res.Success {
+		t.Fatalf("GetTree failed: %v", res.Error)
+	}
+
+	nodes := res.Data.([]model.TreeNode)
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 folder node, got %d", len(nodes))
+	}
+	if nodes[0].Auth == nil || nodes[0].Auth.Type != "inherit" {
+		t.Errorf("expected legacy folder auth to default to inherit, got %+v", nodes[0].Auth)
+	}
+	if len(nodes[0].Children) != 1 {
+		t.Fatalf("expected 1 child request, got %d", len(nodes[0].Children))
+	}
+	if nodes[0].Children[0].Auth == nil || nodes[0].Children[0].Auth.Type != "inherit" {
+		t.Errorf("expected legacy request auth to default to inherit, got %+v", nodes[0].Children[0].Auth)
+	}
+
+	// Verify LoadFolder also defaults Auth to inherit
+	loadRes := svc.LoadFolder("leg-folder")
+	if !loadRes.Success {
+		t.Fatalf("LoadFolder failed: %v", loadRes.Error)
+	}
+	loadedFolder := loadRes.Data.(model.Folder)
+	if loadedFolder.Auth == nil || loadedFolder.Auth.Type != "inherit" {
+		t.Errorf("expected loaded legacy folder auth to be inherit, got %+v", loadedFolder.Auth)
+	}
+}
+

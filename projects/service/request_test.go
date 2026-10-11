@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"hecto-api/model"
 	"hecto-api/service"
@@ -23,7 +22,7 @@ func setupRequestService(t *testing.T) (*service.RequestService, *storage.FileSy
 func TestRequestDelete_RemovesFileAndIndex(t *testing.T) {
 	svc, fs, root := setupRequestService(t)
 	path := filepath.Join(root, "r.json")
-	fs.WriteJSON(path, model.Request{ID: "r1", Name: "R", Method: "GET", CreatedAt: time.Now()})
+	fs.WriteJSON(path, createTestRequest("r1", "R", "GET"))
 	fs.IndexSet("r1", path)
 
 	if res := svc.Delete("r1"); !res.Success {
@@ -64,7 +63,7 @@ func TestRequestDelete_NotFound(t *testing.T) {
 func TestRequestDuplicate_Success(t *testing.T) {
 	svc, fs, root := setupRequestService(t)
 	path := filepath.Join(root, "r.json")
-	fs.WriteJSON(path, model.Request{ID: "r1", Name: "Login", Method: "POST", CreatedAt: time.Now()})
+	fs.WriteJSON(path, createTestRequest("r1", "Login", "POST"))
 	fs.IndexSet("r1", path)
 
 	res := svc.Duplicate("r1")
@@ -100,7 +99,7 @@ func TestRequestDuplicate_Success(t *testing.T) {
 func TestRequestDelete_LostFile(t *testing.T) {
 	svc, fs, root := setupRequestService(t)
 	path := filepath.Join(root, "r.json")
-	fs.WriteJSON(path, model.Request{ID: "r1"})
+	fs.WriteJSON(path, createTestRequest("r1", "", ""))
 	fs.IndexSet("r1", path)
 
 	// Xóa ngoài app
@@ -119,7 +118,7 @@ func TestRequestDelete_LostFile(t *testing.T) {
 func TestRequestSave_LostFile(t *testing.T) {
 	svc, fs, root := setupRequestService(t)
 	path := filepath.Join(root, "r.json")
-	fs.WriteJSON(path, model.Request{ID: "r1"})
+	fs.WriteJSON(path, createTestRequest("r1", "", ""))
 	fs.IndexSet("r1", path)
 
 	// Xóa ngoài app
@@ -150,7 +149,7 @@ func TestRequestGet_ParseError(t *testing.T) {
 func TestRequestRename_Success(t *testing.T) {
 	svc, fs, root := setupRequestService(t)
 	path := filepath.Join(root, "r.json")
-	fs.WriteJSON(path, model.Request{ID: "r1", Name: "Old"})
+	fs.WriteJSON(path, createTestRequest("r1", "Old", ""))
 	fs.IndexSet("r1", path)
 
 	res := svc.Rename("r1", "New")
@@ -177,7 +176,7 @@ func TestRequestRename_Validation(t *testing.T) {
 func TestRequestRename_Truncate(t *testing.T) {
 	svc, fs, root := setupRequestService(t)
 	path := filepath.Join(root, "r.json")
-	fs.WriteJSON(path, model.Request{ID: "r1", Name: "Old"})
+	fs.WriteJSON(path, createTestRequest("r1", "Old", ""))
 	fs.IndexSet("r1", path)
 
 	longName := strings.Repeat("A", 300)
@@ -191,5 +190,85 @@ func TestRequestRename_Truncate(t *testing.T) {
 	fs.ReadJSON(path, &req)
 	if len([]rune(req.Name)) != 255 {
 		t.Errorf("expected 255 runes, got %d", len([]rune(req.Name)))
+	}
+}
+
+func TestRequestSaveAndGet_Auth(t *testing.T) {
+	svc, fs, root := setupRequestService(t)
+	path := filepath.Join(root, "r.json")
+	fs.WriteJSON(path, createTestRequest("r1", "Req Auth", "GET"))
+	fs.IndexSet("r1", path)
+
+	// Save request with Bearer Auth
+	bearerReq := createTestRequest("r1", "Req Auth", "GET")
+	bearerReq.Auth = &model.AuthConfig{
+		Type: "bearer",
+		Bearer: &model.BearerAuth{
+			Token: "test-token-123",
+		},
+	}
+
+	saveRes := svc.Save(bearerReq)
+	if !saveRes.Success {
+		t.Fatalf("expected Save success, got %+v", saveRes.Error)
+	}
+
+	// Verify Get restores Auth
+	getRes := svc.Get("r1")
+	if !getRes.Success {
+		t.Fatalf("expected Get success, got %+v", getRes.Error)
+	}
+
+	loadedReq, ok := getRes.Data.(model.Request)
+	if !ok {
+		t.Fatalf("expected model.Request data")
+	}
+
+	if loadedReq.Auth == nil {
+		t.Fatalf("expected loadedReq.Auth not nil")
+	}
+	if loadedReq.Auth.Type != "bearer" {
+		t.Errorf("expected bearer, got %s", loadedReq.Auth.Type)
+	}
+	if loadedReq.Auth.Bearer == nil || loadedReq.Auth.Bearer.Token != "test-token-123" {
+		t.Errorf("expected token 'test-token-123', got %+v", loadedReq.Auth.Bearer)
+	}
+	if loadedReq.UpdatedAt.IsZero() {
+		t.Errorf("expected UpdatedAt to be set upon Save")
+	}
+}
+
+func TestRequestDuplicate_PreservesAuth(t *testing.T) {
+	svc, fs, root := setupRequestService(t)
+	path := filepath.Join(root, "r.json")
+	req := createTestRequest("r1", "Original", "POST")
+	req.Auth = &model.AuthConfig{
+		Type: "basic",
+		Basic: &model.BasicAuth{
+			Username: "admin",
+			Password: "secretpassword",
+		},
+	}
+	fs.WriteJSON(path, req)
+	fs.IndexSet("r1", path)
+
+	dupRes := svc.Duplicate("r1")
+	if !dupRes.Success {
+		t.Fatalf("expected Duplicate success, got %+v", dupRes.Error)
+	}
+
+	dupReq, ok := dupRes.Data.(model.Request)
+	if !ok {
+		t.Fatalf("expected model.Request data")
+	}
+
+	if dupReq.Auth == nil {
+		t.Fatalf("expected dupReq.Auth not nil")
+	}
+	if dupReq.Auth.Type != "basic" {
+		t.Errorf("expected basic, got %s", dupReq.Auth.Type)
+	}
+	if dupReq.Auth.Basic == nil || dupReq.Auth.Basic.Username != "admin" || dupReq.Auth.Basic.Password != "secretpassword" {
+		t.Errorf("expected basic auth credentials preserved, got %+v", dupReq.Auth.Basic)
 	}
 }

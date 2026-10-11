@@ -2,7 +2,7 @@
 title: 'Story 2.8: Epic 2 Deferred Work Cleanup'
 type: 'chore'
 created: '2026-10-05'
-status: 'in-review'
+status: 'done'
 route: 'dispatch'
 review_loop_iteration: 0
 context: []
@@ -93,6 +93,8 @@ context: []
 ## Spec Change Log
 
 ## Review Triage Log
+
+No findings reported. Review accepted.
 
 ## Design Notes
 

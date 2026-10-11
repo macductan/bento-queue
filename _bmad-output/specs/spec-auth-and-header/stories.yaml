@@ -1,0 +1,21 @@
+- id: "1"
+  title: Quản lý và kế thừa Header
+  description: >-
+    Thêm UI cấu hình Header ở cấp độ Folder và xử lý logic kế thừa từ Folder xuống Request con.
+    Đảm bảo request con ghi đè header cha khi trùng key (không phân biệt hoa thường) và lưu trữ chuẩn vào file theo cấu trúc đã định.
+  spec_checkpoint: true
+  done_checkpoint: true
+
+- id: "2"
+  title: Giao diện ẩn/hiện Default Headers
+  description: >-
+    Thêm nút toggle trên tab Header của Request để hiển thị các header kế thừa và tự sinh (như Content-Type) dưới dạng read-only, giúp giao diện người dùng không bị nhiễu.
+  spec_checkpoint: true
+  done_checkpoint: true
+
+- id: "3"
+  title: Cấu hình Authentication
+  description: >-
+    Thêm tab Auth cho Folder và Request, hỗ trợ 5 chế độ tĩnh (Inherit, No Auth, Bearer Token, Basic Auth, API Key). Xử lý logic nhúng token vào request khi gửi.
+  spec_checkpoint: true
+  done_checkpoint: true

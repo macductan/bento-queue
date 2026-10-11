@@ -46,14 +46,14 @@ func (s *ConfigService) Initialize(ctx context.Context) (*model.AppConfig, error
 	configPath, err := s.resolveConfigPath()
 	if err != nil {
 		s.logger.Error("không thể resolve config path", "error", err)
-		s.emitStartupError(ctx, fmt.Sprintf("Không thể xác định thư mục config: %s", err))
+		s.emitStartupError(ctx, fmt.Sprintf(ErrConfigResolvePathFailed, err))
 		return nil, fmt.Errorf("%s: %w", model.ErrIO, err)
 	}
 
 	config, err := s.loadOrCreateConfig(configPath)
 	if err != nil {
 		s.logger.Error("không thể load/create config", "path", configPath, "error", err)
-		s.emitStartupError(ctx, fmt.Sprintf("Không thể khởi tạo config: %s", err))
+		s.emitStartupError(ctx, fmt.Sprintf(ErrConfigInitFailed, err))
 		return nil, fmt.Errorf("%s: %w", model.ErrIO, err)
 	}
 
@@ -200,4 +200,43 @@ func (s *ConfigService) emitStartupError(ctx context.Context, message string) {
 		return
 	}
 	wailsRuntime.EventsEmit(ctx, "startup-error", message)
+}
+
+// UpdateCollectionRoot updates the collection root in config.json and ensures the new directory structure is initialized.
+func (s *ConfigService) UpdateCollectionRoot(ctx context.Context, newRoot string) (string, error) {
+	if strings.TrimSpace(newRoot) == "" {
+		defaultRoot, err := s.resolveDefaultCollectionRoot()
+		if err != nil {
+			return "", fmt.Errorf("resolve default root: %w", err)
+		}
+		newRoot = defaultRoot
+	}
+
+	configPath, err := s.resolveConfigPath()
+	if err != nil {
+		return "", fmt.Errorf("resolve config path: %w", err)
+	}
+	
+	// Load current config
+	config, err := s.loadOrCreateConfig(configPath)
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+
+	// Ensure new directory has collection.json first to verify it's writable
+	if err := s.ensureDefaultCollection(ctx, newRoot); err != nil {
+		return "", fmt.Errorf("ensure collection: %w", err)
+	}
+
+	// Update collection root
+	config.CollectionRoot = newRoot
+	config.UpdatedAt = time.Now()
+
+	// Write back
+	if err := s.fs.WriteJSON(configPath, config); err != nil {
+		return "", fmt.Errorf("write config: %w", err)
+	}
+
+	s.logger.Info("collection root updated", "new_root", newRoot)
+	return newRoot, nil
 }

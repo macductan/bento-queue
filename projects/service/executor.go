@@ -60,23 +60,23 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 	case "GET", "POST", "PUT", "PATCH", "DELETE":
 		// valid
 	default:
-		return model.NewError(model.ErrValidation, "Phương thức không hợp lệ")
+		return model.NewError(model.ErrValidation, ErrMethodInvalid)
 	}
 
 	// Validate URL
 	if req.URL == "" {
-		return model.NewError(model.ErrValidation, "URL không được để trống")
+		return model.NewError(model.ErrValidation, ErrURLEmpty)
 	}
 	u, err := url.Parse(req.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return model.NewError(model.ErrValidation, "URL không hợp lệ hoặc thiếu scheme (http/https)")
+		return model.NewError(model.ErrValidation, ErrURLInvalid)
 	}
 
 	// Concurrency check
 	s.mu.Lock()
 	if s.inflight {
 		s.mu.Unlock()
-		return model.NewError(model.ErrValidation, "Request đang được gửi")
+		return model.NewError(model.ErrValidation, ErrRequestInProgress)
 	}
 	s.inflight = true
 
@@ -99,7 +99,7 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, method, req.URL, bodyReader)
 	if err != nil {
-		return model.NewError(model.ErrValidation, fmt.Sprintf("Không thể tạo request: %v", err))
+		return model.NewError(model.ErrValidation, fmt.Sprintf(ErrRequestCreateFailed, err))
 	}
 
 	// Headers
@@ -117,14 +117,14 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.Canceled):
-			return model.NewError(model.ErrAborted, "Đã hủy")
+			return model.NewError(model.ErrAborted, ErrAborted)
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return model.NewError(model.ErrTimeout, "Quá thời gian chờ (timeout)")
+			return model.NewError(model.ErrTimeout, ErrTimeout)
 		default:
 			if isTLSError(err) {
-				return model.NewError(model.ErrConnection, fmt.Sprintf("Lỗi chứng chỉ SSL: %v", err))
+				return model.NewError(model.ErrConnection, fmt.Sprintf(ErrCertInvalid, err))
 			}
-			return model.NewError(model.ErrConnection, fmt.Sprintf("Lỗi kết nối: %v", err))
+			return model.NewError(model.ErrConnection, fmt.Sprintf(ErrConnectionFailed, err))
 		}
 	}
 	defer httpRes.Body.Close()
@@ -135,11 +135,11 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.Canceled):
-			return model.NewError(model.ErrAborted, "Đã hủy")
+			return model.NewError(model.ErrAborted, ErrAborted)
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return model.NewError(model.ErrTimeout, "Quá thời gian chờ (timeout) khi đọc body")
+			return model.NewError(model.ErrTimeout, ErrTimeoutBody)
 		default:
-			return model.NewError(model.ErrConnection, fmt.Sprintf("Lỗi khi đọc body: %v", err))
+			return model.NewError(model.ErrConnection, fmt.Sprintf(ErrBodyReadFailed, err))
 		}
 	}
 

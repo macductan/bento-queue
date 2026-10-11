@@ -4,14 +4,20 @@ import { useRequestStore } from '@/stores/requestStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
 const props = defineProps<{
-  field: 'params' | 'headers'
+  field?: 'params' | 'headers'
+  modelValue?: any[]
 }>()
 
 const requestStore = useRequestStore()
 
 const rows = computed(() => {
-  if (!requestStore.current) return []
-  return requestStore.current[props.field] || []
+  if (props.modelValue) return props.modelValue
+  if (!requestStore.current || !props.field) return []
+  const list = requestStore.current[props.field] || []
+  if (props.field === 'headers') {
+    return list.filter(h => !h._isAuto)
+  }
+  return list
 })
 
 const keyInputs = ref<HTMLInputElement[]>([])
@@ -31,34 +37,42 @@ const onPhantomInput = (part: 'key' | 'value', e: Event) => {
   const v = target.value
   target.value = '' // Explicitly clear the DOM value
   
-  const cur = requestStore.current
-  if (!cur) return
-  let arr = cur[props.field]
-  if (!arr) {
-    arr = []
-    cur[props.field] = arr
+  let arr = rows.value
+  if (!props.modelValue) {
+    const cur = requestStore.current
+    if (!cur || !props.field) return
+    if (!cur[props.field]) {
+      cur[props.field] = []
+    }
+    arr = cur[props.field]
   }
+  
   arr.push({ key: part === 'key' ? v : '', value: part === 'value' ? v : '', enabled: true })
   nextTick(() => focusCell(arr.length - 1, part))
 }
 
 const addRow = () => {
-  const cur = requestStore.current
-  if (!cur) return
-  let arr = cur[props.field]
-  if (!arr) {
-    arr = []
-    cur[props.field] = arr
+  let arr = rows.value
+  if (!props.modelValue) {
+    const cur = requestStore.current
+    if (!cur || !props.field) return
+    if (!cur[props.field]) {
+      cur[props.field] = []
+    }
+    arr = cur[props.field]
   }
   arr.push({ key: '', value: '', enabled: true })
   nextTick(() => focusCell(arr.length - 1, 'key'))
 }
 
 const removeRow = (index: number) => {
-  const cur = requestStore.current
-  if (!cur) return
-  const arr = cur[props.field]
-  if (arr) {
+  let arr = rows.value
+  if (!props.modelValue) {
+    const cur = requestStore.current
+    if (!cur || !props.field) return
+    arr = cur[props.field]
+  }
+  if (arr && index >= 0 && index < arr.length) {
     arr.splice(index, 1)
   }
 }
@@ -80,30 +94,30 @@ const autoResize = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
   if (target) {
     target.style.height = 'auto'
-    target.style.height = target.scrollHeight + 'px'
+    target.style.height = Math.max(32, target.scrollHeight) + 'px'
   }
 }
 
 const initResize = (el: any) => {
   if (el) {
     el.style.height = 'auto'
-    el.style.height = el.scrollHeight + 'px'
+    el.style.height = Math.max(32, el.scrollHeight) + 'px'
   }
 }
 </script>
 
 <template>
   <div class="flex flex-col gap-2">
-    <div class="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-start">
+    <div class="flex items-start gap-2 pl-[40px] pr-[40px]">
       <!-- Headers -->
-      <div class="col-start-2 ui-xs uppercase text-text-muted px-2">Key</div>
-      <div class="col-start-3 ui-xs uppercase text-text-muted px-2">Value</div>
+      <div class="flex-1 ui-xs uppercase text-text-muted px-2">Key</div>
+      <div class="flex-[2] ui-xs uppercase text-text-muted px-2">Value</div>
     </div>
     
     <div class="flex flex-col gap-1">
       <!-- Real rows -->
-      <div v-for="(row, index) in rows" :key="index" class="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-start group" :class="{ 'opacity-50': !row.enabled }">
-        <div class="flex items-center justify-center h-[32px]">
+      <div v-for="(row, index) in rows" :key="index" class="flex items-start gap-2 group" :class="{ 'opacity-50': !row.enabled }">
+        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <button 
             type="button"
             role="checkbox"
@@ -125,17 +139,17 @@ const initResize = (el: any) => {
           :readonly="row._isAuto"
           :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
           placeholder="Key"
-          class="bg-surface-base mono-sm text-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full"
+          class="flex-1 bg-surface-base mono-sm text-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none min-w-0"
           :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
           spellcheck="false"
           autocomplete="off"
         />
         
-        <div class="relative w-full h-full min-w-0 bg-surface-base rounded">
+        <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">
           <VariableHighlighter
             :ref="el => { if (el) highlighterRefs[index] = el }"
             :value="row.value"
-            overlay-class="px-3 py-1.5 mono-sm h-full w-full flex border border-transparent"
+            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent"
           >
             <textarea 
               v-model="row.value" 
@@ -145,7 +159,7 @@ const initResize = (el: any) => {
               @scroll="e => highlighterRefs[index]?.syncScroll(e)"
               @input="autoResize"
               placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full h-full resize-none overflow-hidden block"
+              class="transparent-selection bg-transparent mono-sm text-transparent caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
               :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
               spellcheck="false"
               autocomplete="off"
@@ -154,7 +168,7 @@ const initResize = (el: any) => {
           </VariableHighlighter>
         </div>
         
-        <div class="flex items-center justify-center h-[32px]">
+        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <button 
             v-if="!row._isAuto"
             @click="removeRow(index)" 
@@ -169,8 +183,8 @@ const initResize = (el: any) => {
       </div>
       
       <!-- Phantom row -->
-      <div class="grid grid-cols-[auto_1fr_1fr_auto] gap-2 items-start group">
-        <div class="flex items-center justify-center h-[32px]">
+      <div class="flex items-start gap-2 group">
+        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <button 
             type="button"
             role="checkbox"
@@ -191,16 +205,16 @@ const initResize = (el: any) => {
           @input="e => onPhantomInput('key', e)"
           :ref="el => { if (el) keyInputs[rows.length] = el as HTMLInputElement }"
           placeholder="Key"
-          class="bg-surface-base mono-sm text-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full"
+          class="flex-1 bg-surface-base mono-sm text-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none min-w-0"
           spellcheck="false"
           autocomplete="off"
         />
         
-        <div class="relative w-full h-full min-w-0 bg-surface-base rounded">
+        <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">
           <VariableHighlighter
             :ref="el => { if (el) highlighterRefs[rows.length] = el }"
             :value="''"
-            overlay-class="px-3 py-1.5 mono-sm h-full w-full flex border border-transparent"
+            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent"
           >
             <textarea 
               rows="1"
@@ -209,14 +223,14 @@ const initResize = (el: any) => {
               :ref="el => { if (el) { valueInputs[rows.length] = el as HTMLTextAreaElement; initResize(el) } }"
               @scroll="e => highlighterRefs[rows.length]?.syncScroll(e)"
               placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full h-full resize-none overflow-hidden block"
+              class="transparent-selection bg-transparent mono-sm text-transparent caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
               spellcheck="false"
               autocomplete="off"
             ></textarea>
           </VariableHighlighter>
         </div>
         
-        <div class="flex items-center justify-center h-[32px]">
+        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <!-- No delete button for phantom row -->
         </div>
       </div>

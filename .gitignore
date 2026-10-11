@@ -1,9 +1,3 @@
-# Skill directories (gitignored per policy)
-.agent/skills
-.agents/skills
-.claude/skills
-.kiro/skills
-
 # Go build artifacts
 *.exe
 *.exe~
@@ -17,8 +11,8 @@
 projects/build/bin
 
 # Frontend
-projects/frontend/dist
-projects/frontend/wailsjs/
+projects/frontend/dist/*
+!projects/frontend/dist/.gitkeep
 projects/frontend/package.json.md5
 node_modules
 
@@ -34,6 +28,7 @@ Thumbs.db
 
 # Temp files from atomic writes
 .tmp-*
+screenshots/
 
 # BMad render cache
 _bmad/render/
@@ -45,3 +40,5 @@ projects/frontend/package-lock.json
 projects/build/hecto-api_*
 projects/build/*.deb
 
+.temp_skills
+skill-cli.sh

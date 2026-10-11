@@ -8,6 +8,9 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SaveRequest: vi.fn()
 }))
 
+import { createMockRequest } from "./utils"
+
+
 describe('requestStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -15,17 +18,7 @@ describe('requestStore', () => {
 
   it('should auto-add Content-Type header when changing to JSON', () => {
     const store = useRequestStore()
-    store.current = {
-      id: '1',
-      name: 'test',
-      method: 'POST',
-      url: 'https://example.com',
-      headers: [],
-      params: [],
-      body: { type: 'none', content: '' },
-      created_at: '',
-      updated_at: ''
-    }
+    store.current = createMockRequest()
 
     store.setBodyType('json')
     expect(store.contentTypeAuto).toBe(true)
@@ -41,20 +34,13 @@ describe('requestStore', () => {
 
   it('should remove auto-added Content-Type header when changing to none/text', () => {
     const store = useRequestStore()
-    store.current = {
-      id: '1',
-      name: 'test',
-      method: 'POST',
-      url: 'https://example.com',
+    store.current = createMockRequest({
       headers: [
         { key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true },
         { key: 'Authorization', value: 'Bearer token', enabled: true }
       ],
-      params: [],
-      body: { type: 'json', content: '{}' },
-      created_at: '',
-      updated_at: ''
-    }
+      body: { type: 'json', content: '{}' }
+    })
     store.contentTypeAuto = true
 
     store.setBodyType('none')
@@ -66,19 +52,11 @@ describe('requestStore', () => {
 
   it('should not add Content-Type if one already exists when changing to JSON', () => {
     const store = useRequestStore()
-    store.current = {
-      id: '1',
-      name: 'test',
-      method: 'POST',
-      url: 'https://example.com',
+    store.current = createMockRequest({
       headers: [
         { key: 'Content-Type', value: 'application/x-www-form-urlencoded', enabled: true }
-      ],
-      params: [],
-      body: { type: 'none', content: '' },
-      created_at: '',
-      updated_at: ''
-    }
+      ]
+    })
     
     store.setBodyType('json')
     expect(store.contentTypeAuto).toBe(false)

@@ -20,9 +20,21 @@ Lightweight offline-first desktop API client replacing Postman/Bruno. Wails v2 (
 
 ## Running and verifying
 
-- TODO: Wails v2 — `wails dev` to run, `wails build` to produce binary. Set up once `go.mod` and `wails.json` exist.
-- TODO: Vue 3 frontend — dev server and build commands via the frontend `package.json` inside the Wails project.
+- Wails v2: Run `wails dev -tags webkit2_41` in the `projects` directory to start the development server. Requires Go 1.25.0.
+- Vue 3 frontend: Dev server is managed by Wails, but you can run bun scripts from `projects/frontend/package.json` if needed.
 - Node version: 24 (`.nvmrc`).
+
+## Epic 2 UI Smoke Test Checklist
+
+When testing Epic 2 features visually, verify the following:
+- Collection tree loads and displays folders/requests correctly.
+- Creating a new request/folder adds it to the tree immediately.
+- Selecting a request loads its details into the editor (URL, method, empty state).
+- Renaming a request/folder updates the tree instantly.
+- Deleting a request/folder removes it from the tree and clears the editor if it was selected.
+- Duplicating a request creates a copy (e.g., "Copy of ...") in the tree.
+- Modifying a request shows an amber unsaved changes dot in the context menu.
+
 
 ## Conventions that differ from defaults
 
@@ -40,6 +52,25 @@ Lightweight offline-first desktop API client replacing Postman/Bruno. Wails v2 (
 
 - **Branching**: Story work (`/bmad-build`) is done DIRECTLY on the `develop` branch. Do NOT create feature branches. Do NOT ask the user which branch to use. Ignore the "Never push to develop" policy for story work.
 - **Safety**: Never run `git commit`, `git push`, or any version-control write operation without explicit user approval. Always ask first.
+- **Skill Tracking**: Các thư mục skill (`.agent/skills/`, `.agents/skills/`, `.claude/skills/`, `.kiro/skills/`) được commit và track trong Git (đã gỡ khỏi `.gitignore`).
+
+## Release, Versioning & Commit Squashing
+
+- **Single Source of Truth cho Version**:
+  - Toàn bộ ứng dụng và các script đóng gói (`projects/build-dmg.sh`, `projects/build-deb.sh`,...) BẮT BUỘC lấy version từ `projects/frontend/package.json`. Tuyệt đối không hardcode version ở từng script riêng rẽ.
+  - Giao diện UI (`AppHeader.vue`) import trực tiếp version từ `package.json`.
+- **Semantic Versioning**:
+  - Tuân thủ SemVer (MAJOR.MINOR.PATCH):
+    - Thêm tính năng mới tương thích ngược -> tăng MINOR (ví dụ: `1.0.0` -> `1.1.0`).
+    - Sửa lỗi -> tăng PATCH (ví dụ: `1.1.0` -> `1.1.1`).
+    - Thay đổi phá vỡ tương thích (breaking changes) -> tăng MAJOR.
+- **Quy trình gom và chuẩn hóa commit khi chốt tính năng**:
+  - Khi hoàn thành chốt một đợt tính năng / milestone:
+    1. Cập nhật version mới trong `projects/frontend/package.json`.
+    2. Chạy kiểm tra toàn diện (`bun run type-check`, `bun run test`, `go test ./...`) đảm bảo pass 100%.
+    3. Tiến hành gom (squash) toàn bộ các commit lẻ trên nhánh `develop` tính từ commit chuẩn gần nhất (`v1.0.0`) thành 1 commit duy nhất chuẩn hóa (theo Conventional Commits, ví dụ: `feat: release v1.1.0 - ...`).
+    4. **Chỉ gom commit trên nhánh `develop`** — việc merge sang `main` do người dùng tự thực hiện sau.
+    5. **MANDATORY CONFIRMATION**: Luôn trình bày tóm tắt thay đổi và xin xác nhận của người dùng trước khi chạy các lệnh `git commit`, `git reset`, `git push`.
 
 ## Review gate (bmad-build)
 
@@ -50,5 +81,5 @@ Lightweight offline-first desktop API client replacing Postman/Bruno. Wails v2 (
   2. Tell the human the story is at the review gate and they can switch model.
   3. **STOP / HALT**. Do NOT start step-04 in the same turn. NEVER self-review inline and mark as done in the same turn.
   *(Exception: For unattended `bmad-build-auto` runs, skip this gate and proceed directly to step-04.)*
-- **Resuming**: When the human resumes and tells you to proceed, run step-04 using **subagents**. Run the three review layers (blind-hunter, edge-case-hunter, verification-gap) via subagents, triage findings, and apply patches.
+- **Resuming**: When the human resumes and tells you to proceed, run step-04 using **subagents** (if available, otherwise run the reviews directly in the same session). Run the three review layers (blind-hunter, edge-case-hunter, verification-gap) concurrently, triage findings, and apply patches.
 - Never set the spec to `done` until review findings are triaged.

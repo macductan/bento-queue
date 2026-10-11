@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, ref } from 'vue'
+import { computed, ref, inject, type Ref, type ComputedRef } from 'vue'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { parseVariables } from '@/utils/variables'
 
@@ -8,15 +8,18 @@ const props = withDefaults(defineProps<{
   overlayClass?: string;
   singleLine?: boolean;
   wrap?: boolean;
+  variablesMap?: Map<string, string>;
 }>(), {
   singleLine: false,
   wrap: true
 })
 
 const envStore = useEnvironmentStore()
+const injectedVars = inject<Ref<Map<string, string>> | ComputedRef<Map<string, string>> | null>('effectiveVariables', null)
 
 const segments = computed(() => {
-  return parseVariables(props.value || '', envStore.variablesMap)
+  const vars = props.variablesMap || injectedVars?.value || envStore.variablesMap
+  return parseVariables(props.value || '', vars)
 })
 
 const overlayRef = ref<HTMLElement | null>(null)

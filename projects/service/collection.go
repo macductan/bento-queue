@@ -34,7 +34,7 @@ func (s *CollectionService) GetTree(rootPath string) model.Result {
 
 	if rootPath == "" {
 		s.logger.Error("collection root is empty")
-		return model.NewError(model.ErrIO, "Đường dẫn collection trống")
+		return model.NewError(model.ErrIO, ErrCollectionRootEmpty)
 	}
 
 	if err := s.fs.IndexRebuild(rootPath); err != nil {
@@ -115,12 +115,19 @@ func (s *CollectionService) buildFolderNode(fullPath string) (model.TreeNode, bo
 		children = []model.TreeNode{}
 	}
 
+	if folder.Auth == nil {
+		folder.Auth = &model.AuthConfig{Type: "inherit"}
+	}
+
 	return model.TreeNode{
 		ID:        folder.ID,
 		Name:      folder.Name,
 		Type:      "folder",
 		Path:      fullPath,
 		Children:  children,
+		Variables: folder.Variables,
+		Headers:   folder.Headers,
+		Auth:      folder.Auth,
 		CreatedAt: folder.CreatedAt,
 	}, true
 }
@@ -137,12 +144,17 @@ func (s *CollectionService) buildRequestNode(fullPath string) (model.TreeNode, b
 		return model.TreeNode{}, false
 	}
 
+	if req.Auth == nil {
+		req.Auth = &model.AuthConfig{Type: "inherit"}
+	}
+
 	return model.TreeNode{
 		ID:        req.ID,
 		Name:      req.Name,
 		Type:      "request",
 		Method:    req.Method,
 		Path:      fullPath,
+		Auth:      req.Auth,
 		CreatedAt: req.CreatedAt,
 	}, true
 }
@@ -153,7 +165,7 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 
 	if rootPath == "" {
 		s.logger.Error("rootPath is required in CreateFolder")
-		return model.NewError(model.ErrValidation, "Đường dẫn collection trống")
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
 	id := uuid.New().String()
@@ -163,6 +175,9 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 	folder := model.Folder{
 		ID:        id,
 		Name:      name,
+		Variables: []model.KVPair{},
+		Headers:   []model.KVPair{},
+		Auth:      &model.AuthConfig{Type: "inherit"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -171,10 +186,10 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 	if parentFolderID != "" {
 		folderPath, err := s.fs.FindByUUID(parentFolderID)
 		if err != nil {
-			return model.NewError(model.ErrNotFound, "Không tìm thấy thư mục cha")
+			return model.NewError(model.ErrNotFound, ErrParentFolderNotFound)
 		}
 		if !s.fs.Exists(filepath.Join(folderPath, folderMetaFile)) || !isDeletableFolderPath(rootPath, folderPath) {
-			return model.NewError(model.ErrValidation, "Thư mục cha không hợp lệ")
+			return model.NewError(model.ErrValidation, ErrParentFolderInvalid)
 		}
 		targetDir = folderPath
 	}
@@ -184,7 +199,7 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 
 	if err := s.fs.MakeDir(folderPath); err != nil {
 		s.logger.Error("failed to create folder directory", "path", folderPath, "error", err)
-		return model.NewError(model.ErrIO, "Không thể tạo thư mục")
+		return model.NewError(model.ErrIO, ErrFolderCreateFailed)
 	}
 
 	metaPath := filepath.Join(folderPath, "_folder.json")
@@ -192,7 +207,7 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 		// Cleanup orphaned directory to keep disk state consistent
 		os.Remove(folderPath)
 		s.logger.Error("failed to write _folder.json", "path", metaPath, "error", err)
-		return model.NewError(model.ErrIO, "Không thể lưu thông tin thư mục")
+		return model.NewError(model.ErrIO, ErrFolderInfoSaveFailed)
 	}
 
 	s.fs.IndexSet(id, folderPath)
@@ -203,6 +218,9 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 		Type:      "folder",
 		Path:      folderPath,
 		Children:  []model.TreeNode{},
+		Variables: []model.KVPair{},
+		Headers:   []model.KVPair{},
+		Auth:      folder.Auth,
 		CreatedAt: now,
 	}
 
@@ -215,7 +233,7 @@ func (s *CollectionService) CreateRequest(rootPath, parentFolderID string) model
 
 	if rootPath == "" {
 		s.logger.Error("rootPath is required in CreateRequest")
-		return model.NewError(model.ErrValidation, "Đường dẫn collection trống")
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
 	id := uuid.New().String()
@@ -230,6 +248,7 @@ func (s *CollectionService) CreateRequest(rootPath, parentFolderID string) model
 		Headers:   []model.KVPair{},
 		Params:    []model.KVPair{},
 		Body:      model.Body{Type: "none", Content: ""},
+		Auth:      &model.AuthConfig{Type: "inherit"},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -238,10 +257,10 @@ func (s *CollectionService) CreateRequest(rootPath, parentFolderID string) model
 	if parentFolderID != "" {
 		folderPath, err := s.fs.FindByUUID(parentFolderID)
 		if err != nil {
-			return model.NewError(model.ErrNotFound, "Không tìm thấy thư mục cha")
+			return model.NewError(model.ErrNotFound, ErrParentFolderNotFound)
 		}
 		if !s.fs.Exists(filepath.Join(folderPath, folderMetaFile)) || !isDeletableFolderPath(rootPath, folderPath) {
-			return model.NewError(model.ErrValidation, "Thư mục cha không hợp lệ")
+			return model.NewError(model.ErrValidation, ErrParentFolderInvalid)
 		}
 		targetDir = folderPath
 	}
@@ -251,7 +270,7 @@ func (s *CollectionService) CreateRequest(rootPath, parentFolderID string) model
 
 	if err := s.fs.WriteJSON(filePath, req); err != nil {
 		s.logger.Error("failed to write request json", "path", filePath, "error", err)
-		return model.NewError(model.ErrIO, "Không thể lưu request")
+		return model.NewError(model.ErrIO, ErrRequestSaveFailed)
 	}
 
 	s.fs.IndexSet(id, filePath)
@@ -262,6 +281,7 @@ func (s *CollectionService) CreateRequest(rootPath, parentFolderID string) model
 		Type:      "request",
 		Method:    "GET",
 		Path:      filePath,
+		Auth:      req.Auth,
 		CreatedAt: now,
 	}
 
@@ -274,7 +294,7 @@ func (s *CollectionService) RenameFolder(id, newName string) model.Result {
 
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
-		return model.NewError(model.ErrValidation, "Tên thư mục không được để trống")
+		return model.NewError(model.ErrValidation, ErrFolderNameEmpty)
 	}
 	if len([]rune(newName)) > 255 {
 		newName = string([]rune(newName)[:255])
@@ -282,14 +302,14 @@ func (s *CollectionService) RenameFolder(id, newName string) model.Result {
 
 	folderDir, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(model.ErrNotFound, "Không tìm thấy thư mục")
+		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
 	}
 
 	metaPath := filepath.Join(folderDir, folderMetaFile)
 	var folder model.Folder
 	if err := s.fs.ReadJSON(metaPath, &folder); err != nil {
 		s.logger.Error("failed to read folder metadata", "id", id, "error", err)
-		return model.NewError(model.ErrIO, "Không thể đọc dữ liệu thư mục")
+		return model.NewError(model.ErrIO, ErrFolderReadFailed)
 	}
 
 	if folder.Name == newName {
@@ -301,7 +321,7 @@ func (s *CollectionService) RenameFolder(id, newName string) model.Result {
 
 	if err := s.fs.WriteJSON(metaPath, folder); err != nil {
 		s.logger.Error("failed to update folder metadata", "id", id, "error", err)
-		return model.NewError(model.ErrIO, "Không thể lưu tên thư mục mới")
+		return model.NewError(model.ErrIO, ErrFolderRenameFailed)
 	}
 
 	return model.NewSuccess(nil)
@@ -313,28 +333,28 @@ func (s *CollectionService) DeleteFolder(rootPath, id string) model.Result {
 	s.logger.Info("DeleteFolder called", "root", rootPath, "id", id)
 
 	if rootPath == "" || id == "" {
-		return model.NewError(model.ErrValidation, "rootPath và id là bắt buộc")
+		return model.NewError(model.ErrValidation, ErrRootPathAndIDRequired)
 	}
 
 	folderPath, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(model.ErrNotFound, "Không tìm thấy thư mục")
+		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
 	}
 
 	if !isDeletableFolderPath(rootPath, folderPath) {
 		s.logger.Warn("refusing to delete path outside deletable scope", "root", rootPath, "path", folderPath)
-		return model.NewError(model.ErrValidation, "Đường dẫn không phải là thư mục hợp lệ")
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
 	// Double check that it's actually a folder by checking for _folder.json
 	metaPath := filepath.Join(folderPath, folderMetaFile)
 	if !s.fs.Exists(metaPath) {
-		return model.NewError(model.ErrValidation, "Đường dẫn không phải là thư mục hợp lệ")
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
 	if err := s.fs.Delete(folderPath); err != nil {
 		s.logger.Error("failed to delete folder", "path", folderPath, "error", err)
-		return model.NewError(storageErrCode(err), "Không thể xóa thư mục")
+		return model.NewError(storageErrCode(err), ErrFolderDeleteFailed)
 	}
 
 	// Remove all UUIDs within this folder from the index
@@ -367,41 +387,41 @@ func isInsideRoot(rootPath, p string) bool {
 // MoveRequest moves a request to a new folder. targetFolderID can be empty for root.
 func (s *CollectionService) MoveRequest(rootPath, id, targetFolderID string) model.Result {
 	if rootPath == "" {
-		return model.NewError(model.ErrValidation, "Đường dẫn collection trống")
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 	if id == "" {
-		return model.NewError(model.ErrValidation, "ID không hợp lệ")
+		return model.NewError(model.ErrValidation, ErrIDInvalid)
 	}
 
 	srcPath, err := s.fs.FindByUUID(id)
 	if err != nil {
-		return model.NewError(model.ErrNotFound, "Request không tìm thấy")
+		return model.NewError(model.ErrNotFound, ErrRequestNotFound)
 	}
 	if !strings.HasSuffix(srcPath, ".json") {
-		return model.NewError(model.ErrValidation, "ID không trỏ tới một file request hợp lệ")
+		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
 	if !isInsideRoot(rootPath, filepath.Dir(srcPath)) {
-		return model.NewError(model.ErrValidation, "Request không nằm trong collection root")
+		return model.NewError(model.ErrValidation, ErrRequestNotInRoot)
 	}
 
 	targetDir := rootPath
 	if targetFolderID != "" {
 		folderPath, err := s.fs.FindByUUID(targetFolderID)
 		if err != nil {
-			return model.NewError(model.ErrValidation, "Thư mục đích không tìm thấy")
+			return model.NewError(model.ErrValidation, ErrTargetFolderNotFound)
 		}
 		if !s.fs.Exists(filepath.Join(folderPath, folderMetaFile)) || !isDeletableFolderPath(rootPath, folderPath) {
-			return model.NewError(model.ErrValidation, "Thư mục đích không hợp lệ")
+			return model.NewError(model.ErrValidation, ErrTargetFolderInvalid)
 		}
 		targetDir = folderPath
 	}
 
 	if !isInsideRoot(rootPath, targetDir) {
-		return model.NewError(model.ErrValidation, "Thư mục đích không nằm trong collection root")
+		return model.NewError(model.ErrValidation, ErrTargetFolderNotInRoot)
 	}
 	if strings.HasPrefix(targetDir, filepath.Join(rootPath, "environments")) {
-		return model.NewError(model.ErrValidation, "Không thể chuyển request vào thư mục environments")
+		return model.NewError(model.ErrValidation, ErrMoveToEnvFolderFailed)
 	}
 
 	if filepath.Dir(srcPath) == targetDir {
@@ -414,9 +434,68 @@ func (s *CollectionService) MoveRequest(rootPath, id, targetFolderID string) mod
 
 	if err := s.fs.MoveFile(srcPath, newPath); err != nil {
 		s.logger.Error("failed to move request", "id", id, "error", err)
-		return model.NewError(model.ErrIO, "Không thể di chuyển request")
+		return model.NewError(model.ErrIO, ErrRequestMoveFailed)
 	}
 
 	s.fs.IndexSet(id, newPath)
 	return model.NewSuccess(nil)
+}
+
+// LoadFolder loads a folder by ID.
+func (s *CollectionService) LoadFolder(id string) model.Result {
+	s.logger.Info("LoadFolder called", "id", id)
+
+	folderPath, err := s.fs.FindByUUID(id)
+	if err != nil {
+		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
+	}
+
+	var folder model.Folder
+	folderMetaPath := filepath.Join(folderPath, folderMetaFile)
+	if err := s.fs.ReadJSON(folderMetaPath, &folder); err != nil {
+		return model.NewError(model.ErrIO, ErrFolderReadFailed)
+	}
+
+	// Ensure Variables and Headers are at least empty slices
+	if folder.Variables == nil {
+		folder.Variables = []model.KVPair{}
+	}
+	if folder.Headers == nil {
+		folder.Headers = []model.KVPair{}
+	}
+	if folder.Auth == nil {
+		folder.Auth = &model.AuthConfig{Type: "inherit"}
+	}
+
+	return model.NewSuccess(folder)
+}
+
+// UpdateFolder updates the variables and headers of a folder.
+func (s *CollectionService) UpdateFolder(folder model.Folder) model.Result {
+	s.logger.Info("UpdateFolder called", "id", folder.ID)
+
+	folderPath, err := s.fs.FindByUUID(folder.ID)
+	if err != nil {
+		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
+	}
+
+	var existingFolder model.Folder
+	folderMetaPath := filepath.Join(folderPath, folderMetaFile)
+	if err := s.fs.ReadJSON(folderMetaPath, &existingFolder); err != nil {
+		return model.NewError(model.ErrIO, ErrFolderReadFailed)
+	}
+
+	// Variables, headers, and auth are updated via this method (name is via RenameFolder)
+	existingFolder.Variables = folder.Variables
+	existingFolder.Headers = folder.Headers
+	if folder.Auth != nil {
+		existingFolder.Auth = folder.Auth
+	}
+	existingFolder.UpdatedAt = time.Now()
+
+	if err := s.fs.WriteJSON(folderMetaPath, existingFolder); err != nil {
+		return model.NewError(model.ErrIO, ErrFolderInfoSaveFailed)
+	}
+
+	return model.NewSuccess(existingFolder)
 }

@@ -1,5 +1,13 @@
 import { defineStore } from 'pinia'
+import { EventsOn } from '../../wailsjs/runtime/runtime'
 import { GetCollectionTree, CreateRequest, CreateFolder, RenameRequest, RenameFolder, DeleteFolder, DeleteRequest, DuplicateRequest, MoveRequest, SelectPostmanFile, ImportPostman } from '../../wailsjs/go/main/App'
+
+export interface AuthConfig {
+  type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey'
+  bearer?: { token: string }
+  basic?: { username: string; password: string }
+  apiKey?: { key: string; value: string; addTo: 'header' | 'query' }
+}
 
 export interface TreeNode {
   id: string
@@ -8,6 +16,9 @@ export interface TreeNode {
   method?: string
   path: string
   children?: TreeNode[]
+  variables?: { key: string; value: string; enabled: boolean }[]
+  headers?: { key: string; value: string; enabled: boolean }[]
+  auth?: AuthConfig
   created_at: string
 }
 
@@ -15,7 +26,9 @@ interface CollectionState {
   tree: TreeNode[]
   expandedFolders: Set<string>
   activeRequestId: string | null
+  activeFolderId: string | null
   loading: boolean
+  importProgress: string | null
   error: string | null
 }
 
@@ -24,10 +37,21 @@ export const useCollectionStore = defineStore('collection', {
     tree: [],
     expandedFolders: new Set<string>(),
     activeRequestId: null,
+    activeFolderId: null,
     loading: false,
+    importProgress: null,
     error: null
   }),
   actions: {
+    async refresh() {
+      this.tree = []
+      this.activeRequestId = null
+      this.activeFolderId = null
+      const { useRequestStore } = await import('./requestStore')
+      useRequestStore().clearRequest()
+      this.expandedFolders.clear()
+      await this.loadTree()
+    },
     async loadTree() {
       this.loading = true
       this.error = null
@@ -69,6 +93,7 @@ export const useCollectionStore = defineStore('collection', {
       }
       
       this.activeRequestId = id
+      this.activeFolderId = null
       
       await reqStore.loadRequest(id)
       
@@ -79,6 +104,26 @@ export const useCollectionStore = defineStore('collection', {
         this.activeRequestId = null
         uiStore.showToast(reqStore.error)
       }
+    },
+    async setActiveFolderId(id: string) {
+      if (this.activeFolderId === id) return
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const { useRequestStore } = await import('./requestStore')
+      const reqStore = useRequestStore()
+      if (reqStore.isDirty) {
+        const choice = await uiStore.requestUnsavedPrompt()
+        if (choice === 'cancel') return
+        if (choice === 'save') {
+          await reqStore.saveCurrent()
+          if (reqStore.error) return // abort if save failed
+        }
+      }
+      this.activeFolderId = id
+      this.activeRequestId = null
+      void import('./requestStore').then(({ useRequestStore }) => {
+        useRequestStore().clearRequest()
+      })
     },
     async createRequest(parentId: string = "") {
       try {
@@ -187,6 +232,9 @@ export const useCollectionStore = defineStore('collection', {
       const activeInside = !!this.activeRequestId &&
         !!folderNode?.children &&
         !!this.findNode(folderNode.children, this.activeRequestId)
+      const activeFolderInside = !!this.activeFolderId && 
+        (this.activeFolderId === id || !!this.findNode(folderNode?.children || [], this.activeFolderId))
+
       try {
         const result = await DeleteFolder(id)
         if (result.success) {
@@ -198,6 +246,9 @@ export const useCollectionStore = defineStore('collection', {
           // Pre-delete tree is still in place: pick next/previous request at the folder's level
           if (activeInside) {
             this.selectNextRequestOrClear(id)
+          }
+          if (activeFolderInside) {
+            this.activeFolderId = null
           }
           await this.loadTree()
         } else {
@@ -260,6 +311,15 @@ export const useCollectionStore = defineStore('collection', {
         const uiStore = useUiStore()
 
         this.loading = true
+        this.importProgress = "Đang chuẩn bị import..."
+        
+        // Listen to import progress
+        const off = EventsOn("import:progress", (data: any) => {
+          if (data && data.text) {
+             this.importProgress = `${data.text} (${data.count}/${data.total})`
+          }
+        })
+
         try {
           const result = await ImportPostman(filePath)
 
@@ -280,14 +340,18 @@ export const useCollectionStore = defineStore('collection', {
             uiStore.showImportError(result.error?.message || 'Không thể import Postman collection')
           }
         } finally {
+          off()
           this.loading = false
+          this.importProgress = null
         }
       } catch (err) {
         const { useUiStore } = await import('./uiStore')
         useUiStore().showImportError(String(err))
         this.loading = false
+        this.importProgress = null
       }
     },
+
     findNode(nodes: TreeNode[], id: string): TreeNode | null {
       for (const node of nodes) {
         if (node.id === id) return node

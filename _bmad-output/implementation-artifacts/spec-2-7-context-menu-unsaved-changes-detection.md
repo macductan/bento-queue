@@ -2,7 +2,7 @@
 title: 'Story 2.7: Context Menu & Unsaved Changes Detection'
 type: 'feature'
 created: '2026-10-05'
-status: 'review'
+status: 'done'
 baseline_commit: '3c3edd5f4f3f50dab3eb391e866a11c5dd6119ba'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -92,6 +92,8 @@ context: []
 ## Spec Change Log
 
 ## Review Triage Log
+
+No findings reported. Review accepted.
 
 ## Design Notes
 

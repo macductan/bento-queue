@@ -107,7 +107,7 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   // Active tab in request editor
-  const activeRequestTab = ref<'params' | 'headers' | 'body'>('params')
+  const activeRequestTab = ref<'params' | 'headers' | 'body' | 'auth'>('params')
 
   // Environment modal state
   const envModalOpen = ref(false)

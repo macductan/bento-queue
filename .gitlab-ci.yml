@@ -1,0 +1,135 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+stages:
+  - lint
+  - test
+  - burn-in
+  - report
+
+variables:
+  GIT_DEPTH: 0
+  PLAYWRIGHT_BROWSERS_PATH: "$CI_PROJECT_DIR/.cache/ms-playwright"
+
+cache:
+  key:
+    files:
+      - projects/frontend/bun.lock
+      - projects/go.sum
+  paths:
+    - .cache/ms-playwright/
+    - projects/frontend/node_modules/
+    - ~/.bun/install/cache/
+    - ~/.cache/go-build/
+    - ~/go/pkg/mod/
+
+# Lint stage
+lint:backend:
+  stage: lint
+  image: golang:1.25
+  script:
+    - cd projects
+    - mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+    - go vet ./...
+
+lint:frontend:
+  stage: lint
+  image: oven/bun:1
+  script:
+    - cd projects/frontend
+    - bun install --frozen-lockfile
+    - bun run lint
+
+# Test stage
+test:backend:
+  stage: test
+  image: golang:1.25
+  needs:
+    - lint:backend
+  script:
+    - cd projects
+    - mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+    - go test -v -coverprofile=coverage.out ./...
+  artifacts:
+    paths:
+      - projects/coverage.out
+    expire_in: 30 days
+
+test:frontend:unit:
+  stage: test
+  image: oven/bun:1
+  needs:
+    - lint:frontend
+  script:
+    - cd projects/frontend
+    - bun install --frozen-lockfile
+    - bun run test
+
+.frontend-e2e-template: &frontend-e2e-template
+  stage: test
+  image: oven/bun:1
+  needs:
+    - lint:frontend
+  before_script:
+    - cd projects/frontend
+    - bun install --frozen-lockfile
+    - bunx playwright install --with-deps chromium
+  artifacts:
+    when: on_failure
+    paths:
+      - projects/frontend/test-results/
+      - projects/frontend/playwright-report/
+    expire_in: 30 days
+  timeout: 30 minutes
+
+test:frontend:e2e:shard-1:
+  <<: *frontend-e2e-template
+  script:
+    - bun run test:e2e -- --shard=1/2
+
+test:frontend:e2e:shard-2:
+  <<: *frontend-e2e-template
+  script:
+    - bun run test:e2e -- --shard=2/2
+
+# Burn-in stage
+burn-in:frontend:
+  stage: burn-in
+  image: oven/bun:1
+  needs:
+    - test:frontend:e2e:shard-1
+    - test:frontend:e2e:shard-2
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  before_script:
+    - export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get install -y --no-install-recommends git
+    - git fetch origin develop:develop || true
+    - cd projects/frontend
+    - bun install --frozen-lockfile
+    - bunx playwright install --with-deps chromium
+  script:
+    - echo "🔥 Starting burn-in loop using @seontechnologies/playwright-utils"
+    - bun run scripts/burn-in-changed.ts
+  artifacts:
+    when: on_failure
+    paths:
+      - projects/frontend/test-results/
+      - projects/frontend/playwright-report/
+    expire_in: 30 days
+  timeout: 60 minutes
+
+report:
+  stage: report
+  image: alpine:latest
+  needs:
+    - test:backend
+    - test:frontend:unit
+    - test:frontend:e2e:shard-1
+    - test:frontend:e2e:shard-2
+  when: always
+  script:
+    - echo "## Test Execution Summary"
+    - echo "View detailed results in job artifacts"
