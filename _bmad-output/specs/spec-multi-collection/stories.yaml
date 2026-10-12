@@ -1,0 +1,23 @@
+- id: "1"
+  title: Backend CRUD Collection & Quy chuẩn Naming Slug-UUID
+  description: >-
+    Hiện thực AppConfig, ConfigService quản lý collections_root, default_collection, active_collection và chuẩn hóa tên file/thư mục <slug>-<UUID>.
+    Cung cấp các Wails bindings cho Collection CRUD (List, Create, Rename, Delete, Duplicate, Switch) và cơ chế bảo vệ an toàn cho collection default.
+  spec_checkpoint: true
+  done_checkpoint: true
+
+- id: "2"
+  title: Store & Cách ly trạng thái Collection
+  description: >-
+    Cập nhật collectionStore để quản lý danh sách collection theo slug-UUID, active collection và cơ chế chuyển đổi an toàn.
+    Tích hợp kiểm tra isDirty cảnh báo thay đổi chưa lưu, reset sạch editor/response state và nạp lại môi trường độc lập khi chuyển collection.
+  spec_checkpoint: true
+  done_checkpoint: true
+
+- id: "3"
+  title: UI Collection Switcher & Quản lý Collection
+  description: >-
+    Xây dựng giao diện Collection Switcher trên header của sidebar để hiển thị active collection và dropdown chuyển đổi nhanh.
+    Bổ sung các thao tác tạo mới, đổi tên, nhân bản và xóa collection (vô hiệu hóa nút xóa với collection default) và cập nhật SettingsModal.
+  spec_checkpoint: true
+  done_checkpoint: true

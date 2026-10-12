@@ -5,6 +5,9 @@ package main
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -16,16 +19,19 @@ import (
 // App is the Wails application struct. It acts as a thin adapter
 // between Wails bindings and the service layer (AD-5).
 type App struct {
-	ctx      context.Context
-	fs       *storage.FileSystem
-	cfgSvc   *service.ConfigService
-	reqSvc   *service.RequestService
-	collSvc  *service.CollectionService
-	envSvc   *service.EnvironmentService
-	execSvc  *service.ExecutorService
-	impSvc   *service.ImporterService
-	logger   *slog.Logger
-	collRoot string
+	mu               sync.RWMutex
+	ctx              context.Context
+	fs               *storage.FileSystem
+	cfgSvc           *service.ConfigService
+	reqSvc           *service.RequestService
+	collSvc          *service.CollectionService
+	envSvc           *service.EnvironmentService
+	execSvc          *service.ExecutorService
+	impSvc           *service.ImporterService
+	logger           *slog.Logger
+	collRoot         string
+	collectionsRoot  string
+	activeCollection string
 }
 
 // NewApp creates a new App with all service dependencies injected.
@@ -55,7 +61,12 @@ func (a *App) startup(ctx context.Context) {
 		a.logger.Error("config initialization failed", "error", err)
 		// App continues — error already logged and event emitted by ConfigService
 	} else {
+		a.mu.Lock()
 		a.collRoot = cfg.CollectionRoot
+		a.collectionsRoot = cfg.CollectionsRoot
+		a.activeCollection = cfg.ActiveCollection
+		a.fs.SetCollectionRoot(a.collRoot)
+		a.mu.Unlock()
 	}
 
 	a.logger.Info("hecto-api started")
@@ -67,12 +78,17 @@ func (a *App) startup(ctx context.Context) {
 // GetCollectionTree returns the collection tree structure.
 // GetCollectionRoot returns the current collection root path.
 func (a *App) GetCollectionRoot() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.collRoot
 }
 
 // GetCollectionTree returns the collection tree structure.
 func (a *App) GetCollectionTree() model.Result {
-	return a.collSvc.GetTree(a.collRoot)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.collSvc.GetTree(root)
 }
 
 // GetRequest retrieves a request by UUID.
@@ -92,12 +108,18 @@ func (a *App) DeleteRequest(id string) model.Result {
 
 // CreateFolder creates a new folder.
 func (a *App) CreateFolder(parentFolderId string) model.Result {
-	return a.collSvc.CreateFolder(a.collRoot, parentFolderId)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.collSvc.CreateFolder(root, parentFolderId)
 }
 
 // CreateRequest creates a new request.
 func (a *App) CreateRequest(parentFolderId string) model.Result {
-	return a.collSvc.CreateRequest(a.collRoot, parentFolderId)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.collSvc.CreateRequest(root, parentFolderId)
 }
 
 // RenameFolder renames a folder.
@@ -112,7 +134,10 @@ func (a *App) RenameRequest(id, newName string) model.Result {
 
 // DeleteFolder removes a folder and all its contents.
 func (a *App) DeleteFolder(id string) model.Result {
-	return a.collSvc.DeleteFolder(a.collRoot, id)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.collSvc.DeleteFolder(root, id)
 }
 
 // DuplicateRequest duplicates a request by UUID.
@@ -122,27 +147,42 @@ func (a *App) DuplicateRequest(id string) model.Result {
 
 // MoveRequest moves a request to a new folder.
 func (a *App) MoveRequest(id, targetFolderID string) model.Result {
-	return a.collSvc.MoveRequest(a.collRoot, id, targetFolderID)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.collSvc.MoveRequest(root, id, targetFolderID)
 }
 
 // ListEnvironments returns all environments.
 func (a *App) ListEnvironments() model.Result {
-	return a.envSvc.List(a.collRoot)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.envSvc.List(root)
 }
 
 // GetEnvironment retrieves an environment by UUID.
 func (a *App) GetEnvironment(id string) model.Result {
-	return a.envSvc.Get(a.collRoot, id)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.envSvc.Get(root, id)
 }
 
 // SaveEnvironment persists an environment to disk.
 func (a *App) SaveEnvironment(env model.Environment) model.Result {
-	return a.envSvc.Save(a.collRoot, env)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.envSvc.Save(root, env)
 }
 
 // DeleteEnvironment removes an environment from disk.
 func (a *App) DeleteEnvironment(id string) model.Result {
-	return a.envSvc.Delete(a.collRoot, id)
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.envSvc.Delete(root, id)
 }
 
 // SendRequest executes an HTTP request.
@@ -175,7 +215,10 @@ func (a *App) SelectPostmanFile() string {
 
 // ImportPostman imports a Postman v2.1 collection file.
 func (a *App) ImportPostman(filePath string) model.Result {
-	return a.impSvc.ImportPostman(a.collRoot, filePath, func(count int, total int, text string) {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.impSvc.ImportPostman(root, filePath, func(count int, total int, text string) {
 		runtime.EventsEmit(a.ctx, "import:progress", map[string]interface{}{
 			"count": count,
 			"total": total,
@@ -198,13 +241,149 @@ func (a *App) SelectDirectoryDialog() string {
 
 // UpdateCollectionRoot updates the collection root and reinitializes default collection.
 func (a *App) UpdateCollectionRoot(newRoot string) model.Result {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	updatedRoot, err := a.cfgSvc.UpdateCollectionRoot(a.ctx, newRoot)
 	if err != nil {
 		a.logger.Error("UpdateCollectionRoot failed", "error", err, "newRoot", newRoot)
 		return model.NewError(model.ErrIO, "Không thể cập nhật thư mục lưu trữ")
 	}
+
+	newRoot = strings.TrimSpace(newRoot)
+	if newRoot == "" {
+		newRoot = filepath.Dir(updatedRoot)
+	}
+	a.collectionsRoot = newRoot
+	a.activeCollection = "default"
 	a.collRoot = updatedRoot
+	a.fs.SetCollectionRoot(a.collRoot)
+	_ = a.fs.IndexRebuild(a.collRoot)
 	return model.NewSuccess(a.collRoot)
+}
+
+// ListCollections returns all collections in the collections root.
+func (a *App) ListCollections() model.Result {
+	a.mu.RLock()
+	cRoot := a.collectionsRoot
+	active := a.activeCollection
+	a.mu.RUnlock()
+	return a.collSvc.ListCollections(cRoot, active)
+}
+
+// CreateCollection creates a new collection on disk.
+func (a *App) CreateCollection(name string) model.Result {
+	a.mu.RLock()
+	cRoot := a.collectionsRoot
+	a.mu.RUnlock()
+	return a.collSvc.CreateCollection(cRoot, name)
+}
+
+// RenameCollection updates a collection's display name.
+func (a *App) RenameCollection(slug, newName string) model.Result {
+	slug = strings.TrimSpace(slug)
+	a.mu.RLock()
+	cRoot := a.collectionsRoot
+	a.mu.RUnlock()
+	return a.collSvc.RenameCollection(cRoot, slug, newName)
+}
+
+// DeleteCollection deletes a collection from disk, ensuring active collection falls back to default.
+func (a *App) DeleteCollection(slug string) model.Result {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return model.NewError(model.ErrValidation, service.ErrCollectionSlugEmpty)
+	}
+	if slug == "default" {
+		return model.NewError(model.ErrValidation, service.ErrCannotDeleteDefaultColl)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	cRoot := a.collectionsRoot
+	if filepath.Base(slug) != slug || strings.ContainsAny(slug, "/\\") || slug == "." || slug == ".." {
+		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
+	}
+
+	targetDir := filepath.Join(cRoot, slug)
+	if filepath.Clean(targetDir) == filepath.Clean(cRoot) {
+		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
+	}
+	if !a.fs.Exists(targetDir) {
+		return model.NewError(model.ErrNotFound, service.ErrCollectionNotFound)
+	}
+
+	switchedToDefault := false
+	if slug == a.activeCollection {
+		switchRes := a.switchCollectionLocked("default")
+		if !switchRes.Success {
+			return switchRes
+		}
+		switchedToDefault = true
+	}
+
+	delRes := a.collSvc.DeleteCollection(cRoot, slug)
+	if !delRes.Success {
+		return delRes
+	}
+
+	if switchedToDefault {
+		return model.NewSuccess(map[string]interface{}{
+			"active_collection": a.activeCollection,
+		})
+	}
+
+	return delRes
+}
+
+// DuplicateCollection creates a duplicate of an existing collection.
+func (a *App) DuplicateCollection(slug string) model.Result {
+	slug = strings.TrimSpace(slug)
+	a.mu.RLock()
+	cRoot := a.collectionsRoot
+	a.mu.RUnlock()
+	return a.collSvc.DuplicateCollection(cRoot, slug)
+}
+
+// SwitchCollection changes the active collection and rebuilds the index.
+func (a *App) SwitchCollection(slug string) model.Result {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.switchCollectionLocked(slug)
+}
+
+func (a *App) switchCollectionLocked(slug string) model.Result {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return model.NewError(model.ErrValidation, service.ErrCollectionSlugEmpty)
+	}
+
+	if filepath.Base(slug) != slug || strings.ContainsAny(slug, "/\\") || slug == "." || slug == ".." {
+		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
+	}
+
+	targetDir := filepath.Join(a.collectionsRoot, slug)
+	if filepath.Clean(targetDir) == filepath.Clean(a.collectionsRoot) {
+		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
+	}
+	if !a.fs.Exists(targetDir) {
+		return model.NewError(model.ErrNotFound, service.ErrCollectionNotFound)
+	}
+
+	cfg, err := a.cfgSvc.SwitchActiveCollection(a.ctx, slug)
+	if err != nil {
+		return model.NewError(model.ErrIO, err.Error())
+	}
+
+	a.activeCollection = cfg.ActiveCollection
+	a.collRoot = cfg.CollectionRoot
+	a.fs.SetCollectionRoot(a.collRoot)
+	if err := a.fs.IndexRebuild(a.collRoot); err != nil {
+		a.logger.Warn("failed to rebuild index after switch", "error", err)
+	}
+
+	return model.NewSuccess(cfg)
 }
 
 // LoadFolder loads a folder's details (including variables).

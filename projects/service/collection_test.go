@@ -10,6 +10,7 @@ import (
 
 	"hecto-api/model"
 	"hecto-api/service"
+	"hecto-api/slug"
 	"hecto-api/storage"
 )
 
@@ -162,6 +163,10 @@ func TestCreateRequest(t *testing.T) {
 	if !fs.Exists(node.Path) {
 		t.Errorf("expected file to exist at %s", node.Path)
 	}
+	expectedFilename := slug.EntityFilename(node.Name, node.ID)
+	if filepath.Base(node.Path) != expectedFilename {
+		t.Errorf("expected filename %s, got %s", expectedFilename, filepath.Base(node.Path))
+	}
 
 	// Create again to test slug collision
 	res2 := svc.CreateRequest(root, "")
@@ -228,6 +233,10 @@ func TestCreateFolder(t *testing.T) {
 	}
 	if !fs.Exists(filepath.Join(node.Path, "_folder.json")) {
 		t.Errorf("expected _folder.json to exist")
+	}
+	expectedDirname := slug.EntityDir(node.Name, node.ID)
+	if filepath.Base(node.Path) != expectedDirname {
+		t.Errorf("expected dirname %s, got %s", expectedDirname, filepath.Base(node.Path))
 	}
 
 	// Create again to test slug collision
@@ -771,6 +780,368 @@ func TestLegacyFiles_WithoutAuth_DefaultsToInherit(t *testing.T) {
 	loadedFolder := loadRes.Data.(model.Folder)
 	if loadedFolder.Auth == nil || loadedFolder.Auth.Type != "inherit" {
 		t.Errorf("expected loaded legacy folder auth to be inherit, got %+v", loadedFolder.Auth)
+	}
+}
+
+func TestCollection_Create(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+	collectionsRoot := filepath.Join(root, "collections")
+
+	// 1. Validation error: empty name
+	resEmpty := svc.CreateCollection(collectionsRoot, "")
+	if resEmpty.Success || resEmpty.Error == nil || resEmpty.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION error for empty name, got %+v", resEmpty)
+	}
+
+	// 2. Success: "Dự án Alpha"
+	res := svc.CreateCollection(collectionsRoot, "Dự án Alpha")
+	if !res.Success {
+		t.Fatalf("expected success, got error: %+v", res.Error)
+	}
+
+	coll, ok := res.Data.(model.Collection)
+	if !ok {
+		t.Fatalf("expected model.Collection, got %T", res.Data)
+	}
+
+	if !strings.HasPrefix(coll.Slug, "du-an-alpha-") {
+		t.Errorf("expected slug prefix 'du-an-alpha-', got %q", coll.Slug)
+	}
+	if coll.Name != "Dự án Alpha" {
+		t.Errorf("expected Name 'Dự án Alpha', got %q", coll.Name)
+	}
+	if coll.IsDefault {
+		t.Errorf("expected IsDefault false")
+	}
+	if coll.IsActive {
+		t.Errorf("expected IsActive false")
+	}
+
+	// Verify disk layout
+	collDir := filepath.Join(collectionsRoot, coll.Slug)
+	metaPath := filepath.Join(collDir, "collection.json")
+	if !fs.Exists(metaPath) {
+		t.Errorf("expected collection.json to exist at %s", metaPath)
+	}
+	envDir := filepath.Join(collDir, "environments")
+	if !fs.Exists(envDir) {
+		t.Errorf("expected environments/ to exist at %s", envDir)
+	}
+}
+
+func TestCollection_List(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+	collectionsRoot := filepath.Join(root, "collections")
+
+	// Empty dir -> empty list
+	resEmpty := svc.ListCollections(collectionsRoot, "default")
+	if !resEmpty.Success {
+		t.Fatalf("expected success, got %v", resEmpty.Error)
+	}
+	emptyList := resEmpty.Data.([]model.Collection)
+	if len(emptyList) != 0 {
+		t.Errorf("expected 0 collections, got %d", len(emptyList))
+	}
+
+	// Create default collection manually
+	defaultDir := filepath.Join(collectionsRoot, "default")
+	fs.MakeDir(defaultDir)
+	defaultColl := model.Collection{
+		ID:        "default",
+		Slug:      "default",
+		Name:      "Default Collection",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	fs.WriteJSON(filepath.Join(defaultDir, "collection.json"), defaultColl)
+
+	// Create collection B and collection A
+	resB := svc.CreateCollection(collectionsRoot, "B Project")
+	if !resB.Success {
+		t.Fatal(resB.Error)
+	}
+	collB := resB.Data.(model.Collection)
+
+	resA := svc.CreateCollection(collectionsRoot, "A Project")
+	if !resA.Success {
+		t.Fatal(resA.Error)
+	}
+	collA := resA.Data.(model.Collection)
+
+	// List with active = collA.Slug
+	resList := svc.ListCollections(collectionsRoot, collA.Slug)
+	if !resList.Success {
+		t.Fatalf("ListCollections failed: %v", resList.Error)
+	}
+
+	list := resList.Data.([]model.Collection)
+	if len(list) != 3 {
+		t.Fatalf("expected 3 collections, got %d", len(list))
+	}
+
+	// default should be first
+	if !list[0].IsDefault || list[0].Slug != "default" {
+		t.Errorf("expected default collection first, got %+v", list[0])
+	}
+	if list[0].IsActive {
+		t.Errorf("default should not be active")
+	}
+
+	// then A Project
+	if list[1].Slug != collA.Slug || list[1].Name != "A Project" {
+		t.Errorf("expected A Project second, got %+v", list[1])
+	}
+	if !list[1].IsActive {
+		t.Errorf("A Project should be active")
+	}
+
+	// then B Project
+	if list[2].Slug != collB.Slug || list[2].Name != "B Project" {
+		t.Errorf("expected B Project third, got %+v", list[2])
+	}
+	if list[2].IsActive {
+		t.Errorf("B Project should not be active")
+	}
+}
+
+func TestCollection_Rename(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+	collectionsRoot := filepath.Join(root, "collections")
+
+	resCreate := svc.CreateCollection(collectionsRoot, "Old Name")
+	if !resCreate.Success {
+		t.Fatal(resCreate.Error)
+	}
+	coll := resCreate.Data.(model.Collection)
+
+	// 1. Validation errors
+	resErr1 := svc.RenameCollection(collectionsRoot, "", "New Name")
+	if resErr1.Success || resErr1.Error.Code != model.ErrValidation {
+		t.Errorf("expected validation error for empty slug")
+	}
+
+	resErr2 := svc.RenameCollection(collectionsRoot, coll.Slug, "   ")
+	if resErr2.Success || resErr2.Error.Code != model.ErrValidation {
+		t.Errorf("expected validation error for empty new name")
+	}
+
+	// 2. Not found error
+	resNotFound := svc.RenameCollection(collectionsRoot, "non-existent-slug", "New Name")
+	if resNotFound.Success || resNotFound.Error.Code != model.ErrNotFound {
+		t.Errorf("expected NOT_FOUND for non-existent slug, got %+v", resNotFound)
+	}
+
+	// 3. Success rename
+	resRename := svc.RenameCollection(collectionsRoot, coll.Slug, "Brand New Name")
+	if !resRename.Success {
+		t.Fatalf("Rename failed: %v", resRename.Error)
+	}
+	renamed := resRename.Data.(model.Collection)
+	if renamed.Name != "Brand New Name" {
+		t.Errorf("expected Name 'Brand New Name', got %q", renamed.Name)
+	}
+
+	// Verify AD-4: directory on disk did NOT change
+	oldDirPath := filepath.Join(collectionsRoot, coll.Slug)
+	if !fs.Exists(oldDirPath) {
+		t.Errorf("expected directory on disk to remain unchanged at %s", oldDirPath)
+	}
+
+	// Verify collection.json has updated name
+	var readColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(oldDirPath, "collection.json"), &readColl); err != nil {
+		t.Fatal(err)
+	}
+	if readColl.Name != "Brand New Name" {
+		t.Errorf("expected name in collection.json to be 'Brand New Name', got %q", readColl.Name)
+	}
+}
+
+func TestCollection_Delete(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+	collectionsRoot := filepath.Join(root, "collections")
+
+	// 1. Delete default -> VALIDATION error
+	resDelDefault := svc.DeleteCollection(collectionsRoot, "default")
+	if resDelDefault.Success || resDelDefault.Error.Code != model.ErrValidation {
+		t.Errorf("expected VALIDATION error deleting default, got %+v", resDelDefault)
+	}
+
+	// 2. Delete non-existent -> NOT_FOUND
+	resNotFound := svc.DeleteCollection(collectionsRoot, "non-existent")
+	if resNotFound.Success || resNotFound.Error.Code != model.ErrNotFound {
+		t.Errorf("expected NOT_FOUND deleting non-existent, got %+v", resNotFound)
+	}
+
+	// 3. Success delete regular collection
+	resCreate := svc.CreateCollection(collectionsRoot, "To Delete")
+	if !resCreate.Success {
+		t.Fatal(resCreate.Error)
+	}
+	coll := resCreate.Data.(model.Collection)
+	collDir := filepath.Join(collectionsRoot, coll.Slug)
+	if !fs.Exists(collDir) {
+		t.Fatal("collection dir should exist")
+	}
+
+	resDel := svc.DeleteCollection(collectionsRoot, coll.Slug)
+	if !resDel.Success {
+		t.Fatalf("DeleteCollection failed: %v", resDel.Error)
+	}
+	if fs.Exists(collDir) {
+		t.Errorf("collection dir should have been deleted from disk")
+	}
+}
+
+func TestCollection_Duplicate(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+	collectionsRoot := filepath.Join(root, "collections")
+
+	// 1. Not found
+	resNotFound := svc.DuplicateCollection(collectionsRoot, "non-existent")
+	if resNotFound.Success || resNotFound.Error.Code != model.ErrNotFound {
+		t.Errorf("expected NOT_FOUND for non-existent duplicate, got %+v", resNotFound)
+	}
+
+	// 2. Create collection with subfolder and request
+	resCreate := svc.CreateCollection(collectionsRoot, "My Project")
+	if !resCreate.Success {
+		t.Fatal(resCreate.Error)
+	}
+	origColl := resCreate.Data.(model.Collection)
+	origDir := filepath.Join(collectionsRoot, origColl.Slug)
+
+	// Add a folder inside orig
+	resFolder := svc.CreateFolder(origDir, "")
+	if !resFolder.Success {
+		t.Fatal(resFolder.Error)
+	}
+	folderNode := resFolder.Data.(model.TreeNode)
+
+	// Add a request inside that folder
+	resReq := svc.CreateRequest(origDir, folderNode.ID)
+	if !resReq.Success {
+		t.Fatal(resReq.Error)
+	}
+	reqNode := resReq.Data.(model.TreeNode)
+
+	// Duplicate collection
+	resDup := svc.DuplicateCollection(collectionsRoot, origColl.Slug)
+	if !resDup.Success {
+		t.Fatalf("DuplicateCollection failed: %v", resDup.Error)
+	}
+
+	dupColl := resDup.Data.(model.Collection)
+	if dupColl.Slug == origColl.Slug {
+		t.Errorf("expected different slug for duplicate")
+	}
+	if dupColl.Name != "My Project (bản sao)" {
+		t.Errorf("expected Name 'My Project (bản sao)', got %q", dupColl.Name)
+	}
+
+	// Verify files in duplicated collection directory
+	dupDir := filepath.Join(collectionsRoot, dupColl.Slug)
+	if !fs.Exists(dupDir) {
+		t.Fatalf("expected dupDir to exist at %s", dupDir)
+	}
+
+	// Verify environments/ exists in duplicate
+	if !fs.Exists(filepath.Join(dupDir, "environments")) {
+		t.Errorf("expected environments/ to exist in duplicated collection")
+	}
+
+	// Verify duplicated folder and request exist in tree
+	relFolder, _ := filepath.Rel(origDir, folderNode.Path)
+	dupFolderPath := filepath.Join(dupDir, relFolder)
+	if !fs.Exists(dupFolderPath) {
+		t.Errorf("expected duplicated folder to exist at %s", dupFolderPath)
+	}
+
+	relReq, _ := filepath.Rel(origDir, reqNode.Path)
+	dupReqPath := filepath.Join(dupDir, relReq)
+	if !fs.Exists(dupReqPath) {
+		t.Errorf("expected duplicated request to exist at %s", dupReqPath)
+	}
+}
+
+func TestCollection_ValidationAndEdgeCases(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+	collectionsRoot := filepath.Join(root, "collections")
+	_ = fs.MakeDir(collectionsRoot)
+
+	// 1. collectionsRoot == "" returns ErrValidation with ErrCollectionRootEmpty
+	for _, fn := range []struct {
+		name string
+		res  model.Result
+	}{
+		{"delete", svc.DeleteCollection("", "some-slug")},
+		{"rename", svc.RenameCollection("", "some-slug", "New Name")},
+		{"duplicate", svc.DuplicateCollection("", "some-slug")},
+		{"switch", svc.SwitchCollection("", "some-slug")},
+		{"create", svc.CreateCollection("", "New Name")},
+	} {
+		if fn.res.Success || fn.res.Error == nil || fn.res.Error.Code != model.ErrValidation || fn.res.Error.Message != service.ErrCollectionRootEmpty {
+			t.Errorf("%s with empty collectionsRoot expected validation error %q, got %+v", fn.name, service.ErrCollectionRootEmpty, fn.res)
+		}
+	}
+
+	// 2. Traversal or invalid slug returns ErrValidation
+	traversalSlugs := []string{".", "..", "foo/bar", "foo\\bar", "../escape", "/root"}
+	for _, badSlug := range traversalSlugs {
+		if res := svc.DeleteCollection(collectionsRoot, badSlug); res.Success || res.Error == nil || res.Error.Code != model.ErrValidation {
+			t.Errorf("DeleteCollection with %q expected ErrValidation, got %+v", badSlug, res)
+		}
+		if res := svc.RenameCollection(collectionsRoot, badSlug, "Valid Name"); res.Success || res.Error == nil || res.Error.Code != model.ErrValidation {
+			t.Errorf("RenameCollection with %q expected ErrValidation, got %+v", badSlug, res)
+		}
+		if res := svc.DuplicateCollection(collectionsRoot, badSlug); res.Success || res.Error == nil || res.Error.Code != model.ErrValidation {
+			t.Errorf("DuplicateCollection with %q expected ErrValidation, got %+v", badSlug, res)
+		}
+		if res := svc.SwitchCollection(collectionsRoot, badSlug); res.Success || res.Error == nil || res.Error.Code != model.ErrValidation {
+			t.Errorf("SwitchCollection with %q expected ErrValidation, got %+v", badSlug, res)
+		}
+	}
+
+	// 3. RenameCollection sets IsDefault = true when slug == "default"
+	defaultDir := filepath.Join(collectionsRoot, "default")
+	_ = fs.MakeDir(defaultDir)
+	_ = fs.WriteJSON(filepath.Join(defaultDir, "collection.json"), model.Collection{
+		ID:   "default",
+		Slug: "default",
+		Name: "Default Collection",
+	})
+	renamedDefault := svc.RenameCollection(collectionsRoot, "default", "New Default Name")
+	if !renamedDefault.Success {
+		t.Fatalf("RenameCollection default failed: %+v", renamedDefault)
+	}
+	collDefault := renamedDefault.Data.(model.Collection)
+	if !collDefault.IsDefault {
+		t.Errorf("expected IsDefault == true on renamed default collection")
+	}
+
+	// 4. ListCollections populates ID = Slug if ID is empty in collection.json
+	noIDDir := filepath.Join(collectionsRoot, "no-id-slug")
+	_ = fs.MakeDir(noIDDir)
+	_ = fs.WriteJSON(filepath.Join(noIDDir, "collection.json"), map[string]interface{}{
+		"slug": "no-id-slug",
+		"name": "No ID Coll",
+	})
+	listRes := svc.ListCollections(collectionsRoot, "default")
+	if !listRes.Success {
+		t.Fatalf("ListCollections failed: %+v", listRes)
+	}
+	list := listRes.Data.([]model.Collection)
+	foundNoID := false
+	for _, c := range list {
+		if c.Slug == "no-id-slug" {
+			foundNoID = true
+			if c.ID != "no-id-slug" {
+				t.Errorf("expected coll.ID == 'no-id-slug', got %q", c.ID)
+			}
+		}
+	}
+	if !foundNoID {
+		t.Errorf("expected to find no-id-slug in ListCollections")
 	}
 }
 

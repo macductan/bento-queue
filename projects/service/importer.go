@@ -180,7 +180,8 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 
 	if len(item.Item) > 0 {
 		// It's a folder
-		dirSlug := slug.GenerateUniqueDir(item.Name, currentDir)
+		folderID := uuid.New().String()
+		dirSlug := slug.EntityDir(item.Name, folderID)
 		folderPath := filepath.Join(currentDir, dirSlug)
 
 		if err := s.fs.MakeDir(folderPath); err != nil {
@@ -190,8 +191,6 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 			}
 			return count, firstReqID
 		}
-
-		folderID := uuid.New().String()
 		
 		vars := []model.KVPair{}
 		for _, v := range item.Variable {
@@ -227,10 +226,10 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 	
 	if item.Request != nil {
 		// It's a request
-		fileSlug := slug.GenerateUnique(item.Name, nextDir)
+		reqID := uuid.New().String()
+		fileSlug := slug.EntityFilename(item.Name, reqID)
 		reqPath := filepath.Join(nextDir, fileSlug)
 
-		reqID := uuid.New().String()
 		now := time.Now()
 
 		urlStr := ""

@@ -169,7 +169,18 @@ export function setupWailsMock() {
             }
           }),
           AbortRequest: async () => ({ success: true, data: null }),
-          MoveRequest: async () => ({ success: true, data: null })
+          MoveRequest: async () => ({ success: true, data: null }),
+          ListCollections: async () => ({
+            success: true,
+            data: [
+              { slug: 'default', name: 'Default Collection', is_default: true, is_active: true }
+            ]
+          }),
+          SwitchCollection: async (slug: string) => ({ success: true, data: null }),
+          CreateCollection: async (name: string) => ({ success: true, data: { slug: 'new-uuid', name } }),
+          RenameCollection: async (slug: string, name: string) => ({ success: true, data: null }),
+          DeleteCollection: async (slug: string) => ({ success: true, data: null }),
+          DuplicateCollection: async (slug: string) => ({ success: true, data: null })
         }
       }
     };

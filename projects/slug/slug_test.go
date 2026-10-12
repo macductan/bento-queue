@@ -3,6 +3,7 @@ package slug
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -161,5 +162,85 @@ func TestUniqueFilename_Collision(t *testing.T) {
 	got := UniqueFilename("test.json", dir)
 	if got != "test-2.json" {
 		t.Errorf("UniqueFilename collision = %q, want %q", got, "test-2.json")
+	}
+}
+
+func TestEntityDir_CustomID(t *testing.T) {
+	customID := "b1a2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+	got := EntityDir("Dự án Alpha", customID)
+	want := "du-an-alpha-b1a2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+	if got != want {
+		t.Errorf("EntityDir with custom ID = %q, want %q", got, want)
+	}
+}
+
+func TestEntityDir_GeneratedUUID(t *testing.T) {
+	got := EntityDir("Dự án Mới")
+	if !strings.HasPrefix(got, "du-an-moi-") {
+		t.Errorf("EntityDir prefix expected 'du-an-moi-', got %q", got)
+	}
+	uuidPart := strings.TrimPrefix(got, "du-an-moi-")
+	if len(uuidPart) != 36 {
+		t.Errorf("EntityDir expected 36-char UUID, got %q (len %d)", uuidPart, len(uuidPart))
+	}
+}
+
+func TestEntityDir_EmptyName(t *testing.T) {
+	customID := "11111111-2222-3333-4444-555555555555"
+	got := EntityDir("", customID)
+	want := "untitled-11111111-2222-3333-4444-555555555555"
+	if got != want {
+		t.Errorf("EntityDir empty name = %q, want %q", got, want)
+	}
+
+	gotAuto := EntityDir("   ")
+	if !strings.HasPrefix(gotAuto, "untitled-") {
+		t.Errorf("EntityDir whitespace name expected 'untitled-' prefix, got %q", gotAuto)
+	}
+}
+
+func TestEntityFilename_CustomID(t *testing.T) {
+	customID := "d1c2b3a4-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+	got := EntityFilename("Đăng nhập", customID)
+	want := "dang-nhap-d1c2b3a4-5e6f-7a8b-9c0d-1e2f3a4b5c6d.json"
+	if got != want {
+		t.Errorf("EntityFilename with custom ID = %q, want %q", got, want)
+	}
+}
+
+func TestEntityFilename_GeneratedUUID(t *testing.T) {
+	got := EntityFilename("Ping Healthcheck")
+	if !strings.HasPrefix(got, "ping-healthcheck-") || !strings.HasSuffix(got, ".json") {
+		t.Errorf("EntityFilename pattern mismatch: %q", got)
+	}
+	stem := strings.TrimSuffix(strings.TrimPrefix(got, "ping-healthcheck-"), ".json")
+	if len(stem) != 36 {
+		t.Errorf("EntityFilename expected 36-char UUID, got %q", stem)
+	}
+}
+
+func TestEntityFilename_EmptyName(t *testing.T) {
+	customID := "d1c2b3a4-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+	got := EntityFilename("", customID)
+	want := "untitled-d1c2b3a4-5e6f-7a8b-9c0d-1e2f3a4b5c6d.json"
+	if got != want {
+		t.Errorf("EntityFilename empty name = %q, want %q", got, want)
+	}
+}
+
+func TestEntity_TruncateLongName(t *testing.T) {
+	longName := strings.Repeat("a", 300)
+	customID := "12345678-1234-1234-1234-123456789abc"
+
+	dir := EntityDir(longName, customID)
+	expectedDir := strings.Repeat("a", 200) + "-" + customID
+	if dir != expectedDir {
+		t.Errorf("EntityDir truncate mismatch, len = %d, want len = %d", len(dir), len(expectedDir))
+	}
+
+	fn := EntityFilename(longName, customID)
+	expectedFn := strings.Repeat("a", 200) + "-" + customID + ".json"
+	if fn != expectedFn {
+		t.Errorf("EntityFilename truncate mismatch, len = %d, want len = %d", len(fn), len(expectedFn))
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"hecto-api/model"
@@ -25,6 +24,7 @@ const (
 	collectionBackup   = "collection.json.bak"
 	environmentsDir    = "environments"
 	defaultCollName    = "Default Collection"
+	defaultCollSlug    = "default"
 )
 
 // ConfigService quản lý app config và default collection initialization.
@@ -57,14 +57,31 @@ func (s *ConfigService) Initialize(ctx context.Context) (*model.AppConfig, error
 		return nil, fmt.Errorf("%s: %w", model.ErrIO, err)
 	}
 
-	if err := s.ensureDefaultCollection(ctx, config.CollectionRoot); err != nil {
+	// Đảm bảo collections_root tồn tại
+	if err := s.fs.MakeDir(config.CollectionsRoot); err != nil {
+		s.logger.Error("không thể tạo collections root", "path", config.CollectionsRoot, "error", err)
+	}
+
+	// Đảm bảo default collection luôn tồn tại: {collections_root}/default
+	defaultCollPath := filepath.Join(config.CollectionsRoot, config.DefaultCollection)
+	if err := s.ensureDefaultCollection(ctx, defaultCollPath); err != nil {
 		// Log but don't return error — app should still start
-		s.logger.Error("không thể khởi tạo default collection", "path", config.CollectionRoot, "error", err)
+		s.logger.Error("không thể khởi tạo default collection", "path", defaultCollPath, "error", err)
 		s.emitStartupError(ctx, fmt.Sprintf("Không thể khởi tạo collection: %s", err))
 		// Return config anyway — app continues with degraded state
 	}
 
-	s.logger.Info("app config initialized", "config_path", configPath, "collection_root", config.CollectionRoot)
+	// Nếu active collection không tồn tại, tự động fallback về default
+	activeCollPath := filepath.Join(config.CollectionsRoot, config.ActiveCollection)
+	if !s.fs.Exists(activeCollPath) {
+		s.logger.Warn("active collection directory missing, fallback to default", "active", config.ActiveCollection)
+		config.ActiveCollection = config.DefaultCollection
+		config.CollectionRoot = defaultCollPath
+		config.UpdatedAt = time.Now()
+		_ = s.fs.WriteJSON(configPath, config)
+	}
+
+	s.logger.Info("app config initialized", "config_path", configPath, "collection_root", config.CollectionRoot, "collections_root", config.CollectionsRoot, "active_collection", config.ActiveCollection)
 	return config, nil
 }
 
@@ -77,18 +94,19 @@ func (s *ConfigService) resolveConfigPath() (string, error) {
 	return filepath.Join(configDir, appName, configFileName), nil
 }
 
-// resolveDefaultCollectionRoot trả về default collection root:
-// {os.UserCacheDir()}/hecto-api/collections/default/
-func (s *ConfigService) resolveDefaultCollectionRoot() (string, error) {
+// resolveDefaultCollectionsRoot trả về default collections root:
+// {os.UserCacheDir()}/hecto-api/collections
+func (s *ConfigService) resolveDefaultCollectionsRoot() (string, error) {
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(cacheDir, appName, "collections", "default"), nil
+	return filepath.Join(cacheDir, appName, "collections"), nil
 }
 
 // loadOrCreateConfig đọc config từ disk hoặc tạo mới nếu chưa có.
-// Nếu config JSON valid nhưng thiếu collection_root, dùng default và update file.
+// Quản lý collections_root, default_collection, active_collection, collection_root.
+// Nếu config JSON thiếu trường nào thì bổ sung giá trị mặc định.
 func (s *ConfigService) loadOrCreateConfig(configPath string) (*model.AppConfig, error) {
 	if s.fs.Exists(configPath) {
 		var config model.AppConfig
@@ -97,13 +115,39 @@ func (s *ConfigService) loadOrCreateConfig(configPath string) (*model.AppConfig,
 			// (backup logic chỉ áp dụng cho collection.json theo spec)
 			s.logger.Warn("config.json corrupt, tạo mới", "path", configPath, "error", err)
 		} else {
-			// Config valid — kiểm tra collection_root
-			if strings.TrimSpace(config.CollectionRoot) == "" {
-				defaultRoot, err := s.resolveDefaultCollectionRoot()
+			modified := false
+			if strings.TrimSpace(config.CollectionsRoot) == "" {
+				defaultCollections, err := s.resolveDefaultCollectionsRoot()
 				if err != nil {
 					return nil, err
 				}
-				config.CollectionRoot = defaultRoot
+				config.CollectionsRoot = defaultCollections
+				modified = true
+			}
+			if strings.TrimSpace(config.DefaultCollection) == "" {
+				config.DefaultCollection = defaultCollSlug
+				modified = true
+			}
+			if strings.TrimSpace(config.ActiveCollection) == "" {
+				config.ActiveCollection = config.DefaultCollection
+				modified = true
+			}
+
+			// Fallback về default nếu active collection không tồn tại trên disk
+			activePath := filepath.Join(config.CollectionsRoot, config.ActiveCollection)
+			if !s.fs.Exists(activePath) && config.ActiveCollection != config.DefaultCollection {
+				s.logger.Warn("active collection folder missing, fallback to default", "active", config.ActiveCollection)
+				config.ActiveCollection = config.DefaultCollection
+				modified = true
+			}
+
+			expectedCollRoot := filepath.Join(config.CollectionsRoot, config.ActiveCollection)
+			if config.CollectionRoot != expectedCollRoot {
+				config.CollectionRoot = expectedCollRoot
+				modified = true
+			}
+
+			if modified {
 				config.UpdatedAt = time.Now()
 				if writeErr := s.fs.WriteJSON(configPath, config); writeErr != nil {
 					return nil, writeErr
@@ -114,16 +158,19 @@ func (s *ConfigService) loadOrCreateConfig(configPath string) (*model.AppConfig,
 	}
 
 	// Tạo config mới
-	defaultRoot, err := s.resolveDefaultCollectionRoot()
+	defaultCollections, err := s.resolveDefaultCollectionsRoot()
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
 	config := &model.AppConfig{
-		CollectionRoot: defaultRoot,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		CollectionsRoot:   defaultCollections,
+		DefaultCollection: defaultCollSlug,
+		ActiveCollection:  defaultCollSlug,
+		CollectionRoot:    filepath.Join(defaultCollections, defaultCollSlug),
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 
 	if err := s.fs.WriteJSON(configPath, config); err != nil {
@@ -175,11 +222,12 @@ func (s *ConfigService) ensureDefaultCollection(ctx context.Context, collectionR
 	return s.createDefaultCollection(collectionPath)
 }
 
-// createDefaultCollection tạo collection.json với UUID, name, timestamps.
+// createDefaultCollection tạo collection.json với slug, name, timestamps.
 func (s *ConfigService) createDefaultCollection(path string) error {
 	now := time.Now()
 	coll := model.Collection{
-		ID:          uuid.New().String(),
+		ID:          defaultCollSlug,
+		Slug:        defaultCollSlug,
 		Name:        defaultCollName,
 		Description: "",
 		CreatedAt:   now,
@@ -190,7 +238,7 @@ func (s *ConfigService) createDefaultCollection(path string) error {
 		return err
 	}
 
-	s.logger.Info("collection.json created", "path", path, "id", coll.ID)
+	s.logger.Info("collection.json created", "path", path, "id", coll.ID, "slug", coll.Slug)
 	return nil
 }
 
@@ -202,10 +250,50 @@ func (s *ConfigService) emitStartupError(ctx context.Context, message string) {
 	wailsRuntime.EventsEmit(ctx, "startup-error", message)
 }
 
-// UpdateCollectionRoot updates the collection root in config.json and ensures the new directory structure is initialized.
+// SwitchActiveCollection switches active_collection in config.json and updates collection_root.
+func (s *ConfigService) SwitchActiveCollection(ctx context.Context, slug string) (*model.AppConfig, error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" || filepath.Base(slug) != slug || strings.ContainsAny(slug, "/\\") || slug == "." || slug == ".." {
+		return nil, fmt.Errorf("%s: invalid collection slug %s", model.ErrValidation, slug)
+	}
+
+	configPath, err := s.resolveConfigPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve config path: %w", err)
+	}
+
+	config, err := s.loadOrCreateConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	targetDir := filepath.Join(config.CollectionsRoot, slug)
+	if !s.fs.Exists(targetDir) {
+		return nil, fmt.Errorf("%s: collection %s", model.ErrNotFound, slug)
+	}
+
+	config.ActiveCollection = slug
+	config.CollectionRoot = targetDir
+	config.UpdatedAt = time.Now()
+
+	if err := s.fs.WriteJSON(configPath, config); err != nil {
+		return nil, fmt.Errorf("write config: %w", err)
+	}
+
+	s.logger.Info("switched active collection", "active", slug, "coll_root", targetDir)
+	return config, nil
+}
+
+// GetDefaultCollection returns the default collection slug.
+func (s *ConfigService) GetDefaultCollection() string {
+	return defaultCollSlug
+}
+
+// UpdateCollectionRoot updates collections_root in config.json and ensures default collection is initialized.
 func (s *ConfigService) UpdateCollectionRoot(ctx context.Context, newRoot string) (string, error) {
-	if strings.TrimSpace(newRoot) == "" {
-		defaultRoot, err := s.resolveDefaultCollectionRoot()
+	newRoot = strings.TrimSpace(newRoot)
+	if newRoot == "" {
+		defaultRoot, err := s.resolveDefaultCollectionsRoot()
 		if err != nil {
 			return "", fmt.Errorf("resolve default root: %w", err)
 		}
@@ -223,13 +311,22 @@ func (s *ConfigService) UpdateCollectionRoot(ctx context.Context, newRoot string
 		return "", fmt.Errorf("load config: %w", err)
 	}
 
-	// Ensure new directory has collection.json first to verify it's writable
-	if err := s.ensureDefaultCollection(ctx, newRoot); err != nil {
-		return "", fmt.Errorf("ensure collection: %w", err)
+	// Ensure new collections directory exists
+	if err := s.fs.MakeDir(newRoot); err != nil {
+		return "", fmt.Errorf("ensure collections dir: %w", err)
 	}
 
-	// Update collection root
-	config.CollectionRoot = newRoot
+	// Reset ActiveCollection to "default" (since newRoot only scaffolds default)
+	config.ActiveCollection = defaultCollSlug
+
+	// Ensure default collection exists inside new collections_root
+	defaultCollPath := filepath.Join(newRoot, config.DefaultCollection)
+	if err := s.ensureDefaultCollection(ctx, defaultCollPath); err != nil {
+		return "", fmt.Errorf("ensure default collection: %w", err)
+	}
+
+	config.CollectionsRoot = newRoot
+	config.CollectionRoot = filepath.Join(newRoot, config.ActiveCollection)
 	config.UpdatedAt = time.Now()
 
 	// Write back
@@ -237,6 +334,6 @@ func (s *ConfigService) UpdateCollectionRoot(ctx context.Context, newRoot string
 		return "", fmt.Errorf("write config: %w", err)
 	}
 
-	s.logger.Info("collection root updated", "new_root", newRoot)
-	return newRoot, nil
+	s.logger.Info("collection root updated", "new_collections_root", newRoot, "coll_root", config.CollectionRoot)
+	return config.CollectionRoot, nil
 }

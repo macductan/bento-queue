@@ -93,6 +93,53 @@ export namespace model {
 		}
 	}
 	
+	export class Collection {
+	    id?: string;
+	    slug: string;
+	    name: string;
+	    description: string;
+	    is_default: boolean;
+	    is_active: boolean;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Collection(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.slug = source["slug"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.is_default = source["is_default"];
+	        this.is_active = source["is_active"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+			        for (const key of Object.keys(a)) {
+			            a[key] = new classs(a[key]);
+			        }
+			        return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	
 	export class Body {
 	    type: string;

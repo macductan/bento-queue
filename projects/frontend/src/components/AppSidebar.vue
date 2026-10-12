@@ -2,6 +2,7 @@
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import TreeNodeRow from './TreeNodeRow.vue'
+import CollectionSwitcher from './CollectionSwitcher.vue'
 
 const store = useCollectionStore()
 const uiStore = useUiStore()
@@ -16,9 +17,9 @@ const handleRootContextMenu = (e: MouseEvent) => {
 
 <template>
   <nav class="w-sidebar-width min-w-sidebar-width bg-surface-raised border-r border-border-default flex flex-col overflow-hidden" aria-label="Bộ sưu tập">
-    <div class="px-3 py-2 border-b border-border-default shrink-0 flex items-center justify-between">
-      <span class="ui-xs text-text-muted uppercase tracking-[0.05em]"></span>
-      <div class="flex items-center gap-1">
+    <div class="px-3 py-2 border-b border-border-default shrink-0 flex items-center justify-between gap-1">
+      <CollectionSwitcher />
+      <div class="flex items-center gap-1 shrink-0">
         <button 
           @click="store.createRequest()"
           title="Request mới (Ctrl+N)"

@@ -11,7 +11,7 @@ const { toast } = storeToRefs(uiStore)
     <div
       v-if="toast"
       :key="toast.id"
-      class="fixed bottom-4 right-4 z-[1000] px-4 py-2 bg-surface-overlay border border-border-default rounded-md text-text-primary pointer-events-none"
+      class="fixed bottom-4 right-4 z-[2000] px-4 py-2 bg-surface-overlay border border-border-default rounded-md text-text-primary pointer-events-none"
       role="status"
       aria-live="polite"
     >

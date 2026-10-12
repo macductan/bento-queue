@@ -30,12 +30,12 @@ func TestEnvironmentStorage_CRUD(t *testing.T) {
 		t.Fatalf("failed to save env1: %v", err)
 	}
 
-	path1 := filepath.Join(root, "environments", "moi-truong-moi.json")
+	path1 := filepath.Join(root, "environments", "moi-truong-moi-env-1-id.json")
 	if !fs.Exists(path1) {
 		t.Fatalf("expected file %s to exist", path1)
 	}
 
-	// 3. Create another with same slug (Trùng filename lúc tạo)
+	// 3. Create another with same display name (UUID ensures unique filename)
 	env2 := model.Environment{
 		ID:        "env-2-id",
 		Name:      "Môi trường mới",
@@ -45,18 +45,18 @@ func TestEnvironmentStorage_CRUD(t *testing.T) {
 		t.Fatalf("failed to save env2: %v", err)
 	}
 
-	path2 := filepath.Join(root, "environments", "moi-truong-moi-1.json")
+	path2 := filepath.Join(root, "environments", "moi-truong-moi-env-2-id.json")
 	if !fs.Exists(path2) {
-		t.Fatalf("expected file %s to exist for duplicate name", path2)
+		t.Fatalf("expected file %s to exist for env2", path2)
 	}
 
 	env3 := model.Environment{ID: "env-3-id", Name: "Môi trường mới"}
 	if err := fs.SaveEnvironment(root, env3); err != nil {
 		t.Fatalf("failed to save env3: %v", err)
 	}
-	path3 := filepath.Join(root, "environments", "moi-truong-moi-2.json")
+	path3 := filepath.Join(root, "environments", "moi-truong-moi-env-3-id.json")
 	if !fs.Exists(path3) {
-		t.Fatalf("expected file %s to exist for 2nd duplicate name", path3)
+		t.Fatalf("expected file %s to exist for env3", path3)
 	}
 
 	// 3.5 Create empty name env
@@ -64,7 +64,7 @@ func TestEnvironmentStorage_CRUD(t *testing.T) {
 	if err := fs.SaveEnvironment(root, envEmpty); err != nil {
 		t.Fatalf("failed to save empty env: %v", err)
 	}
-	pathEmpty := filepath.Join(root, "environments", "env.json")
+	pathEmpty := filepath.Join(root, "environments", "untitled-env-empty-id.json")
 	if !fs.Exists(pathEmpty) {
 		t.Fatalf("expected file %s to exist for empty name", pathEmpty)
 	}

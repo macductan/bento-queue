@@ -70,12 +70,13 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   // Unsaved changes prompt state
-  const unsavedPrompt = ref<{ resolve: (val: 'save' | 'discard' | 'cancel') => void } | null>(null)
+  const unsavedPrompt = ref<{ message?: string; resolve: (val: 'save' | 'discard' | 'cancel') => void } | null>(null)
 
-  function requestUnsavedPrompt(): Promise<'save' | 'discard' | 'cancel'> {
+  function requestUnsavedPrompt(message?: string): Promise<'save' | 'discard' | 'cancel'> {
     unsavedPrompt.value?.resolve('cancel')
     return new Promise((resolve) => {
       unsavedPrompt.value = {
+        message,
         resolve: (val) => {
           unsavedPrompt.value = null
           resolve(val)
@@ -112,6 +113,9 @@ export const useUiStore = defineStore('ui', () => {
   // Environment modal state
   const envModalOpen = ref(false)
 
+  // Settings modal state
+  const settingsModalOpen = ref(false)
+
   // Import Error modal state
   const importError = ref<string | null>(null)
 
@@ -123,5 +127,5 @@ export const useUiStore = defineStore('ui', () => {
     importError.value = null
   }
 
-  return { toast, showToast, clearToast, confirm, requestConfirm, resolveConfirm, contextMenu, openContextMenu, closeContextMenu, unsavedPrompt, requestUnsavedPrompt, resolveUnsavedPrompt, renameTrigger, triggerRename, focusUrlRequested, triggerFocusUrl, focusEnvRequested, triggerFocusEnv, activeRequestTab, envModalOpen, importError, showImportError, clearImportError }
+  return { toast, showToast, clearToast, confirm, requestConfirm, resolveConfirm, contextMenu, openContextMenu, closeContextMenu, unsavedPrompt, requestUnsavedPrompt, resolveUnsavedPrompt, renameTrigger, triggerRename, focusUrlRequested, triggerFocusUrl, focusEnvRequested, triggerFocusEnv, activeRequestTab, envModalOpen, settingsModalOpen, importError, showImportError, clearImportError }
 })

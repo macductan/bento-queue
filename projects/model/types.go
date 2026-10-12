@@ -130,9 +130,12 @@ type Environment struct {
 // Collection represents the root collection metadata.
 // Stored as collection.json at the collection root.
 type Collection struct {
-	ID          string    `json:"id"`
+	ID          string    `json:"id,omitempty"`
+	Slug        string    `json:"slug"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	IsDefault   bool      `json:"is_default,omitempty"`
+	IsActive    bool      `json:"is_active,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
