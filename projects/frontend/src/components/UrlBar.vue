@@ -6,7 +6,6 @@ import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { generateCurlCommand } from '@/utils/curl'
-import { getInheritedHeaders } from '@/utils/headers'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
 const requestStore = useRequestStore()
@@ -35,7 +34,7 @@ watch(() => uiStore.focusUrlRequested, () => {
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 const isFocused = ref(false)
-const onFocus = (e: Event) => {
+const onFocus = () => {
   isFocused.value = true;
   nextTick(() => {
     if (urlInputRef.value) {

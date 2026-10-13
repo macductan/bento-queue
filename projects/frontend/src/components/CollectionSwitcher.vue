@@ -28,10 +28,6 @@ const toggleDropdown = () => {
   isOpen.value = !isOpen.value
 }
 
-const closeDropdown = () => {
-  isOpen.value = false
-}
-
 const handleSelect = async (id: string) => {
   if (id === collectionStore.activeCollectionId) {
     isOpen.value = false

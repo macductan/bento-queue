@@ -5,7 +5,7 @@ import { nextTick } from 'vue'
 import FolderEditor from '../FolderEditor.vue'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
-import { LoadFolder, UpdateFolder, GetCollectionTree, ListEnvironments } from '../../../wailsjs/go/main/App'
+import { LoadFolder, UpdateFolder } from '../../../wailsjs/go/main/App'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   LoadFolder: vi.fn(),

@@ -143,9 +143,6 @@ describe('useUrlParamsSync', () => {
     const req = ref<Request | null>(createMockRequest())
     useUrlParamsSync(req)
 
-    let urlChanges = 0
-    let paramsChanges = 0
-
     // Mutate URL
     req.value!.url = 'https://api.example.com/items?count=5'
     await nextTick()

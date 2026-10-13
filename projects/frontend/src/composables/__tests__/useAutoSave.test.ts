@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { ref, nextTick, defineComponent } from 'vue'
+import { nextTick, defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import { useAutoSave } from '../useAutoSave'
 import { useRequestStore, type Request } from '../../stores/requestStore'

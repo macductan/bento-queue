@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRequestStore } from '../requestStore'
 import { useUiStore } from '../uiStore'
-import { GetRequest, SaveRequest, GetCollectionTree } from '../../../wailsjs/go/main/App'
+import { SaveRequest, GetCollectionTree } from '../../../wailsjs/go/main/App'
 import { createMockRequest } from './utils'
 
 // Mock wails calls
