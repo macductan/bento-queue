@@ -445,19 +445,19 @@ func TestSwitchActiveCollection(t *testing.T) {
 	}
 
 	// Create a new collection folder
-	newSlug := "project-alpha-12345"
-	newDir := filepath.Join(cfg.CollectionsRoot, newSlug)
+	newCollID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	newDir := filepath.Join(cfg.CollectionsRoot, newCollID)
 	if err := os.MkdirAll(newDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	switchedCfg, err := svc.SwitchActiveCollection(ctx, newSlug)
+	switchedCfg, err := svc.SwitchActiveCollection(ctx, newCollID)
 	if err != nil {
 		t.Fatalf("SwitchActiveCollection failed: %v", err)
 	}
 
-	if switchedCfg.ActiveCollection != newSlug {
-		t.Errorf("ActiveCollection = %q, want %q", switchedCfg.ActiveCollection, newSlug)
+	if switchedCfg.ActiveCollection != newCollID {
+		t.Errorf("ActiveCollection = %q, want %q", switchedCfg.ActiveCollection, newCollID)
 	}
 	if switchedCfg.CollectionRoot != newDir {
 		t.Errorf("CollectionRoot = %q, want %q", switchedCfg.CollectionRoot, newDir)

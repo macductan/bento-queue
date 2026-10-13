@@ -1,0 +1,29 @@
+- id: "1"
+  title: "Đồng bộ hai chiều URL Bar và Query Params"
+  description: >-
+    Xây dựng cơ chế đồng bộ hai chiều thời gian thực giữa thanh URL và bảng cấu hình Params trong RequestEditor, hỗ trợ parse query string thành danh sách params và ngược lại khi toggle/sửa/thêm/xóa param.
+    Đảm bảo bảo toàn nguyên vẹn cú pháp biến môi trường {{...}} và ngăn chặn hiện tượng lặp cập nhật vô tận.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Đảm bảo xử lý trơn tru cả khi URL chứa path params, hash fragment, biến môi trường trong key hoặc value, và các param có value rỗng hoặc bị uncheck (enabled=false).
+
+- id: "2"
+  title: "Xuất lệnh cURL (Copy as cURL)"
+  description: >-
+    Thêm tiện ích sinh chuỗi lệnh cURL chuẩn POSIX/Bash từ cấu hình request hiện tại (kèm resolved variables, headers kế thừa, auth, query params và body payload được escape an toàn).
+    Tích hợp nút hành động Copy as cURL trên giao diện và sao chép vào clipboard hệ thống kèm toast thông báo.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Lệnh cURL phải chạy được trực tiếp trên bash/zsh terminal; chú ý escape nháy đơn '\''' trong body JSON/text và tích hợp nút thao tác tiện dụng trên thanh UrlBar hoặc header của RequestEditor.
+
+- id: "3"
+  title: "Cơ chế Auto-save tự động với Debounce"
+  description: >-
+    Triển khai cơ chế tự động lưu thầm lặng (silent auto-save) với debounce 800ms khi request có thay đổi dữ liệu, kèm cơ chế flush tức thì khi người dùng chuyển request hoặc rời khỏi màn hình soạn thảo.
+    Hiển thị chỉ báo trạng thái lưu trực quan (Đã lưu / Đang lưu) thay vì spam Toast notification trên mỗi lần lưu thường quy.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Cần đảm bảo flush ngay lập tức dữ liệu dirty đang chờ debounce khi click request khác ở AppSidebar để loại bỏ hoàn toàn UnsavedChangesDialog phiền hà, nhưng vẫn bắt lỗi và cảnh báo người dùng nếu việc ghi file xuống ổ đĩa thất bại.

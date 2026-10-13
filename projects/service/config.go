@@ -24,7 +24,7 @@ const (
 	collectionBackup   = "collection.json.bak"
 	environmentsDir    = "environments"
 	defaultCollName    = "Default Collection"
-	defaultCollSlug    = "default"
+	defaultCollID      = "default"
 )
 
 // ConfigService quản lý app config và default collection initialization.
@@ -125,7 +125,7 @@ func (s *ConfigService) loadOrCreateConfig(configPath string) (*model.AppConfig,
 				modified = true
 			}
 			if strings.TrimSpace(config.DefaultCollection) == "" {
-				config.DefaultCollection = defaultCollSlug
+				config.DefaultCollection = defaultCollID
 				modified = true
 			}
 			if strings.TrimSpace(config.ActiveCollection) == "" {
@@ -166,9 +166,9 @@ func (s *ConfigService) loadOrCreateConfig(configPath string) (*model.AppConfig,
 	now := time.Now()
 	config := &model.AppConfig{
 		CollectionsRoot:   defaultCollections,
-		DefaultCollection: defaultCollSlug,
-		ActiveCollection:  defaultCollSlug,
-		CollectionRoot:    filepath.Join(defaultCollections, defaultCollSlug),
+		DefaultCollection: defaultCollID,
+		ActiveCollection:  defaultCollID,
+		CollectionRoot:    filepath.Join(defaultCollections, defaultCollID),
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
@@ -222,12 +222,11 @@ func (s *ConfigService) ensureDefaultCollection(ctx context.Context, collectionR
 	return s.createDefaultCollection(collectionPath)
 }
 
-// createDefaultCollection tạo collection.json với slug, name, timestamps.
+// createDefaultCollection tạo collection.json với name, timestamps.
 func (s *ConfigService) createDefaultCollection(path string) error {
 	now := time.Now()
 	coll := model.Collection{
-		ID:          defaultCollSlug,
-		Slug:        defaultCollSlug,
+		ID:          defaultCollID,
 		Name:        defaultCollName,
 		Description: "",
 		CreatedAt:   now,
@@ -238,7 +237,7 @@ func (s *ConfigService) createDefaultCollection(path string) error {
 		return err
 	}
 
-	s.logger.Info("collection.json created", "path", path, "id", coll.ID, "slug", coll.Slug)
+	s.logger.Info("collection.json created", "path", path, "id", coll.ID)
 	return nil
 }
 
@@ -251,10 +250,10 @@ func (s *ConfigService) emitStartupError(ctx context.Context, message string) {
 }
 
 // SwitchActiveCollection switches active_collection in config.json and updates collection_root.
-func (s *ConfigService) SwitchActiveCollection(ctx context.Context, slug string) (*model.AppConfig, error) {
-	slug = strings.TrimSpace(slug)
-	if slug == "" || filepath.Base(slug) != slug || strings.ContainsAny(slug, "/\\") || slug == "." || slug == ".." {
-		return nil, fmt.Errorf("%s: invalid collection slug %s", model.ErrValidation, slug)
+func (s *ConfigService) SwitchActiveCollection(ctx context.Context, id string) (*model.AppConfig, error) {
+	id = strings.TrimSpace(id)
+	if id == "" || filepath.Base(id) != id || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
+		return nil, fmt.Errorf("%s: invalid collection id %s", model.ErrValidation, id)
 	}
 
 	configPath, err := s.resolveConfigPath()
@@ -267,12 +266,12 @@ func (s *ConfigService) SwitchActiveCollection(ctx context.Context, slug string)
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	targetDir := filepath.Join(config.CollectionsRoot, slug)
+	targetDir := filepath.Join(config.CollectionsRoot, id)
 	if !s.fs.Exists(targetDir) {
-		return nil, fmt.Errorf("%s: collection %s", model.ErrNotFound, slug)
+		return nil, fmt.Errorf("%s: collection %s", model.ErrNotFound, id)
 	}
 
-	config.ActiveCollection = slug
+	config.ActiveCollection = id
 	config.CollectionRoot = targetDir
 	config.UpdatedAt = time.Now()
 
@@ -280,13 +279,13 @@ func (s *ConfigService) SwitchActiveCollection(ctx context.Context, slug string)
 		return nil, fmt.Errorf("write config: %w", err)
 	}
 
-	s.logger.Info("switched active collection", "active", slug, "coll_root", targetDir)
+	s.logger.Info("switched active collection", "active", id, "coll_root", targetDir)
 	return config, nil
 }
 
-// GetDefaultCollection returns the default collection slug.
+// GetDefaultCollection returns the default collection ID.
 func (s *ConfigService) GetDefaultCollection() string {
-	return defaultCollSlug
+	return defaultCollID
 }
 
 // UpdateCollectionRoot updates collections_root in config.json and ensures default collection is initialized.
@@ -317,7 +316,7 @@ func (s *ConfigService) UpdateCollectionRoot(ctx context.Context, newRoot string
 	}
 
 	// Reset ActiveCollection to "default" (since newRoot only scaffolds default)
-	config.ActiveCollection = defaultCollSlug
+	config.ActiveCollection = defaultCollID
 
 	// Ensure default collection exists inside new collections_root
 	defaultCollPath := filepath.Join(newRoot, config.DefaultCollection)

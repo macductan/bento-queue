@@ -89,7 +89,7 @@ func TestRequestDuplicate_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new UUID not in index")
 	}
-	expectedFilename := fmt.Sprintf("login-ban-sao-%s.json", req.ID)
+	expectedFilename := fmt.Sprintf("%s.json", req.ID)
 	if filepath.Base(newPath) != expectedFilename {
 		t.Errorf("expected filename %s, got %s", expectedFilename, filepath.Base(newPath))
 	}

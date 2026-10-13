@@ -6,7 +6,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.12.1
 	github.com/wailsapp/wails/v2 v2.16.0
-	golang.org/x/text v0.39.0
 )
 
 require (
@@ -37,6 +36,7 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.16.0 => /home/dev/go/1.27.1/pkg/mod

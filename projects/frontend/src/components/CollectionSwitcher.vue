@@ -15,7 +15,7 @@ const dropdownRef = ref<HTMLElement | null>(null)
 const isModalOpen = ref(false)
 const modalMode = ref<'create' | 'rename'>('create')
 const modalInitialName = ref('')
-const targetSlug = ref('')
+const targetId = ref('')
 
 const activeCollectionName = computed(() => {
   if (collectionStore.collectionsLoading && collectionStore.collections.length === 0) {
@@ -32,12 +32,12 @@ const closeDropdown = () => {
   isOpen.value = false
 }
 
-const handleSelect = async (slug: string) => {
-  if (slug === collectionStore.activeCollectionSlug) {
+const handleSelect = async (id: string) => {
+  if (id === collectionStore.activeCollectionId) {
     isOpen.value = false
     return
   }
-  const switched = await collectionStore.switchCollection(slug)
+  const switched = await collectionStore.switchCollection(id)
   if (switched) {
     isOpen.value = false
   }
@@ -48,7 +48,7 @@ const isDuplicating = ref(false)
 const openCreate = () => {
   modalMode.value = 'create'
   modalInitialName.value = ''
-  targetSlug.value = ''
+  targetId.value = ''
   isModalOpen.value = true
   isOpen.value = false
 }
@@ -61,23 +61,23 @@ const openSettings = () => {
 const openRename = (c: model.Collection) => {
   modalMode.value = 'rename'
   modalInitialName.value = c.name
-  targetSlug.value = c.slug
+  targetId.value = c.id || ''
   isModalOpen.value = true
   isOpen.value = false
 }
 
-const handleDuplicate = async (slug: string) => {
+const handleDuplicate = async (id: string) => {
   if (isDuplicating.value) return
   isDuplicating.value = true
   try {
-    await collectionStore.duplicateCollection(slug)
+    await collectionStore.duplicateCollection(id)
   } finally {
     isDuplicating.value = false
   }
 }
 
 const handleDelete = async (c: model.Collection) => {
-  if (c.slug === 'default' || c.is_default) {
+  if (c.id === 'default' || c.is_default) {
     return
   }
   isOpen.value = false
@@ -85,7 +85,7 @@ const handleDelete = async (c: model.Collection) => {
     `Bạn có chắc chắn muốn xóa collection "${c.name}" không? Toàn bộ request và environment sẽ bị xóa vĩnh viễn.`
   )
   if (!confirmed) return
-  await collectionStore.deleteCollection(c.slug)
+  await collectionStore.deleteCollection(c.id || '')
 }
 
 const handleModalSubmit = async (name: string) => {
@@ -95,8 +95,8 @@ const handleModalSubmit = async (name: string) => {
       isModalOpen.value = false
       isOpen.value = false
     }
-  } else if (modalMode.value === 'rename' && targetSlug.value) {
-    const ok = await collectionStore.renameCollection(targetSlug.value, name)
+  } else if (modalMode.value === 'rename' && targetId.value) {
+    const ok = await collectionStore.renameCollection(targetId.value, name)
     if (ok) {
       isModalOpen.value = false
       isOpen.value = false
@@ -175,21 +175,21 @@ onUnmounted(() => {
         </div>
         <div
           v-for="c in collectionStore.collections"
-          :key="c.slug"
+          :key="c.id"
           :class="[
             'group flex items-center justify-between px-2.5 py-1.5 hover:bg-surface-hover transition-colors text-left text-text-primary ui-xs cursor-pointer focus:outline-none focus:bg-surface-hover',
-            c.slug === collectionStore.activeCollectionSlug ? 'bg-surface-overlay/60 text-brand-primary' : ''
+            c.id === collectionStore.activeCollectionId ? 'bg-surface-overlay/60 text-brand-primary' : ''
           ]"
           role="menuitem"
           tabindex="0"
-          @click="handleSelect(c.slug)"
-          @keydown.enter="handleSelect(c.slug)"
-          @keydown.space.prevent="handleSelect(c.slug)"
+          @click="handleSelect(c.id || '')"
+          @keydown.enter="handleSelect(c.id || '')"
+          @keydown.space.prevent="handleSelect(c.id || '')"
         >
           <div class="flex items-center gap-1.5 min-w-0 mr-1.5 flex-1">
             <!-- Active checkmark or spacer -->
             <svg
-              v-if="c.slug === collectionStore.activeCollectionSlug"
+              v-if="c.id === collectionStore.activeCollectionId"
               class="w-3.5 h-3.5 shrink-0 text-brand-primary"
               viewBox="0 0 24 24"
               fill="none"
@@ -207,7 +207,7 @@ onUnmounted(() => {
 
             <!-- Default Badge -->
             <span
-              v-if="c.slug === 'default' || c.is_default"
+              v-if="c.id === 'default' || c.is_default"
               class="px-1 py-0.2 rounded text-[10px] bg-surface-overlay text-text-muted border border-border-default shrink-0"
             >
               Default
@@ -236,7 +236,7 @@ onUnmounted(() => {
               class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
               title="Nhân bản collection"
               aria-label="Nhân bản collection"
-              @click="handleDuplicate(c.slug)"
+              @click="handleDuplicate(c.id || '')"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -247,14 +247,14 @@ onUnmounted(() => {
             <!-- Delete -->
             <button
               type="button"
-              :disabled="c.slug === 'default' || c.is_default"
+              :disabled="c.id === 'default' || c.is_default"
               :class="[
                 'p-1 rounded transition-colors',
-                (c.slug === 'default' || c.is_default)
+                (c.id === 'default' || c.is_default)
                   ? 'opacity-30 cursor-not-allowed text-text-muted'
                   : 'text-text-muted hover:text-rose-400 hover:bg-surface-overlay'
               ]"
-              :title="(c.slug === 'default' || c.is_default) ? 'Không thể xóa collection mặc định' : 'Xóa collection'"
+              :title="(c.id === 'default' || c.is_default) ? 'Không thể xóa collection mặc định' : 'Xóa collection'"
               aria-label="Xóa collection"
               @click="handleDelete(c)"
             >

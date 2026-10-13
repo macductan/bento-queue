@@ -66,18 +66,58 @@ const authCount = computed(() => {
 })
 
 const initialData = ref<string>('')
+const saveStatus = ref<'saved' | 'unsaved' | 'saving' | 'error'>('saved')
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+let activeSavePromise: Promise<boolean> | null = null
+
+const getCleanSnapshot = () => JSON.stringify({
+  variables: variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== ''),
+  headers: headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== ''),
+  auth: auth.value
+})
+
 const isDirty = computed(() => {
   if (!initialData.value) return false
-  const currentSnapshot = JSON.stringify({
-    variables: variables.value,
-    headers: headers.value,
-    auth: auth.value
-  })
-  return currentSnapshot !== initialData.value
+  return getCleanSnapshot() !== initialData.value
 })
+
+const cancelAutoSave = () => {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
+}
+
+const scheduleAutoSave = (delay = 800) => {
+  cancelAutoSave()
+  if (!isDirty.value) {
+    if (saveStatus.value !== 'saving') saveStatus.value = 'saved'
+    return
+  }
+  if (saveStatus.value !== 'saving') saveStatus.value = 'unsaved'
+  if (uiStore.autoSaveEnabled) {
+    autoSaveTimer = setTimeout(async () => {
+      autoSaveTimer = null
+      if (isDirty.value) {
+        await saveFolderData({ silent: true })
+      }
+    }, delay)
+  }
+}
+
+watch([variables, headers, auth], () => {
+  if (loading.value) return
+  if (isDirty.value) {
+    scheduleAutoSave()
+  } else {
+    cancelAutoSave()
+    if (saveStatus.value !== 'saving') saveStatus.value = 'saved'
+  }
+}, { deep: true })
 
 const loadFolderData = async () => {
   if (!collectionStore.activeFolderId) return
+  cancelAutoSave()
   loading.value = true
   try {
     const result = await LoadFolder(collectionStore.activeFolderId)
@@ -86,11 +126,8 @@ const loadFolderData = async () => {
       variables.value = result.data.variables || []
       headers.value = result.data.headers || []
       auth.value = result.data.auth || { type: 'inherit' }
-      initialData.value = JSON.stringify({
-        variables: variables.value,
-        headers: headers.value,
-        auth: auth.value
-      })
+      initialData.value = getCleanSnapshot()
+      saveStatus.value = 'saved'
     } else {
       uiStore.showToast(result.error?.message || 'Không thể tải thông tin thư mục')
     }
@@ -101,38 +138,66 @@ const loadFolderData = async () => {
   }
 }
 
-const saveFolderData = async () => {
-  if (!folder.value || saving.value) return
-  saving.value = true
-  try {
-    const cleanHeaders = headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '')
-    const cleanVariables = variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
-
-    const dataToSave = { 
-      ...folder.value, 
-      variables: cleanVariables,
-      headers: cleanHeaders,
-      auth: auth.value
+const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> => {
+  if (activeSavePromise) {
+    const prev = await activeSavePromise
+    if (!folder.value) return false
+    if (!isDirty.value) {
+      if (!options?.silent) uiStore.showToast('Đã lưu cấu hình thư mục')
+      return prev
     }
-    const result = await UpdateFolder(dataToSave)
-    if (result.success) {
-      variables.value = cleanVariables
-      headers.value = cleanHeaders
-      initialData.value = JSON.stringify({
+  }
+
+  if (!folder.value) return false
+  if (!isDirty.value) {
+    if (!options?.silent) uiStore.showToast('Đã lưu cấu hình thư mục')
+    return true
+  }
+
+  cancelAutoSave()
+  let savePromise: Promise<boolean> | null = null
+  const exec = async (): Promise<boolean> => {
+    saving.value = true
+    saveStatus.value = 'saving'
+    try {
+      const cleanHeaders = headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '')
+      const cleanVariables = variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+
+      const dataToSave = { 
+        ...folder.value, 
         variables: cleanVariables,
         headers: cleanHeaders,
         auth: auth.value
-      })
-      uiStore.showToast('Đã lưu cấu hình thư mục')
-      await collectionStore.loadTree() // Reload tree to reflect new headers/variables in store
-    } else {
-      uiStore.showToast(result.error?.message || 'Không thể lưu thư mục')
+      }
+      const result = await UpdateFolder(dataToSave)
+      if (result.success) {
+        initialData.value = getCleanSnapshot()
+        saveStatus.value = 'saved'
+        if (!options?.silent) {
+          uiStore.showToast('Đã lưu cấu hình thư mục')
+        }
+        await collectionStore.loadTree() // Reload tree to reflect new headers/variables in store
+        return true
+      } else {
+        saveStatus.value = 'error'
+        uiStore.showToast(result.error?.message || 'Không thể lưu thư mục')
+        return false
+      }
+    } catch (e) {
+      saveStatus.value = 'error'
+      uiStore.showToast(String(e))
+      return false
+    } finally {
+      saving.value = false
+      if (activeSavePromise === savePromise) {
+        activeSavePromise = null
+      }
     }
-  } catch (e) {
-    uiStore.showToast(String(e))
-  } finally {
-    saving.value = false
   }
+
+  savePromise = exec()
+  activeSavePromise = savePromise
+  return await savePromise
 }
 
 const handleKeydown = (e: KeyboardEvent) => {
@@ -142,15 +207,42 @@ const handleKeydown = (e: KeyboardEvent) => {
   }
 }
 
-watch(() => collectionStore.activeFolderId, loadFolderData)
+const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+  if (isDirty.value) {
+    e.preventDefault()
+    void saveFolderData({ silent: true })
+  }
+}
+
+watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
+  if (oldId && isDirty.value) {
+    const saved = await saveFolderData({ silent: true })
+    if (!saved) {
+      collectionStore.activeFolderId = oldId
+      return
+    }
+  }
+  cancelAutoSave()
+  await loadFolderData()
+})
 
 onMounted(() => {
   loadFolderData()
   window.addEventListener('keydown', handleKeydown)
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', handleBeforeUnload)
+  }
 })
 
-onBeforeUnmount(() => {
+onBeforeUnmount(async () => {
   window.removeEventListener('keydown', handleKeydown)
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+  }
+  cancelAutoSave()
+  if (isDirty.value) {
+    await saveFolderData({ silent: true })
+  }
 })
 </script>
 
@@ -161,12 +253,47 @@ onBeforeUnmount(() => {
     </div>
     <div v-else-if="folder" class="flex flex-col h-full">
       <div class="px-4 py-3 border-b border-border-default flex items-center justify-between">
-        <h2 class="text-lg font-medium text-text-primary flex items-center gap-2">
-          {{ folderName }}
-          <span v-if="isDirty" class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
+        <h2 class="text-lg font-medium text-text-primary flex items-center gap-3">
+          <span>{{ folderName }}</span>
+          <span
+            data-test="folder-save-state-indicator"
+            role="status"
+            aria-live="polite"
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full bg-surface-overlay border border-border-default select-none"
+            :data-status="saveStatus"
+          >
+            <!-- saving -->
+            <template v-if="saveStatus === 'saving'">
+              <svg class="animate-spin w-3 h-3 text-brand-primary shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="text-text-secondary text-xs">Đang lưu...</span>
+            </template>
+
+            <!-- unsaved -->
+            <template v-else-if="saveStatus === 'unsaved'">
+              <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
+              <span class="text-amber-400 text-xs">Chưa lưu</span>
+            </template>
+
+            <!-- error -->
+            <template v-else-if="saveStatus === 'error'">
+              <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" title="Lỗi khi lưu" aria-label="Lỗi khi lưu"></span>
+              <span class="text-red-400 text-xs">Lỗi khi lưu</span>
+            </template>
+
+            <!-- saved -->
+            <template v-else>
+              <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              <span class="text-text-muted text-xs">Đã lưu</span>
+            </template>
+          </span>
         </h2>
         <button 
-          @click="saveFolderData"
+          @click="saveFolderData()"
           :disabled="saving"
           class="px-3 py-1.5 bg-brand-primary text-white rounded hover:bg-brand-hover transition-colors text-sm font-medium focus-visible:ring-2 focus-visible:ring-brand-primary outline-none"
           :class="{ 'opacity-50 cursor-not-allowed': saving }"

@@ -40,19 +40,19 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
 
 const mockCollections: model.Collection[] = [
   new model.Collection({
-    slug: 'default',
+    id: 'default',
     name: 'Default Collection',
     is_default: true,
     is_active: true
   }),
   new model.Collection({
-    slug: 'proj-ecom-123',
+    id: 'proj-ecom-123',
     name: 'Project E-Commerce',
     is_default: false,
     is_active: false
   }),
   new model.Collection({
-    slug: 'payment-svc-456',
+    id: 'payment-svc-456',
     name: 'Payment Service',
     is_default: false,
     is_active: false
@@ -67,7 +67,7 @@ describe('CollectionSwitcher.vue', () => {
   it('renders active collection name on the trigger button', () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(CollectionSwitcher)
     const trigger = wrapper.find('button[aria-label="Chọn collection"]')
@@ -88,7 +88,7 @@ describe('CollectionSwitcher.vue', () => {
   it('toggles dropdown when trigger button is clicked', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(CollectionSwitcher)
     expect(wrapper.find('div[role="menu"]').exists()).toBe(false)
@@ -105,7 +105,7 @@ describe('CollectionSwitcher.vue', () => {
   it('closes dropdown on Escape key', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(CollectionSwitcher)
     await wrapper.find('button[aria-label="Chọn collection"]').trigger('click')
@@ -122,7 +122,7 @@ describe('CollectionSwitcher.vue', () => {
   it('displays collections list with default badge and active checkmark', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(CollectionSwitcher)
     await wrapper.find('button[aria-label="Chọn collection"]').trigger('click')
@@ -138,7 +138,7 @@ describe('CollectionSwitcher.vue', () => {
   it('calls switchCollection and closes dropdown on selecting another collection', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const switchSpy = vi.spyOn(store, 'switchCollection').mockResolvedValue(true)
 
@@ -156,7 +156,7 @@ describe('CollectionSwitcher.vue', () => {
   it('does NOT close dropdown if switchCollection returns false (e.g. cancelled unsaved prompt)', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     // Simulate user cancelling prompt
     const switchSpy = vi.spyOn(store, 'switchCollection').mockResolvedValue(false)
@@ -176,7 +176,7 @@ describe('CollectionSwitcher.vue', () => {
     const store = useCollectionStore()
     const uiStore = useUiStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const confirmSpy = vi.spyOn(uiStore, 'requestConfirm')
     const deleteSpy = vi.spyOn(store, 'deleteCollection')
@@ -203,7 +203,7 @@ describe('CollectionSwitcher.vue', () => {
     const store = useCollectionStore()
     const uiStore = useUiStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const confirmSpy = vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(true)
     const deleteSpy = vi.spyOn(store, 'deleteCollection').mockResolvedValue(true)
@@ -226,7 +226,7 @@ describe('CollectionSwitcher.vue', () => {
     const store = useCollectionStore()
     const uiStore = useUiStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const confirmSpy = vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(false)
     const deleteSpy = vi.spyOn(store, 'deleteCollection')
@@ -246,7 +246,7 @@ describe('CollectionSwitcher.vue', () => {
   it('duplicates collection on clicking duplicate button', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const duplicateSpy = vi.spyOn(store, 'duplicateCollection').mockResolvedValue(true)
 
@@ -263,7 +263,7 @@ describe('CollectionSwitcher.vue', () => {
   it('opens rename modal and renames collection', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const renameSpy = vi.spyOn(store, 'renameCollection').mockResolvedValue(true)
 
@@ -291,7 +291,7 @@ describe('CollectionSwitcher.vue', () => {
   it('opens create modal and creates collection', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const createSpy = vi.spyOn(store, 'createCollection').mockResolvedValue(true)
 
@@ -320,7 +320,7 @@ describe('CollectionSwitcher.vue', () => {
     const store = useCollectionStore()
     const uiStore = useUiStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(CollectionSwitcher)
     await wrapper.find('button[aria-label="Chọn collection"]').trigger('click')
@@ -336,7 +336,7 @@ describe('CollectionSwitcher.vue', () => {
   it('closes dropdown without calling switchCollection when selecting currently active collection', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const switchSpy = vi.spyOn(store, 'switchCollection')
 
@@ -355,7 +355,7 @@ describe('CollectionSwitcher.vue', () => {
   it('closes dropdown when clicking outside the component', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(CollectionSwitcher, {
       attachTo: document.body

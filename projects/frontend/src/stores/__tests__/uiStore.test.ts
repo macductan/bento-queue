@@ -76,4 +76,15 @@ describe('uiStore - Unsaved Prompt', () => {
     const result = await promptPromise
     expect(result).toBe('save')
   })
+
+  it('manages autoSaveEnabled state and persistence', () => {
+    const store = useUiStore()
+    expect(store.autoSaveEnabled).toBe(true)
+
+    store.setAutoSaveEnabled(false)
+    expect(store.autoSaveEnabled).toBe(false)
+
+    store.setAutoSaveEnabled(true)
+    expect(store.autoSaveEnabled).toBe(true)
+  })
 })

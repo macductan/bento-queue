@@ -77,7 +77,7 @@ type AuthConfig struct {
 }
 
 // Request represents an API request entity stored as a JSON file on disk.
-// Identity is UUID v4, filename is slug (AD-4).
+// Identity is UUID v4, stored as <uuid>.json on disk.
 type Request struct {
 	ID        string      `json:"id"`
 	Name      string      `json:"name"`
@@ -131,7 +131,6 @@ type Environment struct {
 // Stored as collection.json at the collection root.
 type Collection struct {
 	ID          string    `json:"id,omitempty"`
-	Slug        string    `json:"slug"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	IsDefault   bool      `json:"is_default,omitempty"`

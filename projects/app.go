@@ -280,21 +280,26 @@ func (a *App) CreateCollection(name string) model.Result {
 }
 
 // RenameCollection updates a collection's display name.
-func (a *App) RenameCollection(slug, newName string) model.Result {
-	slug = strings.TrimSpace(slug)
+func (a *App) RenameCollection(id, newName string) model.Result {
+	id = strings.TrimSpace(id)
 	a.mu.RLock()
 	cRoot := a.collectionsRoot
 	a.mu.RUnlock()
-	return a.collSvc.RenameCollection(cRoot, slug, newName)
+	return a.collSvc.RenameCollection(cRoot, id, newName)
+}
+
+// UpdateCollection updates a collection's details.
+func (a *App) UpdateCollection(collection model.Collection) model.Result {
+	return a.RenameCollection(collection.ID, collection.Name)
 }
 
 // DeleteCollection deletes a collection from disk, ensuring active collection falls back to default.
-func (a *App) DeleteCollection(slug string) model.Result {
-	slug = strings.TrimSpace(slug)
-	if slug == "" {
-		return model.NewError(model.ErrValidation, service.ErrCollectionSlugEmpty)
+func (a *App) DeleteCollection(id string) model.Result {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, service.ErrCollectionIDEmpty)
 	}
-	if slug == "default" {
+	if id == "default" {
 		return model.NewError(model.ErrValidation, service.ErrCannotDeleteDefaultColl)
 	}
 
@@ -302,11 +307,11 @@ func (a *App) DeleteCollection(slug string) model.Result {
 	defer a.mu.Unlock()
 
 	cRoot := a.collectionsRoot
-	if filepath.Base(slug) != slug || strings.ContainsAny(slug, "/\\") || slug == "." || slug == ".." {
+	if filepath.Base(id) != id || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
 		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
 	}
 
-	targetDir := filepath.Join(cRoot, slug)
+	targetDir := filepath.Join(cRoot, id)
 	if filepath.Clean(targetDir) == filepath.Clean(cRoot) {
 		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
 	}
@@ -315,7 +320,7 @@ func (a *App) DeleteCollection(slug string) model.Result {
 	}
 
 	switchedToDefault := false
-	if slug == a.activeCollection {
+	if id == a.activeCollection {
 		switchRes := a.switchCollectionLocked("default")
 		if !switchRes.Success {
 			return switchRes
@@ -323,7 +328,7 @@ func (a *App) DeleteCollection(slug string) model.Result {
 		switchedToDefault = true
 	}
 
-	delRes := a.collSvc.DeleteCollection(cRoot, slug)
+	delRes := a.collSvc.DeleteCollection(cRoot, id)
 	if !delRes.Success {
 		return delRes
 	}
@@ -338,32 +343,32 @@ func (a *App) DeleteCollection(slug string) model.Result {
 }
 
 // DuplicateCollection creates a duplicate of an existing collection.
-func (a *App) DuplicateCollection(slug string) model.Result {
-	slug = strings.TrimSpace(slug)
+func (a *App) DuplicateCollection(id string) model.Result {
+	id = strings.TrimSpace(id)
 	a.mu.RLock()
 	cRoot := a.collectionsRoot
 	a.mu.RUnlock()
-	return a.collSvc.DuplicateCollection(cRoot, slug)
+	return a.collSvc.DuplicateCollection(cRoot, id)
 }
 
 // SwitchCollection changes the active collection and rebuilds the index.
-func (a *App) SwitchCollection(slug string) model.Result {
+func (a *App) SwitchCollection(id string) model.Result {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.switchCollectionLocked(slug)
+	return a.switchCollectionLocked(id)
 }
 
-func (a *App) switchCollectionLocked(slug string) model.Result {
-	slug = strings.TrimSpace(slug)
-	if slug == "" {
-		return model.NewError(model.ErrValidation, service.ErrCollectionSlugEmpty)
+func (a *App) switchCollectionLocked(id string) model.Result {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, service.ErrCollectionIDEmpty)
 	}
 
-	if filepath.Base(slug) != slug || strings.ContainsAny(slug, "/\\") || slug == "." || slug == ".." {
+	if filepath.Base(id) != id || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
 		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
 	}
 
-	targetDir := filepath.Join(a.collectionsRoot, slug)
+	targetDir := filepath.Join(a.collectionsRoot, id)
 	if filepath.Clean(targetDir) == filepath.Clean(a.collectionsRoot) {
 		return model.NewError(model.ErrValidation, service.ErrInvalidFolderPath)
 	}
@@ -371,7 +376,7 @@ func (a *App) switchCollectionLocked(slug string) model.Result {
 		return model.NewError(model.ErrNotFound, service.ErrCollectionNotFound)
 	}
 
-	cfg, err := a.cfgSvc.SwitchActiveCollection(a.ctx, slug)
+	cfg, err := a.cfgSvc.SwitchActiveCollection(a.ctx, id)
 	if err != nil {
 		return model.NewError(model.ErrIO, err.Error())
 	}

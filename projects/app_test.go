@@ -55,7 +55,7 @@ func TestApp_CollectionCRUD_And_Switch(t *testing.T) {
 	list, ok := listRes.Data.([]model.Collection)
 	assert.True(t, ok)
 	assert.Len(t, list, 1)
-	assert.Equal(t, "default", list[0].Slug)
+	assert.Equal(t, "default", list[0].ID)
 	assert.True(t, list[0].IsDefault)
 	assert.True(t, list[0].IsActive)
 
@@ -64,28 +64,28 @@ func TestApp_CollectionCRUD_And_Switch(t *testing.T) {
 	assert.True(t, createRes.Success)
 	betaColl, ok := createRes.Data.(model.Collection)
 	assert.True(t, ok)
-	assert.Contains(t, betaColl.Slug, "project-beta-")
+	assert.Len(t, betaColl.ID, 36)
 	assert.Equal(t, "Project Beta", betaColl.Name)
 
 	// 3. Rename collection
-	renameRes := app.RenameCollection(betaColl.Slug, "Project Beta Renamed")
+	renameRes := app.RenameCollection(betaColl.ID, "Project Beta Renamed")
 	assert.True(t, renameRes.Success)
 	renamedColl, ok := renameRes.Data.(model.Collection)
 	assert.True(t, ok)
 	assert.Equal(t, "Project Beta Renamed", renamedColl.Name)
 
 	// 4. Duplicate collection
-	dupRes := app.DuplicateCollection(betaColl.Slug)
+	dupRes := app.DuplicateCollection(betaColl.ID)
 	assert.True(t, dupRes.Success)
 	dupColl, ok := dupRes.Data.(model.Collection)
 	assert.True(t, ok)
 	assert.Equal(t, "Project Beta Renamed (bản sao)", dupColl.Name)
 
 	// 5. Switch to Beta
-	switchRes := app.SwitchCollection(betaColl.Slug)
+	switchRes := app.SwitchCollection(betaColl.ID)
 	assert.True(t, switchRes.Success)
-	assert.Equal(t, betaColl.Slug, app.activeCollection)
-	assert.Equal(t, filepath.Join(app.collectionsRoot, betaColl.Slug), app.collRoot)
+	assert.Equal(t, betaColl.ID, app.activeCollection)
+	assert.Equal(t, filepath.Join(app.collectionsRoot, betaColl.ID), app.collRoot)
 
 	// Verify tree loads from new active root
 	treeRes := app.GetCollectionTree()
@@ -97,14 +97,14 @@ func TestApp_CollectionCRUD_And_Switch(t *testing.T) {
 	assert.Equal(t, model.ErrValidation, delDefaultRes.Error.Code)
 
 	// 7. Delete active collection (Beta) -> must auto-fallback to default before deleting folder
-	delActiveRes := app.DeleteCollection(betaColl.Slug)
+	delActiveRes := app.DeleteCollection(betaColl.ID)
 	assert.True(t, delActiveRes.Success)
 	payload, ok := delActiveRes.Data.(map[string]interface{})
 	assert.True(t, ok)
 	assert.Equal(t, "default", payload["active_collection"])
 	assert.Equal(t, "default", app.activeCollection)
 	assert.Equal(t, filepath.Join(app.collectionsRoot, "default"), app.collRoot)
-	assert.False(t, app.fs.Exists(filepath.Join(app.collectionsRoot, betaColl.Slug)))
+	assert.False(t, app.fs.Exists(filepath.Join(app.collectionsRoot, betaColl.ID)))
 
 	// 8. Delete non-existent collection -> NOT_FOUND
 	delMissingRes := app.DeleteCollection("non-existent-collection")
@@ -131,9 +131,9 @@ func TestApp_UpdateCollectionRoot(t *testing.T) {
 	createRes := app.CreateCollection("Initial Project")
 	assert.True(t, createRes.Success)
 	coll := createRes.Data.(model.Collection)
-	switchRes := app.SwitchCollection(coll.Slug)
+	switchRes := app.SwitchCollection(coll.ID)
 	assert.True(t, switchRes.Success)
-	assert.Equal(t, coll.Slug, app.activeCollection)
+	assert.Equal(t, coll.ID, app.activeCollection)
 
 	// 2. Update collection root to new path
 	newCollectionsRoot := filepath.Join(tmpDir, "custom-collections")

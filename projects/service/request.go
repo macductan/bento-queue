@@ -159,7 +159,7 @@ func (s *RequestService) Duplicate(id string) model.Result {
 	req.UpdatedAt = now
 
 	dir := filepath.Dir(path)
-	newFilename := slug.EntityFilename(newName, req.ID)
+	newFilename := slug.RequestFilename(req.ID)
 	newPath := filepath.Join(dir, newFilename)
 
 	if err := s.fs.WriteJSON(newPath, req); err != nil {

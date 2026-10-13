@@ -12,18 +12,24 @@ import (
 	"hecto-api/storage"
 )
 
-func findFileWithPrefix(t *testing.T, root, prefix string) string {
+func findRequestByName(t *testing.T, root, name string) string {
 	t.Helper()
 	var found string
 	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), prefix) && strings.HasSuffix(d.Name(), ".json") {
-			found = path
-			return filepath.SkipAll
+		if err == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".json") && d.Name() != "_folder.json" && d.Name() != "collection.json" {
+			data, readErr := os.ReadFile(path)
+			if readErr == nil {
+				var req model.Request
+				if json.Unmarshal(data, &req) == nil && req.Name == name {
+					found = path
+					return filepath.SkipAll
+				}
+			}
 		}
 		return nil
 	})
 	if found == "" {
-		t.Fatalf("file with prefix %q not found under %s", prefix, root)
+		t.Fatalf("request with name %q not found under %s", name, root)
 	}
 	return found
 }
@@ -72,7 +78,7 @@ func TestImportPostman(t *testing.T) {
 			t.Errorf("expected count 3, got %v", count)
 		}
 
-		reqPath := findFileWithPrefix(t, root, "request-1-")
+		reqPath := findRequestByName(t, root, "Request 1")
 		folderMetaPath := filepath.Join(filepath.Dir(reqPath), "_folder.json")
 		if !fs.Exists(folderMetaPath) {
 			t.Errorf("Folder not created")
@@ -157,7 +163,7 @@ func TestImportPostman(t *testing.T) {
 			t.Errorf("expected count 2, got %v", dataMap["count"])
 		}
 
-		reqPath := findFileWithPrefix(t, root, "valid-request-")
+		reqPath := findRequestByName(t, root, "Valid Request")
 		if !fs.Exists(reqPath) {
 			t.Errorf("Valid request should have been created")
 		}
@@ -207,13 +213,22 @@ func TestImportPostman(t *testing.T) {
 
 		var duplicateFiles []string
 		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "duplicate-") && strings.HasSuffix(d.Name(), ".json") {
-				duplicateFiles = append(duplicateFiles, path)
+			if err == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".json") && d.Name() != "_folder.json" && d.Name() != "collision.json" {
+				data, readErr := os.ReadFile(path)
+				if readErr == nil {
+					var req model.Request
+					if json.Unmarshal(data, &req) == nil && req.Name == "Duplicate" {
+						duplicateFiles = append(duplicateFiles, path)
+					}
+				}
 			}
 			return nil
 		})
 		if len(duplicateFiles) != 2 {
-			t.Errorf("expected 2 duplicate files with UUID suffix, got %d", len(duplicateFiles))
+			t.Errorf("expected 2 duplicate files with unique UUID filenames, got %d", len(duplicateFiles))
+		}
+		if len(duplicateFiles) == 2 && duplicateFiles[0] == duplicateFiles[1] {
+			t.Errorf("expected distinct files, got identical paths")
 		}
 	})
 	t.Run("Auth Inheritance", func(t *testing.T) {
@@ -286,7 +301,7 @@ func TestImportPostman(t *testing.T) {
 		}
 
 		// Verify "Req Inherit Collection"
-		req1Path := findFileWithPrefix(t, root, "req-inherit-collection-")
+		req1Path := findRequestByName(t, root, "Req Inherit Collection")
 		var req1 model.Request
 		req1Data, _ := os.ReadFile(req1Path)
 		json.Unmarshal(req1Data, &req1)
@@ -302,7 +317,7 @@ func TestImportPostman(t *testing.T) {
 		}
 
 		// Verify "Req Inherit Folder"
-		req2Path := findFileWithPrefix(t, root, "req-inherit-folder-")
+		req2Path := findRequestByName(t, root, "Req Inherit Folder")
 		var req2 model.Request
 		req2Data, _ := os.ReadFile(req2Path)
 		json.Unmarshal(req2Data, &req2)
@@ -318,7 +333,7 @@ func TestImportPostman(t *testing.T) {
 		}
 
 		// Verify "Req Override"
-		req3Path := findFileWithPrefix(t, root, "req-override-")
+		req3Path := findRequestByName(t, root, "Req Override")
 		var req3 model.Request
 		req3Data, _ := os.ReadFile(req3Path)
 		json.Unmarshal(req3Data, &req3)

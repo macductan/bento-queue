@@ -127,5 +127,19 @@ export const useUiStore = defineStore('ui', () => {
     importError.value = null
   }
 
-  return { toast, showToast, clearToast, confirm, requestConfirm, resolveConfirm, contextMenu, openContextMenu, closeContextMenu, unsavedPrompt, requestUnsavedPrompt, resolveUnsavedPrompt, renameTrigger, triggerRename, focusUrlRequested, triggerFocusUrl, focusEnvRequested, triggerFocusEnv, activeRequestTab, envModalOpen, settingsModalOpen, importError, showImportError, clearImportError }
+  // Auto-save setting (persisted in localStorage)
+  const autoSaveEnabled = ref<boolean>(
+    typeof window !== 'undefined' && localStorage.getItem('hecto_auto_save_enabled') !== null
+      ? localStorage.getItem('hecto_auto_save_enabled') === 'true'
+      : true
+  )
+
+  function setAutoSaveEnabled(enabled: boolean) {
+    autoSaveEnabled.value = enabled
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('hecto_auto_save_enabled', String(enabled))
+    }
+  }
+
+  return { toast, showToast, clearToast, confirm, requestConfirm, resolveConfirm, contextMenu, openContextMenu, closeContextMenu, unsavedPrompt, requestUnsavedPrompt, resolveUnsavedPrompt, renameTrigger, triggerRename, focusUrlRequested, triggerFocusUrl, focusEnvRequested, triggerFocusEnv, activeRequestTab, envModalOpen, settingsModalOpen, importError, showImportError, clearImportError, autoSaveEnabled, setAutoSaveEnabled }
 })

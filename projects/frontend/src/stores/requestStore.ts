@@ -28,20 +28,28 @@ export interface Request {
   updated_at: string
 }
 
+export type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error'
+
 interface RequestState {
   original: Request | null
   current: Request | null
   loading: boolean
   saving: boolean
+  saveStatus: SaveStatus
   error: string | null
   contentTypeAuto: boolean
+  autoSaveTimer: ReturnType<typeof setTimeout> | null
+  activeSavePromise: Promise<boolean> | null
 }
 
 // Helper for deep equality on objects using sorted keys
 function stringifySorted(obj: any): string {
   if (obj === null || obj === undefined) return String(obj)
   if (typeof obj !== 'object') return String(obj)
-  if (Array.isArray(obj)) return `[${obj.map(stringifySorted).join(',')}]`
+  if (Array.isArray(obj)) {
+    const filtered = obj.filter((item: any) => !item || !item._isAuto)
+    return `[${filtered.map(stringifySorted).join(',')}]`
+  }
   const keys = Object.keys(obj).sort()
   const sortedObj: Record<string, any> = {}
   for (const key of keys) {
@@ -57,8 +65,11 @@ export const useRequestStore = defineStore('request', {
     current: null,
     loading: false,
     saving: false,
+    saveStatus: 'saved',
     error: null,
-    contentTypeAuto: false
+    contentTypeAuto: false,
+    autoSaveTimer: null,
+    activeSavePromise: null
   }),
   getters: {
     isDirty(state): boolean {
@@ -68,8 +79,10 @@ export const useRequestStore = defineStore('request', {
   },
   actions: {
     async loadRequest(id: string) {
+      this.cancelAutoSave()
       this.loading = true
       this.error = null
+      this.saveStatus = 'saved'
       this.contentTypeAuto = false
       try {
         const result = await GetRequest(id)
@@ -101,41 +114,139 @@ export const useRequestStore = defineStore('request', {
       }
     },
     clearRequest() {
+      this.cancelAutoSave()
       this.original = null
       this.current = null
       this.loading = false
+      this.saving = false
+      this.saveStatus = 'saved'
       this.error = null
       this.contentTypeAuto = false
     },
-    async saveCurrent() {
-      if (!this.current || this.saving) return
-      this.saving = true
-      this.error = null
-      try {
-        const toSave = JSON.parse(JSON.stringify(this.current))
-        if (toSave.headers) {
-          toSave.headers = toSave.headers.filter((h: any) => !h._isAuto)
+    scheduleAutoSave(delay: number = 800) {
+      this.cancelAutoSave()
+      if (!this.current || !this.isDirty) {
+        if (!this.isDirty && this.saveStatus !== 'saving') {
+          this.saveStatus = 'saved'
         }
-        const result = await SaveRequest(toSave as any)
-        if (result.success) {
-          this.original = JSON.parse(JSON.stringify(this.current))
+        return
+      }
+      if (this.saveStatus !== 'saving') {
+        this.saveStatus = 'unsaved'
+      }
+      this.autoSaveTimer = setTimeout(async () => {
+        this.autoSaveTimer = null
+        if (this.current && this.isDirty) {
+          await this.saveCurrent({ silent: true })
+        }
+      }, delay)
+    },
+    cancelAutoSave() {
+      if (this.autoSaveTimer) {
+        clearTimeout(this.autoSaveTimer)
+        this.autoSaveTimer = null
+      }
+    },
+    async flush(): Promise<boolean> {
+      this.cancelAutoSave()
+      if (this.activeSavePromise) {
+        const prev = await this.activeSavePromise
+        if (!this.current) return true
+        if (!prev) return false
+        if (!this.isDirty) {
+          return prev
+        }
+      }
+      if (!this.current || !this.isDirty) {
+        return true
+      }
+      return await this.saveCurrent({ silent: true })
+    },
+    async saveCurrent(options?: { silent?: boolean }): Promise<boolean> {
+      this.cancelAutoSave()
+
+      if (this.activeSavePromise) {
+        const prev = await this.activeSavePromise
+        if (!this.current) return false
+        if (!this.isDirty) {
+          if (!options?.silent) {
+            const { useUiStore } = await import('./uiStore')
+            useUiStore().showToast('Đã lưu')
+          }
+          return prev
+        }
+      }
+
+      if (!this.current) return false
+
+      if (!this.isDirty) {
+        if (!options?.silent) {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast('Đã lưu')
-          // Trigger tree reload in collectionStore
-          const { useCollectionStore } = await import('./collectionStore')
-          await useCollectionStore().loadTree()
-        } else {
-          this.error = result.error?.message || 'Không thể lưu request'
-          const { useUiStore } = await import('./uiStore')
-          useUiStore().showToast(this.error)
         }
-      } catch (err) {
-        this.error = String(err)
-        const { useUiStore } = await import('./uiStore')
-        useUiStore().showToast(this.error)
-      } finally {
-        this.saving = false
+        return true
       }
+
+      let savePromise: Promise<boolean> | null = null
+      const exec = async (): Promise<boolean> => {
+        this.saving = true
+        this.saveStatus = 'saving'
+        this.error = null
+        let toSave: any = null
+        try {
+          toSave = JSON.parse(JSON.stringify(this.current))
+          if (toSave.headers) {
+            toSave.headers = toSave.headers.filter((h: any) => !h._isAuto)
+          }
+          const result = await SaveRequest(toSave as any)
+          if (result.success) {
+            if (this.current && this.current.id === toSave.id) {
+              if (stringifySorted(this.current) === stringifySorted(toSave)) {
+                this.original = JSON.parse(JSON.stringify(this.current))
+                this.saveStatus = 'saved'
+              } else {
+                this.original = JSON.parse(JSON.stringify(toSave))
+                this.saveStatus = 'unsaved'
+              }
+            }
+            if (!options?.silent) {
+              const { useUiStore } = await import('./uiStore')
+              useUiStore().showToast('Đã lưu')
+            }
+            // Trigger tree reload in collectionStore
+            const { useCollectionStore } = await import('./collectionStore')
+            await useCollectionStore().loadTree()
+            return true
+          } else {
+            const errorMsg = result.error?.message || 'Không thể lưu request'
+            if (this.current && this.current.id === toSave?.id) {
+              this.error = errorMsg
+              this.saveStatus = 'error'
+            }
+            const { useUiStore } = await import('./uiStore')
+            useUiStore().showToast(errorMsg)
+            return false
+          }
+        } catch (err) {
+          const errorMsg = String(err)
+          if (this.current && this.current.id === toSave?.id) {
+            this.error = errorMsg
+            this.saveStatus = 'error'
+          }
+          const { useUiStore } = await import('./uiStore')
+          useUiStore().showToast(errorMsg)
+          return false
+        } finally {
+          this.saving = false
+          if (this.activeSavePromise === savePromise) {
+            this.activeSavePromise = null
+          }
+        }
+      }
+
+      savePromise = exec()
+      this.activeSavePromise = savePromise
+      return await savePromise
     },
     setBodyType(type: 'none' | 'json' | 'text') {
       if (!this.current) return

@@ -194,7 +194,7 @@ func (s *CollectionService) CreateFolder(rootPath, parentFolderID string) model.
 		targetDir = folderPath
 	}
 
-	folderName := slug.EntityDir(name, id)
+	folderName := id
 	folderPath := filepath.Join(targetDir, folderName)
 
 	if err := s.fs.MakeDir(folderPath); err != nil {
@@ -265,7 +265,7 @@ func (s *CollectionService) CreateRequest(rootPath, parentFolderID string) model
 		targetDir = folderPath
 	}
 
-	filename := slug.EntityFilename(name, id)
+	filename := slug.RequestFilename(id)
 	filePath := filepath.Join(targetDir, filename)
 
 	if err := s.fs.WriteJSON(filePath, req); err != nil {
@@ -429,8 +429,10 @@ func (s *CollectionService) MoveRequest(rootPath, id, targetFolderID string) mod
 	}
 
 	filename := filepath.Base(srcPath)
-	newFilename := slug.UniqueFilename(filename, targetDir)
-	newPath := filepath.Join(targetDir, newFilename)
+	newPath := filepath.Join(targetDir, filename)
+	if s.fs.Exists(newPath) && newPath != srcPath {
+		newPath = filepath.Join(targetDir, slug.RequestFilename(id))
+	}
 
 	if err := s.fs.MoveFile(srcPath, newPath); err != nil {
 		s.logger.Error("failed to move request", "id", id, "error", err)
@@ -532,12 +534,9 @@ func (s *CollectionService) ListCollections(collectionsRoot, activeCollection st
 			continue
 		}
 
-		coll.Slug = slugName
-		if coll.ID == "" {
-			coll.ID = coll.Slug
-		}
-		coll.IsDefault = (slugName == "default")
-		coll.IsActive = (slugName == activeCollection)
+		coll.ID = entry.Name()
+		coll.IsDefault = (entry.Name() == "default")
+		coll.IsActive = (entry.Name() == activeCollection)
 		collections = append(collections, coll)
 	}
 
@@ -550,24 +549,24 @@ func (s *CollectionService) ListCollections(collectionsRoot, activeCollection st
 		if nameI != nameJ {
 			return nameI < nameJ
 		}
-		return collections[i].Slug < collections[j].Slug
+		return collections[i].ID < collections[j].ID
 	})
 
 	return model.NewSuccess(collections)
 }
 
-func isCleanSlug(slugStr, collectionsRoot string) bool {
-	if slugStr == "" || filepath.Base(slugStr) != slugStr || strings.ContainsAny(slugStr, "/\\") || slugStr == "." || slugStr == ".." {
+func isCleanID(idStr, collectionsRoot string) bool {
+	if idStr == "" || filepath.Base(idStr) != idStr || strings.ContainsAny(idStr, "/\\") || idStr == "." || idStr == ".." {
 		return false
 	}
-	collDir := filepath.Join(collectionsRoot, slugStr)
+	collDir := filepath.Join(collectionsRoot, idStr)
 	if filepath.Clean(collDir) == filepath.Clean(collectionsRoot) {
 		return false
 	}
 	return true
 }
 
-// CreateCollection creates a new collection folder <slug>-<UUID> with collection.json and environments/.
+// CreateCollection creates a new collection folder <uuid> with collection.json and environments/.
 func (s *CollectionService) CreateCollection(collectionsRoot, name string) model.Result {
 	s.logger.Info("CreateCollection called", "collectionsRoot", collectionsRoot, "name", name)
 
@@ -583,8 +582,8 @@ func (s *CollectionService) CreateCollection(collectionsRoot, name string) model
 		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
-	collSlug := slug.EntityDir(name)
-	collDir := filepath.Join(collectionsRoot, collSlug)
+	collID := slug.CollectionDir()
+	collDir := filepath.Join(collectionsRoot, collID)
 
 	if err := s.fs.MakeDir(collDir); err != nil {
 		s.logger.Error("failed to create collection dir", "path", collDir, "error", err)
@@ -600,8 +599,7 @@ func (s *CollectionService) CreateCollection(collectionsRoot, name string) model
 
 	now := time.Now()
 	coll := model.Collection{
-		ID:          collSlug,
-		Slug:        collSlug,
+		ID:          collID,
 		Name:        name,
 		Description: "",
 		IsDefault:   false,
@@ -621,18 +619,18 @@ func (s *CollectionService) CreateCollection(collectionsRoot, name string) model
 }
 
 // RenameCollection updates the display name of a collection in collection.json without altering folder path on disk (AD-4).
-func (s *CollectionService) RenameCollection(collectionsRoot, slugStr, newName string) model.Result {
-	s.logger.Info("RenameCollection called", "collectionsRoot", collectionsRoot, "slug", slugStr, "newName", newName)
+func (s *CollectionService) RenameCollection(collectionsRoot, id, newName string) model.Result {
+	s.logger.Info("RenameCollection called", "collectionsRoot", collectionsRoot, "id", id, "newName", newName)
 
 	if collectionsRoot == "" {
 		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
-	slugStr = strings.TrimSpace(slugStr)
-	if slugStr == "" {
-		return model.NewError(model.ErrValidation, ErrCollectionSlugEmpty)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionIDEmpty)
 	}
-	if !isCleanSlug(slugStr, collectionsRoot) {
+	if !isCleanID(id, collectionsRoot) {
 		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
@@ -644,7 +642,7 @@ func (s *CollectionService) RenameCollection(collectionsRoot, slugStr, newName s
 		newName = string([]rune(newName)[:255])
 	}
 
-	collDir := filepath.Join(collectionsRoot, slugStr)
+	collDir := filepath.Join(collectionsRoot, id)
 	metaPath := filepath.Join(collDir, collectionFileName)
 	if !s.fs.Exists(metaPath) {
 		return model.NewError(model.ErrNotFound, ErrCollectionNotFound)
@@ -657,8 +655,8 @@ func (s *CollectionService) RenameCollection(collectionsRoot, slugStr, newName s
 	}
 
 	coll.Name = newName
-	coll.Slug = slugStr
-	coll.IsDefault = (slugStr == "default")
+	coll.ID = id
+	coll.IsDefault = (id == "default")
 	coll.UpdatedAt = time.Now()
 
 	if err := s.fs.WriteJSON(metaPath, coll); err != nil {
@@ -671,26 +669,26 @@ func (s *CollectionService) RenameCollection(collectionsRoot, slugStr, newName s
 
 // DeleteCollection deletes a collection directory from collectionsRoot.
 // It refuses to delete the default collection.
-func (s *CollectionService) DeleteCollection(collectionsRoot, slugStr string) model.Result {
-	s.logger.Info("DeleteCollection called", "collectionsRoot", collectionsRoot, "slug", slugStr)
+func (s *CollectionService) DeleteCollection(collectionsRoot, id string) model.Result {
+	s.logger.Info("DeleteCollection called", "collectionsRoot", collectionsRoot, "id", id)
 
 	if collectionsRoot == "" {
 		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
-	slugStr = strings.TrimSpace(slugStr)
-	if slugStr == "" {
-		return model.NewError(model.ErrValidation, ErrCollectionSlugEmpty)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionIDEmpty)
 	}
-	if !isCleanSlug(slugStr, collectionsRoot) {
+	if !isCleanID(id, collectionsRoot) {
 		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
-	if slugStr == "default" {
+	if id == "default" {
 		return model.NewError(model.ErrValidation, ErrCannotDeleteDefaultColl)
 	}
 
-	collDir := filepath.Join(collectionsRoot, slugStr)
+	collDir := filepath.Join(collectionsRoot, id)
 	if !s.fs.Exists(collDir) {
 		return model.NewError(model.ErrNotFound, ErrCollectionNotFound)
 	}
@@ -708,23 +706,23 @@ func (s *CollectionService) DeleteCollection(collectionsRoot, slugStr string) mo
 	return model.NewSuccess(nil)
 }
 
-// DuplicateCollection clones an existing collection tree into a new folder <slug>-<UUID> with updated name and timestamps.
-func (s *CollectionService) DuplicateCollection(collectionsRoot, slugStr string) model.Result {
-	s.logger.Info("DuplicateCollection called", "collectionsRoot", collectionsRoot, "slug", slugStr)
+// DuplicateCollection clones an existing collection tree into a new folder <uuid> with updated name and timestamps.
+func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) model.Result {
+	s.logger.Info("DuplicateCollection called", "collectionsRoot", collectionsRoot, "id", id)
 
 	if collectionsRoot == "" {
 		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
-	slugStr = strings.TrimSpace(slugStr)
-	if slugStr == "" {
-		return model.NewError(model.ErrValidation, ErrCollectionSlugEmpty)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionIDEmpty)
 	}
-	if !isCleanSlug(slugStr, collectionsRoot) {
+	if !isCleanID(id, collectionsRoot) {
 		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
-	srcDir := filepath.Join(collectionsRoot, slugStr)
+	srcDir := filepath.Join(collectionsRoot, id)
 	srcMetaPath := filepath.Join(srcDir, collectionFileName)
 	if !s.fs.Exists(srcMetaPath) {
 		return model.NewError(model.ErrNotFound, ErrCollectionNotFound)
@@ -741,8 +739,8 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, slugStr string)
 		newName = string([]rune(newName)[:255])
 	}
 
-	newSlug := slug.EntityDir(newName)
-	destDir := filepath.Join(collectionsRoot, newSlug)
+	newID := slug.CollectionDir()
+	destDir := filepath.Join(collectionsRoot, newID)
 
 	if err := copyDirectory(s.fs, srcDir, destDir); err != nil {
 		s.logger.Error("failed to copy collection directory", "src", srcDir, "dest", destDir, "error", err)
@@ -752,8 +750,7 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, slugStr string)
 
 	now := time.Now()
 	newColl := model.Collection{
-		ID:          newSlug,
-		Slug:        newSlug,
+		ID:          newID,
 		Name:        newName,
 		Description: srcColl.Description,
 		IsDefault:   false,
@@ -772,23 +769,23 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, slugStr string)
 	return model.NewSuccess(newColl)
 }
 
-// SwitchCollection validates slug for path traversal and checks that the collection exists in collectionsRoot.
-func (s *CollectionService) SwitchCollection(collectionsRoot, slugStr string) model.Result {
-	s.logger.Info("SwitchCollection called", "collectionsRoot", collectionsRoot, "slug", slugStr)
+// SwitchCollection validates id for path traversal and checks that the collection exists in collectionsRoot.
+func (s *CollectionService) SwitchCollection(collectionsRoot, id string) model.Result {
+	s.logger.Info("SwitchCollection called", "collectionsRoot", collectionsRoot, "id", id)
 
 	if collectionsRoot == "" {
 		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
 	}
 
-	slugStr = strings.TrimSpace(slugStr)
-	if slugStr == "" {
-		return model.NewError(model.ErrValidation, ErrCollectionSlugEmpty)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionIDEmpty)
 	}
-	if !isCleanSlug(slugStr, collectionsRoot) {
+	if !isCleanID(id, collectionsRoot) {
 		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
-	collDir := filepath.Join(collectionsRoot, slugStr)
+	collDir := filepath.Join(collectionsRoot, id)
 	if !s.fs.Exists(collDir) {
 		return model.NewError(model.ErrNotFound, ErrCollectionNotFound)
 	}

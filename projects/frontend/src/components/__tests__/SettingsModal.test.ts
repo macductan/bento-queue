@@ -22,13 +22,13 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
 
 const mockCollections: model.Collection[] = [
   new model.Collection({
-    slug: 'default',
+    id: 'default',
     name: 'Default Collection',
     is_default: true,
     is_active: true
   }),
   new model.Collection({
-    slug: 'proj-b',
+    id: 'proj-b',
     name: 'Project B',
     is_default: false,
     is_active: false
@@ -43,7 +43,7 @@ describe('SettingsModal.vue', () => {
   it('renders collections and disables delete on default collection', async () => {
     const store = useCollectionStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const wrapper = mount(SettingsModal, {
       props: {
@@ -89,7 +89,7 @@ describe('SettingsModal.vue', () => {
     const store = useCollectionStore()
     const uiStore = useUiStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const confirmSpy = vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(true)
     const deleteSpy = vi.spyOn(store, 'deleteCollection').mockResolvedValue(true)
@@ -111,7 +111,7 @@ describe('SettingsModal.vue', () => {
     const store = useCollectionStore()
     const uiStore = useUiStore()
     store.collections = [...mockCollections]
-    store.activeCollectionSlug = 'default'
+    store.activeCollectionId = 'default'
 
     const confirmSpy = vi.spyOn(uiStore, 'requestConfirm').mockResolvedValue(false)
     const deleteSpy = vi.spyOn(store, 'deleteCollection')
@@ -158,5 +158,29 @@ describe('SettingsModal.vue', () => {
 
     expect(wrapper.emitted('update:modelValue')).toBeTruthy()
     expect(wrapper.emitted('update:modelValue')![0]).toEqual([false])
+  })
+
+  it('renders auto-save section and toggles autoSaveEnabled on click', async () => {
+    const uiStore = useUiStore()
+    expect(uiStore.autoSaveEnabled).toBe(true)
+
+    const wrapper = mount(SettingsModal, {
+      props: {
+        modelValue: true
+      }
+    })
+
+    expect(wrapper.text()).toContain('Tự động lưu (Auto-save)')
+    const toggleBtn = wrapper.find('[data-test="toggle-auto-save"]')
+    expect(toggleBtn.exists()).toBe(true)
+    expect(toggleBtn.attributes('aria-checked')).toBe('true')
+
+    await toggleBtn.trigger('click')
+    expect(uiStore.autoSaveEnabled).toBe(false)
+    expect(toggleBtn.attributes('aria-checked')).toBe('false')
+
+    await toggleBtn.trigger('click')
+    expect(uiStore.autoSaveEnabled).toBe(true)
+    expect(toggleBtn.attributes('aria-checked')).toBe('true')
   })
 })

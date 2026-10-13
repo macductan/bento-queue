@@ -3,11 +3,17 @@ import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useCollectionStore } from '@/stores/collectionStore'
+import { generateCurlCommand } from '@/utils/curl'
+import { getInheritedHeaders } from '@/utils/headers'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const uiStore = useUiStore()
+const collectionStore = useCollectionStore()
+const envStore = useEnvironmentStore()
 
 const req = computed(() => requestStore.current)
 const urlInputRef = ref<HTMLTextAreaElement | null>(null)
@@ -147,6 +153,56 @@ const initResize = (el: any) => {
   }
 };
 
+const copyToClipboard = async (text: string): Promise<boolean> => {
+  if (navigator?.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fallback to execCommand if clipboard API fails
+    }
+  }
+
+  try {
+    const textArea = document.createElement('textarea')
+    textArea.value = text
+    textArea.style.position = 'fixed'
+    textArea.style.opacity = '0'
+    document.body.appendChild(textArea)
+    textArea.focus()
+    textArea.select()
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textArea)
+    return successful
+  } catch {
+    return false
+  }
+}
+
+const copyAsCurl = async () => {
+  if (!req.value) return
+  if (!req.value.url || req.value.url.trim() === '') {
+    responseStore.urlInvalid = true
+    uiStore.showToast('Vui lòng nhập URL')
+    return
+  }
+
+  const pathNodes = (collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []).filter(n => n.type === 'folder')
+  const vars = new Map<string, string>()
+  for (const [k, v] of envStore.variablesMap.entries()) vars.set(k, v)
+
+  const curlCmd = generateCurlCommand(req.value, {
+    vars,
+    pathNodes
+  })
+
+  const success = await copyToClipboard(curlCmd)
+  if (success) {
+    uiStore.showToast('Đã sao chép cURL vào clipboard')
+  } else {
+    uiStore.showToast('Không thể sao chép vào clipboard')
+  }
+}
 </script>
 
 <template>
@@ -228,6 +284,22 @@ const initResize = (el: any) => {
       </VariableHighlighter>
       </div>
     </div>
+
+    <!-- Copy as cURL Button -->
+    <button
+      type="button"
+      id="copy-curl-btn"
+      title="Copy as cURL"
+      aria-label="Copy as cURL"
+      class="h-full px-3 flex items-center justify-center gap-1.5 text-text-secondary hover:text-text-primary hover:bg-surface-hover border-l border-border-default outline-none focus-visible:ring-1 focus-visible:ring-brand-primary text-xs font-semibold shrink-0 transition-colors"
+      @click="copyAsCurl"
+    >
+      <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4 17 10 11 4 5"></polyline>
+        <line x1="12" y1="19" x2="20" y2="19"></line>
+      </svg>
+      <span>cURL</span>
+    </button>
 
     <!-- Send/Abort Button -->
     <button

@@ -181,8 +181,8 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 	if len(item.Item) > 0 {
 		// It's a folder
 		folderID := uuid.New().String()
-		dirSlug := slug.EntityDir(item.Name, folderID)
-		folderPath := filepath.Join(currentDir, dirSlug)
+		folderDir := slug.FolderDir(folderID)
+		folderPath := filepath.Join(currentDir, folderDir)
 
 		if err := s.fs.MakeDir(folderPath); err != nil {
 			s.logger.Error("Failed to create folder directory", "path", folderPath, "error", err)
@@ -227,8 +227,8 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 	if item.Request != nil {
 		// It's a request
 		reqID := uuid.New().String()
-		fileSlug := slug.EntityFilename(item.Name, reqID)
-		reqPath := filepath.Join(nextDir, fileSlug)
+		reqFilename := slug.RequestFilename(reqID)
+		reqPath := filepath.Join(nextDir, reqFilename)
 
 		now := time.Now()
 

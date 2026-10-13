@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"hecto-api/model"
 	"hecto-api/slug"
 )
@@ -42,6 +40,10 @@ func (f *FileSystem) ListEnvironments(collRoot string) ([]model.Environment, err
 
 // GetEnvironment retrieves an environment by ID.
 func (f *FileSystem) GetEnvironment(collRoot, id string) (*model.Environment, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("%s: environment id empty", model.ErrNotFound)
+	}
+
 	envs, err := f.ListEnvironments(collRoot)
 	if err != nil {
 		return nil, err
@@ -58,6 +60,10 @@ func (f *FileSystem) GetEnvironment(collRoot, id string) (*model.Environment, er
 
 // DeleteEnvironment deletes an environment by ID.
 func (f *FileSystem) DeleteEnvironment(collRoot, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("%s: environment id empty", model.ErrNotFound)
+	}
+
 	envsDir := filepath.Join(collRoot, "environments")
 	entries, err := f.ListDir(envsDir)
 	if err != nil {
@@ -79,7 +85,7 @@ func (f *FileSystem) DeleteEnvironment(collRoot, id string) error {
 	return fmt.Errorf("%s: environment %s", model.ErrNotFound, id)
 }
 
-// SaveEnvironment saves an environment. If the file doesn't exist, it creates it with a slug-UUID name.
+// SaveEnvironment saves an environment. If the file doesn't exist, it creates it with a pure UUID filename <uuid>.json.
 func (f *FileSystem) SaveEnvironment(collRoot string, env model.Environment) error {
 	envsDir := filepath.Join(collRoot, "environments")
 
@@ -87,17 +93,20 @@ func (f *FileSystem) SaveEnvironment(collRoot string, env model.Environment) err
 	if err != nil && !strings.HasPrefix(err.Error(), model.ErrNotFound) {
 		return err
 	}
-	var existingPath string
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
 
-		path := filepath.Join(envsDir, entry.Name())
-		var existingEnv model.Environment
-		if err := f.ReadJSON(path, &existingEnv); err == nil && existingEnv.ID == env.ID {
-			existingPath = path
-			break
+	var existingPath string
+	if strings.TrimSpace(env.ID) != "" {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+
+			path := filepath.Join(envsDir, entry.Name())
+			var existingEnv model.Environment
+			if err := f.ReadJSON(path, &existingEnv); err == nil && existingEnv.ID == env.ID {
+				existingPath = path
+				break
+			}
 		}
 	}
 
@@ -106,12 +115,12 @@ func (f *FileSystem) SaveEnvironment(collRoot string, env model.Environment) err
 		return f.WriteJSON(existingPath, env)
 	}
 
-	// Create new file with <slug>-<UUID>.json
-	if env.ID == "" {
-		env.ID = uuid.New().String()
+	// Create new file with <uuid>.json
+	if strings.TrimSpace(env.ID) == "" {
+		env.ID = slug.UUID()
 	}
 
-	filename := slug.EntityFilename(env.Name, env.ID)
+	filename := slug.EnvironmentFilename(env.ID)
 	path := filepath.Join(envsDir, filename)
 
 	return f.WriteJSON(path, env)
