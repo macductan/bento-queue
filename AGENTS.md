@@ -70,7 +70,13 @@ When testing Epic 2 features visually, verify the following:
     2. Chạy kiểm tra toàn diện (`bun run type-check`, `bun run test`, `go test ./...`) đảm bảo pass 100%.
     3. Tiến hành gom (squash) toàn bộ các commit lẻ trên nhánh `develop` tính từ commit chuẩn gần nhất (`v1.x.x`) thành 1 commit duy nhất chuẩn hóa: **Tiêu đề BẮT BUỘC chỉ là `v<version>`** (ví dụ: `v1.2.0`, `v1.1.0`), phần thân là danh sách bullet points thay đổi. Tuyệt đối không dùng prefix `feat: release ...`.
     4. **Push & Tạo MR vào `main`**: Push force nhánh `develop` và tự động tạo Merge Request vào `main` qua Git push options (`git push -o merge_request.create -o merge_request.target=main -o merge_request.title="v<version>" origin develop --force`).
-    5. **MANDATORY CONFIRMATION**: Luôn trình bày tóm tắt thay đổi và xin xác nhận của người dùng trước khi chạy các lệnh `git commit`, `git reset`, `git push`.
+    5. **MANDATORY CONFIRMATION**: Luôn trình bày tóm tắt thay đổi và xin xác nhận của người dùng trước khi chạy các lệnh `git commit`, `git reset`, `git push`. (Ngoại lệ: xem Quy trình Build Fix sau Release bên dưới).
+- **Quy trình Build Fix sau Release (Tự động hóa)**:
+  - Khi pipeline CI bị fail sau release hoặc cần fix nóng cho bản release hiện tại:
+    - Tiêu đề commit chuẩn hóa: `v<version> (build <n>)` (với `n` tự tăng dần: `v1.3.0 (build 1)`, `v1.3.0 (build 2)`,...).
+    - **Ngoại lệ xác nhận:** Khi người dùng gửi log lỗi build/CI của bản release hoặc yêu cầu fix build, agent tự động sửa lỗi, chạy kiểm thử xác nhận pass 100%, tự động commit `v<version> (build <n>)` và push lên `develop` mà không cần hỏi lại xác nhận.
+- **Wails Binding Model Tracking**:
+  - Thư mục `projects/frontend/wailsjs/` BẮT BUỘC phải được commit và theo dõi trong Git (tuyệt đối không thêm vào `.gitignore`), vì môi trường CI chỉ chạy trên container Node/Bun không có Wails CLI để generate bindings.
 
 ## Review gate (bmad-build)
 
