@@ -4,6 +4,7 @@ workflow:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
 stages:
+  - setup
   - lint
   - test
   - burn-in
@@ -24,6 +25,21 @@ cache:
     - ~/.bun/install/cache/
     - ~/.cache/go-build/
     - ~/go/pkg/mod/
+    - ~/go/bin/
+
+# Setup stage
+generate:bindings:
+  stage: setup
+  image: golang:1.25
+  script:
+    - export PATH=$PATH:$(go env GOPATH)/bin
+    - which wails || go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+    - cd projects
+    - wails generate module
+  artifacts:
+    paths:
+      - projects/frontend/wailsjs/
+    expire_in: 1 day
 
 # Lint stage
 lint:backend:
@@ -37,6 +53,8 @@ lint:backend:
 lint:frontend:
   stage: lint
   image: oven/bun:1
+  needs:
+    - generate:bindings
   script:
     - cd projects/frontend
     - bun install --frozen-lockfile
@@ -62,6 +80,7 @@ test:frontend:unit:
   image: oven/bun:1
   needs:
     - lint:frontend
+    - generate:bindings
   script:
     - cd projects/frontend
     - bun install --frozen-lockfile
@@ -72,6 +91,7 @@ test:frontend:unit:
   image: oven/bun:1
   needs:
     - lint:frontend
+    - generate:bindings
   before_script:
     - cd projects/frontend
     - bun install --frozen-lockfile
@@ -101,6 +121,7 @@ burn-in:frontend:
   needs:
     - test:frontend:e2e:shard-1
     - test:frontend:e2e:shard-2
+    - generate:bindings
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "schedule"'

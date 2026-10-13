@@ -28,7 +28,7 @@ const currentPath = ref('')
 const isCollectionModalOpen = ref(false)
 const collectionModalMode = ref<'create' | 'rename'>('create')
 const collectionModalInitialName = ref('')
-const targetSlug = ref('')
+const targetId = ref('')
 
 const fetchRoot = async () => {
   try {
@@ -92,30 +92,30 @@ const changeLocation = async () => {
 const openCreateCollection = () => {
   collectionModalMode.value = 'create'
   collectionModalInitialName.value = ''
-  targetSlug.value = ''
+  targetId.value = ''
   isCollectionModalOpen.value = true
 }
 
 const openRenameCollection = (c: model.Collection) => {
   collectionModalMode.value = 'rename'
   collectionModalInitialName.value = c.name
-  targetSlug.value = c.slug
+  targetId.value = c.id || ''
   isCollectionModalOpen.value = true
 }
 
-const handleDuplicateCollection = async (slug: string) => {
-  await collectionStore.duplicateCollection(slug)
+const handleDuplicateCollection = async (id: string) => {
+  await collectionStore.duplicateCollection(id)
 }
 
 const handleDeleteCollection = async (c: model.Collection) => {
-  if (c.slug === 'default' || c.is_default) {
+  if (c.id === 'default' || c.is_default) {
     return
   }
   const confirmed = await uiStore.requestConfirm(
     `Bạn có chắc chắn muốn xóa collection "${c.name}" không? Toàn bộ request và environment sẽ bị xóa vĩnh viễn.`
   )
   if (!confirmed) return
-  await collectionStore.deleteCollection(c.slug)
+  await collectionStore.deleteCollection(c.id || '')
 }
 
 const handleCollectionModalSubmit = async (name: string) => {
@@ -124,8 +124,8 @@ const handleCollectionModalSubmit = async (name: string) => {
     if (ok) {
       isCollectionModalOpen.value = false
     }
-  } else if (collectionModalMode.value === 'rename' && targetSlug.value) {
-    const ok = await collectionStore.renameCollection(targetSlug.value, name)
+  } else if (collectionModalMode.value === 'rename' && targetId.value) {
+    const ok = await collectionStore.renameCollection(targetId.value, name)
     if (ok) {
       isCollectionModalOpen.value = false
     }
@@ -166,6 +166,35 @@ const handleCollectionModalSubmit = async (name: string) => {
             </button>
           </div>
 
+          <!-- Auto-save Section -->
+          <div class="border-t border-border-default pt-4">
+            <div class="flex items-center justify-between gap-4">
+              <div class="flex-1">
+                <h3 class="ui-sm font-semibold text-text-primary">Tự động lưu (Auto-save)</h3>
+                <p class="ui-xs text-text-muted mt-0.5">
+                  Tự động lưu ngầm các thay đổi sau 800ms cho cả Request và Folder. Khi tắt, bạn có thể lưu thủ công bằng Ctrl+S.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="Tự động lưu"
+                :aria-checked="uiStore.autoSaveEnabled"
+                data-test="toggle-auto-save"
+                @click="uiStore.setAutoSaveEnabled(!uiStore.autoSaveEnabled)"
+                class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
+                :class="uiStore.autoSaveEnabled ? 'bg-brand-primary' : 'bg-surface-overlay'"
+                title="Bật/Tắt tự động lưu"
+              >
+                <span
+                  aria-hidden="true"
+                  class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                  :class="uiStore.autoSaveEnabled ? 'translate-x-5' : 'translate-x-0'"
+                />
+              </button>
+            </div>
+          </div>
+
           <!-- Collection Management Section -->
           <div class="border-t border-border-default pt-4">
             <div class="flex items-center justify-between mb-2">
@@ -196,19 +225,19 @@ const handleCollectionModalSubmit = async (name: string) => {
             <div v-else class="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-1">
               <div
                 v-for="c in collectionStore.collections"
-                :key="c.slug"
+                :key="c.id"
                 class="flex items-center justify-between px-3 py-2 bg-surface-base border border-border-default rounded text-text-primary ui-xs"
               >
                 <div class="flex items-center gap-2 min-w-0 mr-2 flex-1">
                   <span class="font-medium truncate" :title="c.name">{{ c.name }}</span>
                   <span
-                    v-if="c.slug === collectionStore.activeCollectionSlug"
+                    v-if="c.id === collectionStore.activeCollectionId"
                     class="px-1.5 py-0.2 rounded text-[10px] bg-brand-primary/20 text-brand-primary border border-brand-primary/30 shrink-0 font-medium"
                   >
                     Active
                   </span>
                   <span
-                    v-if="c.slug === 'default' || c.is_default"
+                    v-if="c.id === 'default' || c.is_default"
                     class="px-1.5 py-0.2 rounded text-[10px] bg-surface-overlay text-text-muted border border-border-default shrink-0"
                   >
                     Default
@@ -236,7 +265,7 @@ const handleCollectionModalSubmit = async (name: string) => {
                     class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
                     title="Nhân bản collection"
                     aria-label="Nhân bản collection"
-                    @click="handleDuplicateCollection(c.slug)"
+                    @click="handleDuplicateCollection(c.id || '')"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -247,14 +276,14 @@ const handleCollectionModalSubmit = async (name: string) => {
                   <!-- Delete -->
                   <button
                     type="button"
-                    :disabled="c.slug === 'default' || c.is_default"
+                    :disabled="c.id === 'default' || c.is_default"
                     :class="[
                       'p-1 rounded transition-colors',
-                      (c.slug === 'default' || c.is_default)
+                      (c.id === 'default' || c.is_default)
                         ? 'opacity-30 cursor-not-allowed text-text-muted'
                         : 'text-text-muted hover:text-rose-400 hover:bg-surface-hover'
                     ]"
-                    :title="(c.slug === 'default' || c.is_default) ? 'Không thể xóa collection mặc định' : 'Xóa collection'"
+                    :title="(c.id === 'default' || c.is_default) ? 'Không thể xóa collection mặc định' : 'Xóa collection'"
                     aria-label="Xóa collection"
                     @click="handleDeleteCollection(c)"
                   >

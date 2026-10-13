@@ -26,9 +26,9 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 
 
-  if (e.ctrlKey && e.key.toLowerCase() === 's') {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
-    if (requestStore.current && requestStore.isDirty) {
+    if (requestStore.current) {
       void requestStore.saveCurrent()
     }
     return

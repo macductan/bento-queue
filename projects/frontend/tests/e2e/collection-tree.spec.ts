@@ -75,7 +75,7 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
     await expect(requestTitle).toBeVisible();
     
     // The URL should be empty initially for a new request
-    await expect(page.getByLabel('URL')).toHaveValue('');
+    await expect(page.getByRole('textbox', { name: 'URL' })).toHaveValue('');
 
     // Cleanup
     await deleteTestRequest(page, requestNode);
@@ -88,7 +88,7 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
 
     log.step('Modify the request to see unsaved changes dot');
     await requestNode.click();
-    await page.getByLabel('URL').fill('https://api.example.com');
+    await page.getByRole('textbox', { name: 'URL' }).fill('https://api.example.com');
     
     const unsavedDotTitle = page.locator('h1 [aria-label="Chưa lưu"]');
     await expect(unsavedDotTitle).toBeVisible();
@@ -115,22 +115,18 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
     await deleteTestRequest(page, requestNode);
   });
 
-  test('should prompt for save when duplicating unsaved request', async ({ page }) => {
+  test('should flush and duplicate unsaved request correctly', async ({ page }) => {
     const timeId = Date.now().toString();
     const requestName = `Request ${timeId}`;
     const requestNode = await createTestRequest(page, requestName);
 
     log.step('Modify the request');
     await requestNode.click();
-    await page.getByLabel('URL').fill('https://api.example.com');
+    await page.getByRole('textbox', { name: 'URL' }).fill('https://api.example.com');
     
     log.step('Duplicate the unsaved request');
     await requestNode.click({ button: 'right' });
     await page.getByRole('button', { name: 'Sao chép' }).click();
-    
-    const savePromptBtn = page.getByRole('button', { name: 'Lưu', exact: true });
-    await expect(savePromptBtn).toBeVisible();
-    await savePromptBtn.click();
     
     const copyNodeName = `${requestName} (bản sao)`;
     const copyNode = page.locator('[data-tree-row]').filter({ hasText: copyNodeName }).first();

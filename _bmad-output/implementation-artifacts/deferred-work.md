@@ -91,6 +91,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/epic-5-retro-2026-10-08.md`
   summary: Consider adding a progress tracking mechanism (progress bar) for importing very large collections or when supporting OpenAPI/Swagger import in the future.
   evidence: For large imports, users might not know if the app is still working.
-  status: done
-  resolution: Đã thêm import progress emit cho ImportPostman.
 
+- source_spec: `_bmad-output/specs/spec-request-productivity/stories/1-dong-bo-hai-chieu-url-bar-va-query-params.md`
+  summary: Stale DOM and component references in KvpEditor.vue template ref arrays after row deletion.
+  evidence: Pre-existing array refs (keyInputs, valueInputs, highlighterRefs) use index-based assignment and are not cleaned up when rows are deleted via splice.

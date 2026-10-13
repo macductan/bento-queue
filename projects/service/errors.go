@@ -31,7 +31,7 @@ const (
 	ErrCollectionNameEmpty      = "Tên collection không được để trống"
 	ErrCollectionNotFound       = "Không tìm thấy collection"
 	ErrCannotDeleteDefaultColl  = "Không thể xóa collection mặc định"
-	ErrCollectionSlugEmpty      = "Collection slug không được để trống"
+	ErrCollectionIDEmpty        = "Collection ID không được để trống"
 	ErrCollectionCreateFailed   = "Không thể tạo collection"
 	ErrCollectionRenameFailed   = "Không thể lưu tên collection mới"
 	ErrCollectionDeleteFailed   = "Không thể xóa collection"

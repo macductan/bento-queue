@@ -173,14 +173,14 @@ export function setupWailsMock() {
           ListCollections: async () => ({
             success: true,
             data: [
-              { slug: 'default', name: 'Default Collection', is_default: true, is_active: true }
+              { id: 'default', name: 'Default Collection', is_default: true, is_active: true }
             ]
           }),
-          SwitchCollection: async (slug: string) => ({ success: true, data: null }),
-          CreateCollection: async (name: string) => ({ success: true, data: { slug: 'new-uuid', name } }),
-          RenameCollection: async (slug: string, name: string) => ({ success: true, data: null }),
-          DeleteCollection: async (slug: string) => ({ success: true, data: null }),
-          DuplicateCollection: async (slug: string) => ({ success: true, data: null })
+          SwitchCollection: async (_id: string) => ({ success: true, data: null }),
+          CreateCollection: async (name: string) => ({ success: true, data: { id: 'new-uuid', name } }),
+          RenameCollection: async (_id: string, _name: string) => ({ success: true, data: null }),
+          DeleteCollection: async (_id: string) => ({ success: true, data: null }),
+          DuplicateCollection: async (_id: string) => ({ success: true, data: null })
         }
       }
     };

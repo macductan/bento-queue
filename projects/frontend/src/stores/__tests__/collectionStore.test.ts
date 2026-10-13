@@ -45,7 +45,9 @@ import {
   DuplicateCollection,
   GetCollectionTree,
   SaveRequest,
-  ListEnvironments
+  ListEnvironments,
+  GetRequest,
+  CreateRequest
 } from '../../../wailsjs/go/main/App'
 
 function resSuccess(data: any = {}): model.Result {
@@ -68,58 +70,58 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       expect(store.activeCollection).toBeNull()
 
       store.collections = [
-        { slug: 'default', name: 'Default', is_default: true, is_active: false } as any,
-        { slug: 'project-a', name: 'Project A', is_default: false, is_active: true } as any
+        { id: 'default', name: 'Default', is_default: true, is_active: false } as any,
+        { id: 'project-a', name: 'Project A', is_default: false, is_active: true } as any
       ]
-      store.activeCollectionSlug = 'project-a'
+      store.activeCollectionId = 'project-a'
 
       expect(store.activeCollection).toEqual({
-        slug: 'project-a',
+        id: 'project-a',
         name: 'Project A',
         is_default: false,
         is_active: true
       })
 
-      store.activeCollectionSlug = 'non-existent'
+      store.activeCollectionId = 'non-existent'
       expect(store.activeCollection).toBeNull()
     })
 
-    it('isDefaultActive returns true when slug is default or empty, false otherwise', () => {
+    it('isDefaultActive returns true when id is default or empty, false otherwise', () => {
       const store = useCollectionStore()
       expect(store.isDefaultActive).toBe(true)
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       expect(store.isDefaultActive).toBe(true)
 
-      store.activeCollectionSlug = 'custom-slug'
+      store.activeCollectionId = 'custom-id'
       expect(store.isDefaultActive).toBe(false)
     })
   })
 
   describe('loadCollections', () => {
-    it('updates collections and activeCollectionSlug from item with is_active: true', async () => {
+    it('updates collections and activeCollectionId from item with is_active: true', async () => {
       const store = useCollectionStore()
       vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
-        { slug: 'default', name: 'Default', is_default: true, is_active: false },
-        { slug: 'ecommerce-uuid', name: 'E-commerce', is_default: false, is_active: true }
+        { id: 'default', name: 'Default', is_default: true, is_active: false },
+        { id: 'ecommerce-uuid', name: 'E-commerce', is_default: false, is_active: true }
       ]))
 
       await store.loadCollections()
 
       expect(store.collections).toHaveLength(2)
-      expect(store.activeCollectionSlug).toBe('ecommerce-uuid')
+      expect(store.activeCollectionId).toBe('ecommerce-uuid')
       expect(store.collectionsLoading).toBe(false)
     })
 
     it('falls back to default if no item has is_active: true', async () => {
       const store = useCollectionStore()
       vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
-        { slug: 'default', name: 'Default', is_default: true, is_active: false }
+        { id: 'default', name: 'Default', is_default: true, is_active: false }
       ]))
 
       await store.loadCollections()
 
-      expect(store.activeCollectionSlug).toBe('default')
+      expect(store.activeCollectionId).toBe('default')
     })
 
     it('handles backend error by clearing collections and showing toast', async () => {
@@ -137,11 +139,11 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
   })
 
   describe('switchCollection', () => {
-    it('returns true immediately when targetSlug equals activeCollectionSlug', async () => {
+    it('returns true immediately when targetId equals activeCollectionId', async () => {
       const store = useCollectionStore()
-      store.activeCollectionSlug = 'current-slug'
+      store.activeCollectionId = 'current-id'
 
-      const result = await store.switchCollection('current-slug')
+      const result = await store.switchCollection('current-id')
 
       expect(result).toBe(true)
       expect(SwitchCollection).not.toHaveBeenCalled()
@@ -149,10 +151,10 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
     it('blocks concurrent switch calls when switching is in progress', async () => {
       const store = useCollectionStore()
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       store.switching = true
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(false)
       expect(SwitchCollection).not.toHaveBeenCalled()
@@ -165,7 +167,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const envStore = useEnvironmentStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       store.activeRequestId = 'req-1'
       store.activeFolderId = 'folder-1'
       store.expandedFolders.add('folder-1')
@@ -181,15 +183,15 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
       vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
-        { slug: 'default', name: 'Default', is_default: true, is_active: false },
-        { slug: 'target-slug', name: 'Target', is_default: false, is_active: true }
+        { id: 'default', name: 'Default', is_default: true, is_active: false },
+        { id: 'target-id', name: 'Target', is_default: false, is_active: true }
       ]))
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(true)
-      expect(SwitchCollection).toHaveBeenCalledWith('target-slug')
-      expect(store.activeCollectionSlug).toBe('target-slug')
+      expect(SwitchCollection).toHaveBeenCalledWith('target-id')
+      expect(store.activeCollectionId).toBe('target-id')
       expect(store.switching).toBe(false)
 
       // Verifying state isolation
@@ -211,13 +213,13 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const uiStore = useUiStore()
       const showToastSpy = vi.spyOn(uiStore, 'showToast')
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       vi.mocked(SwitchCollection).mockResolvedValueOnce(resError('Collection không tồn tại', 'NOT_FOUND'))
 
-      const result = await store.switchCollection('missing-slug')
+      const result = await store.switchCollection('missing-id')
 
       expect(result).toBe(false)
-      expect(store.activeCollectionSlug).toBe('default')
+      expect(store.activeCollectionId).toBe('default')
       expect(store.switching).toBe(false)
       expect(showToastSpy).toHaveBeenCalledWith('Collection không tồn tại')
     })
@@ -227,21 +229,21 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const reqStore = useRequestStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       reqStore.original = createMockRequest({ id: 'req-1', name: 'Original' })
       reqStore.current = createMockRequest({ id: 'req-1', name: 'Modified' })
       expect(reqStore.isDirty).toBe(true)
 
       const promptSpy = vi.spyOn(uiStore, 'requestUnsavedPrompt').mockResolvedValueOnce('cancel')
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(false)
       expect(promptSpy).toHaveBeenCalledWith(
         'Request hiện tại có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi chuyển collection?'
       )
       expect(SwitchCollection).not.toHaveBeenCalled()
-      expect(store.activeCollectionSlug).toBe('default')
+      expect(store.activeCollectionId).toBe('default')
       expect(store.switching).toBe(false)
       expect(reqStore.current?.name).toBe('Modified')
     })
@@ -251,7 +253,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const reqStore = useRequestStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       reqStore.original = createMockRequest({ id: 'req-1', name: 'Original' })
       reqStore.current = createMockRequest({ id: 'req-1', name: 'Modified' })
       expect(reqStore.isDirty).toBe(true)
@@ -260,11 +262,11 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       vi.mocked(SaveRequest).mockResolvedValueOnce(resSuccess({}))
       vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(true)
       expect(SaveRequest).toHaveBeenCalled()
-      expect(SwitchCollection).toHaveBeenCalledWith('target-slug')
+      expect(SwitchCollection).toHaveBeenCalledWith('target-id')
       expect(reqStore.current).toBeNull() // Cleared after switch
       expect(store.switching).toBe(false)
     })
@@ -274,18 +276,18 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const reqStore = useRequestStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       reqStore.original = createMockRequest({ id: 'req-1', name: 'Original' })
       reqStore.current = createMockRequest({ id: 'req-1', name: 'Modified' })
 
       vi.spyOn(uiStore, 'requestUnsavedPrompt').mockResolvedValueOnce('save')
       vi.mocked(SaveRequest).mockResolvedValueOnce(resError('Disk write failed', 'IO_ERROR'))
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(false)
       expect(SwitchCollection).not.toHaveBeenCalled()
-      expect(store.activeCollectionSlug).toBe('default')
+      expect(store.activeCollectionId).toBe('default')
       expect(store.switching).toBe(false)
     })
 
@@ -294,7 +296,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const reqStore = useRequestStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       reqStore.original = createMockRequest({ id: 'req-1', name: 'Original' })
       reqStore.current = createMockRequest({ id: 'req-1', name: 'Modified' })
 
@@ -302,9 +304,10 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       // Spy saveCurrent to simulate a save that does not clear dirty state
       vi.spyOn(reqStore, 'saveCurrent').mockImplementation(async () => {
         // Do nothing to original/current, leaving isDirty = true
+        return true
       })
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(false)
       expect(SwitchCollection).not.toHaveBeenCalled()
@@ -316,18 +319,18 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const reqStore = useRequestStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       reqStore.original = createMockRequest({ id: 'req-1', name: 'Original' })
       reqStore.current = createMockRequest({ id: 'req-1', name: 'Modified' })
 
       vi.spyOn(uiStore, 'requestUnsavedPrompt').mockResolvedValueOnce('discard')
       vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
 
-      const result = await store.switchCollection('target-slug')
+      const result = await store.switchCollection('target-id')
 
       expect(result).toBe(true)
       expect(SaveRequest).not.toHaveBeenCalled()
-      expect(SwitchCollection).toHaveBeenCalledWith('target-slug')
+      expect(SwitchCollection).toHaveBeenCalledWith('target-id')
       expect(reqStore.current).toBeNull()
       expect(store.switching).toBe(false)
     })
@@ -337,18 +340,18 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const reqStore = useRequestStore()
       const uiStore = useUiStore()
 
-      store.activeCollectionSlug = 'default'
+      store.activeCollectionId = 'default'
       reqStore.original = createMockRequest({ id: 'req-1', name: 'Original' })
       reqStore.current = createMockRequest({ id: 'req-1', name: 'Modified' })
 
       const promptSpy = vi.spyOn(uiStore, 'requestUnsavedPrompt')
       vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
 
-      const result = await store.switchCollection('target-slug', { force: true })
+      const result = await store.switchCollection('target-id', { force: true })
 
       expect(result).toBe(true)
       expect(promptSpy).not.toHaveBeenCalled()
-      expect(SwitchCollection).toHaveBeenCalledWith('target-slug')
+      expect(SwitchCollection).toHaveBeenCalledWith('target-id')
       expect(store.switching).toBe(false)
     })
   })
@@ -372,7 +375,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const resStore = useResponseStore()
       const envStore = useEnvironmentStore()
 
-      store.activeCollectionSlug = 'active-to-delete'
+      store.activeCollectionId = 'active-to-delete'
       store.activeRequestId = 'req-9'
       store.activeFolderId = 'folder-9'
       store.expandedFolders.add('folder-9')
@@ -388,7 +391,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       expect(result).toBe(true)
       expect(DeleteCollection).toHaveBeenCalledWith('active-to-delete')
-      expect(store.activeCollectionSlug).toBe('default')
+      expect(store.activeCollectionId).toBe('default')
       expect(reqStore.current).toBeNull()
       expect(resStore.response).toBeNull()
       expect(resStore.loading).toBe(false)
@@ -405,20 +408,20 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const store = useCollectionStore()
       const reqStore = useRequestStore()
 
-      store.activeCollectionSlug = 'active-proj'
+      store.activeCollectionId = 'active-proj'
       store.activeRequestId = 'req-stay'
       reqStore.current = createMockRequest({ id: 'req-stay' })
 
       vi.mocked(DeleteCollection).mockResolvedValueOnce(resSuccess(null))
       vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
-        { slug: 'active-proj', name: 'Active Project', is_default: false, is_active: true }
+        { id: 'active-proj', name: 'Active Project', is_default: false, is_active: true }
       ]))
 
-      const result = await store.deleteCollection('other-slug')
+      const result = await store.deleteCollection('other-id')
 
       expect(result).toBe(true)
-      expect(DeleteCollection).toHaveBeenCalledWith('other-slug')
-      expect(store.activeCollectionSlug).toBe('active-proj')
+      expect(DeleteCollection).toHaveBeenCalledWith('other-id')
+      expect(store.activeCollectionId).toBe('active-proj')
       expect(reqStore.current).not.toBeNull()
       expect(store.activeRequestId).toBe('req-stay')
       expect(ListCollections).toHaveBeenCalled()
@@ -431,7 +434,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       vi.mocked(DeleteCollection).mockResolvedValueOnce(resError('Xóa thất bại', 'IO_ERROR'))
 
-      const result = await store.deleteCollection('some-slug')
+      const result = await store.deleteCollection('some-id')
 
       expect(result).toBe(false)
       expect(showToastSpy).toHaveBeenCalledWith('Xóa thất bại')
@@ -480,7 +483,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const uiStore = useUiStore()
       const showToastSpy = vi.spyOn(uiStore, 'showToast')
 
-      const result = await store.renameCollection('slug-1', '  ')
+      const result = await store.renameCollection('id-1', '  ')
 
       expect(result).toBe(false)
       expect(RenameCollection).not.toHaveBeenCalled()
@@ -491,10 +494,10 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const store = useCollectionStore()
       vi.mocked(RenameCollection).mockResolvedValueOnce(resSuccess({}))
 
-      const result = await store.renameCollection('slug-1', 'Renamed Name')
+      const result = await store.renameCollection('id-1', 'Renamed Name')
 
       expect(result).toBe(true)
-      expect(RenameCollection).toHaveBeenCalledWith('slug-1', 'Renamed Name')
+      expect(RenameCollection).toHaveBeenCalledWith('id-1', 'Renamed Name')
       expect(ListCollections).toHaveBeenCalled()
     })
 
@@ -505,7 +508,7 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       vi.mocked(RenameCollection).mockResolvedValueOnce(resError('Đổi tên thất bại', 'IO_ERROR'))
 
-      const result = await store.renameCollection('slug-1', 'New Name')
+      const result = await store.renameCollection('id-1', 'New Name')
 
       expect(result).toBe(false)
       expect(showToastSpy).toHaveBeenCalledWith('Đổi tên thất bại')
@@ -515,10 +518,10 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const store = useCollectionStore()
       vi.mocked(DuplicateCollection).mockResolvedValueOnce(resSuccess({}))
 
-      const result = await store.duplicateCollection('slug-1')
+      const result = await store.duplicateCollection('id-1')
 
       expect(result).toBe(true)
-      expect(DuplicateCollection).toHaveBeenCalledWith('slug-1')
+      expect(DuplicateCollection).toHaveBeenCalledWith('id-1')
       expect(ListCollections).toHaveBeenCalled()
     })
 
@@ -529,10 +532,93 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       vi.mocked(DuplicateCollection).mockResolvedValueOnce(resError('Nhân bản thất bại', 'IO_ERROR'))
 
-      const result = await store.duplicateCollection('slug-1')
+      const result = await store.duplicateCollection('id-1')
 
       expect(result).toBe(false)
       expect(showToastSpy).toHaveBeenCalledWith('Nhân bản thất bại')
+    })
+  })
+
+  describe('Auto-save immediate flush on navigation', () => {
+    it('selectRequest flushes dirty request automatically without showing prompt dialog', async () => {
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+      const uiStore = useUiStore()
+
+      reqStore.original = createMockRequest({ id: 'req-1', name: 'Req 1', url: 'https://api.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-1', name: 'Req 1', url: 'https://api.com/modified' })
+      expect(reqStore.isDirty).toBe(true)
+
+      const promptSpy = vi.spyOn(uiStore, 'requestUnsavedPrompt')
+      const flushSpy = vi.spyOn(reqStore, 'flush').mockResolvedValue(true)
+      vi.mocked(GetRequest).mockResolvedValueOnce(resSuccess(createMockRequest({ id: 'req-2', name: 'Req 2' })))
+
+      await store.selectRequest('req-2')
+
+      expect(promptSpy).not.toHaveBeenCalled()
+      expect(flushSpy).toHaveBeenCalledTimes(1)
+      expect(store.activeRequestId).toBe('req-2')
+    })
+
+    it('selectRequest aborts switch if flush fails', async () => {
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      store.activeRequestId = 'req-1'
+      reqStore.original = createMockRequest({ id: 'req-1', url: 'https://api.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-1', url: 'https://api.com/modified' })
+      expect(reqStore.isDirty).toBe(true)
+
+      vi.spyOn(reqStore, 'flush').mockResolvedValue(false)
+
+      await store.selectRequest('req-2')
+
+      expect(store.activeRequestId).toBe('req-1')
+      expect(GetRequest).not.toHaveBeenCalled()
+    })
+
+    it('setActiveFolderId flushes dirty request before selecting folder and aborts if flush fails', async () => {
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      store.activeRequestId = 'req-1'
+      reqStore.original = createMockRequest({ id: 'req-1', url: 'https://api.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-1', url: 'https://api.com/modified' })
+
+      const flushSpy = vi.spyOn(reqStore, 'flush').mockResolvedValue(true)
+
+      await store.setActiveFolderId('folder-1')
+
+      expect(flushSpy).toHaveBeenCalledTimes(1)
+      expect(store.activeFolderId).toBe('folder-1')
+      expect(store.activeRequestId).toBeNull()
+      expect(reqStore.current).toBeNull()
+
+      // When flush fails:
+      store.activeRequestId = 'req-1'
+      reqStore.original = createMockRequest({ id: 'req-1', url: 'https://api.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-1', url: 'https://api.com/modified' })
+      vi.spyOn(reqStore, 'flush').mockResolvedValueOnce(false)
+
+      await store.setActiveFolderId('folder-2')
+      expect(store.activeFolderId).toBe('folder-1')
+      expect(store.activeRequestId).toBe('req-1')
+    })
+
+    it('createRequest flushes dirty request before creating new request and aborts if flush fails', async () => {
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      store.activeRequestId = 'req-1'
+      reqStore.original = createMockRequest({ id: 'req-1', url: 'https://api.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-1', url: 'https://api.com/modified' })
+
+      vi.spyOn(reqStore, 'flush').mockResolvedValueOnce(false)
+
+      await store.createRequest()
+
+      expect(CreateRequest).not.toHaveBeenCalled()
+      expect(store.activeRequestId).toBe('req-1')
     })
   })
 })

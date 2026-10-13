@@ -23,6 +23,7 @@ const rows = computed(() => {
 const keyInputs = ref<HTMLInputElement[]>([])
 const valueInputs = ref<HTMLTextAreaElement[]>([])
 const highlighterRefs = ref<any[]>([])
+const keyHighlighterRefs = ref<any[]>([])
 
 const focusCell = (index: number, part: 'key' | 'value') => {
   if (part === 'key') {
@@ -133,17 +134,28 @@ const initResize = (el: any) => {
           </button>
         </div>
         
-        <input 
-          type="text" 
-          v-model="row.key" 
-          :readonly="row._isAuto"
-          :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
-          placeholder="Key"
-          class="flex-1 bg-surface-base mono-sm text-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none min-w-0"
-          :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
-          spellcheck="false"
-          autocomplete="off"
-        />
+        <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded">
+          <VariableHighlighter
+            :ref="el => { if (el) keyHighlighterRefs[index] = el }"
+            :value="row.key"
+            :wrap="false"
+            :single-line="true"
+            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent whitespace-pre overflow-hidden"
+          >
+            <input 
+              type="text" 
+              v-model="row.key" 
+              :readonly="row._isAuto"
+              :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
+              @scroll="e => keyHighlighterRefs[index]?.syncScroll(e)"
+              placeholder="Key"
+              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
+              :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </VariableHighlighter>
+        </div>
         
         <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">
           <VariableHighlighter
@@ -159,7 +171,7 @@ const initResize = (el: any) => {
               @scroll="e => highlighterRefs[index]?.syncScroll(e)"
               @input="autoResize"
               placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
+              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
               :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
               spellcheck="false"
               autocomplete="off"
@@ -199,16 +211,26 @@ const initResize = (el: any) => {
           </button>
         </div>
         
-        <input 
-          type="text" 
-          :value="''"
-          @input="e => onPhantomInput('key', e)"
-          :ref="el => { if (el) keyInputs[rows.length] = el as HTMLInputElement }"
-          placeholder="Key"
-          class="flex-1 bg-surface-base mono-sm text-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none min-w-0"
-          spellcheck="false"
-          autocomplete="off"
-        />
+        <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded">
+          <VariableHighlighter
+            :ref="el => { if (el) keyHighlighterRefs[rows.length] = el }"
+            :value="''"
+            :wrap="false"
+            :single-line="true"
+            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent whitespace-pre overflow-hidden"
+          >
+            <input 
+              type="text" 
+              :value="''"
+              @input="e => onPhantomInput('key', e)"
+              :ref="el => { if (el) keyInputs[rows.length] = el as HTMLInputElement }"
+              placeholder="Key"
+              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
+              spellcheck="false"
+              autocomplete="off"
+            />
+          </VariableHighlighter>
+        </div>
         
         <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">
           <VariableHighlighter
@@ -223,7 +245,7 @@ const initResize = (el: any) => {
               :ref="el => { if (el) { valueInputs[rows.length] = el as HTMLTextAreaElement; initResize(el) } }"
               @scroll="e => highlighterRefs[rows.length]?.syncScroll(e)"
               placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
+              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
               spellcheck="false"
               autocomplete="off"
             ></textarea>

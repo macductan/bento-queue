@@ -1,0 +1,36 @@
+- id: "1"
+  title: Backend Models, Storage & Package slug Cleanup
+  description: >-
+    Loại bỏ trường Slug trong struct model.Collection và chuẩn hóa model chỉ dùng ID.
+    Dọn sạch các hàm sinh slug tiếng Việt trong package projects/slug và chuẩn hóa storage.SaveEnvironment lưu file environments/<uuid>.json.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Xóa bỏ hoàn toàn trường Slug trong model.Collection (projects/model/types.go).
+    Dọn sạch các hàm Unicode NFD, regex hyphens, Generate, GenerateUnique, GenerateDir, GenerateUniqueDir, EntityDir, EntityFilename trong projects/slug/.
+    Cập nhật storage/environment.go để lưu tệp environments/<uuid>.json khi tạo mới.
+
+- id: "2"
+  title: Backend Services, App Bindings & Importer Standardization
+  description: >-
+    Đổi toàn bộ tham số từ slug sang id trong CollectionService, ConfigService và App bindings; cập nhật CreateCollection/CreateFolder/CreateRequest dùng UUID thuần.
+    Xóa mã lỗi ErrCollectionSlugEmpty, cập nhật ImporterService sinh UUID thuần và đảm bảo toàn bộ backend unit test pass 100%.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Đổi tham số slug -> id trong SwitchCollection, RenameCollection, DeleteCollection, DuplicateCollection (ở cả Service và App).
+    Cập nhật CreateCollection, DuplicateCollection, CreateFolder, CreateRequest, RequestService.Duplicate sinh tên file/folder là <uuid>.json hoặc <uuid>/.
+    Cập nhật importer.go sinh thư mục <uuid>/ và tệp <uuid>.json trực tiếp.
+    Cập nhật toàn bộ backend unit test (collection_test.go, config_test.go, request_test.go) đảm bảo 'go test ./...' pass 100%.
+
+- id: "3"
+  title: Frontend Pinia Store, Components & Test Suite Migration
+  description: >-
+    Cập nhật collectionStore chuyển activeCollectionSlug sang activeCollectionId và đổi tham số các action sang id.
+    Loại bỏ hoàn toàn trường slug trong CollectionSwitcher.vue, SettingsModal.vue và cập nhật toàn bộ frontend test suites pass 100%.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Đổi activeCollectionSlug -> activeCollectionId trong collectionStore.ts và cập nhật actions switchCollection(id), renameCollection(id, name), deleteCollection(id), duplicateCollection(id).
+    Cập nhật CollectionSwitcher.vue và SettingsModal.vue dùng c.id thay vì c.slug.
+    Cập nhật toàn bộ test suites frontend (collectionStore.test.ts, CollectionSwitcher.test.ts, SettingsModal.test.ts) và chạy 'bun run type-check' cùng 'bun run test' đảm bảo pass 100%.

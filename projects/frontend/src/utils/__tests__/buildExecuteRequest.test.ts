@@ -466,4 +466,64 @@ describe('buildExecuteRequest', () => {
       enabled: true
     })
   })
+
+  it('should not duplicate query params when url already has query params matching params', () => {
+    const req = createMockRequest({
+      url: 'https://api.test.com/users?sort=desc&limit=10',
+      params: [
+        { key: 'sort', value: 'desc', enabled: true },
+        { key: 'limit', value: '10', enabled: true }
+      ]
+    })
+    const exec = buildExecuteRequest(req)
+    expect(exec.url).toBe('https://api.test.com/users?sort=desc&limit=10')
+  })
+
+  it('should append only missing query params when url has partial params', () => {
+    const req = createMockRequest({
+      url: 'https://api.test.com/users?sort=desc',
+      params: [
+        { key: 'sort', value: 'desc', enabled: true },
+        { key: 'limit', value: '10', enabled: true }
+      ]
+    })
+    const exec = buildExecuteRequest(req)
+    expect(exec.url).toBe('https://api.test.com/users?sort=desc&limit=10')
+  })
+
+  it('should format flag query params with empty value without = and deduplicate cleanly', () => {
+    const req = createMockRequest({
+      url: 'https://api.test.com/users?pretty',
+      params: [
+        { key: 'pretty', value: '', enabled: true },
+        { key: 'debug', value: '', enabled: true }
+      ]
+    })
+    const exec = buildExecuteRequest(req)
+    expect(exec.url).toBe('https://api.test.com/users?pretty&debug')
+  })
+
+  it('should not cause delimiter collisions when query parameter keys or values contain =', () => {
+    const req = createMockRequest({
+      url: 'https://api.test.com/search?filter=id=1',
+      params: [
+        { key: 'filter=id', value: '1', enabled: true },
+        { key: 'filter', value: 'id=1', enabled: true }
+      ]
+    })
+    const exec = buildExecuteRequest(req)
+    expect(exec.url).toBe('https://api.test.com/search?filter=id=1&filter%3Did=1')
+  })
+
+  it('should preserve hash fragment correctly when appending query params', () => {
+    const req = createMockRequest({
+      url: 'https://api.test.com/users#section',
+      params: [
+        { key: 'page', value: '1', enabled: true }
+      ]
+    })
+    const exec = buildExecuteRequest(req)
+    expect(exec.url).toBe('https://api.test.com/users?page=1#section')
+  })
 })
+

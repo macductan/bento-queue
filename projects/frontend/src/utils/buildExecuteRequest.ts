@@ -3,6 +3,7 @@ import type { TreeNode } from '../stores/collectionStore';
 import { resolveVariables } from './variables';
 import { mergeHeaders } from './headers';
 import { resolveEffectiveAuth, getAuthArtifacts } from './auth';
+import { parseUrl, encodeQueryComponent, splitPreservingVars } from './urlParams';
 
 export interface ExecuteRequest {
   method: string;
@@ -84,25 +85,46 @@ export function buildExecuteRequest(
   let url = resolveVariables(req.url || '', vars);
   
   if (params.length > 0) {
-    const queryString = params.map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`).join('&');
-    
-    const appendToUrl = (baseStr: string, queryStr: string) => {
-      if (baseStr.endsWith('&')) {
-        return baseStr + queryStr;
+    const { params: existingUrlParams } = parseUrl(url);
+
+    const existingCounts = new Map<string, number>();
+    for (const ep of existingUrlParams) {
+      const k = JSON.stringify([ep.key, ep.value]);
+      existingCounts.set(k, (existingCounts.get(k) || 0) + 1);
+    }
+
+    const paramsToAppend: { key: string; value: string }[] = [];
+    for (const p of params) {
+      const k = JSON.stringify([p.key, p.value]);
+      const count = existingCounts.get(k) || 0;
+      if (count > 0) {
+        existingCounts.set(k, count - 1);
+      } else {
+        paramsToAppend.push(p);
       }
-      if (baseStr.endsWith('?') && baseStr.indexOf('?') === baseStr.length - 1) {
-        return baseStr + queryStr;
+    }
+
+    if (paramsToAppend.length > 0) {
+      const queryString = paramsToAppend
+        .map(p => p.value === '' ? encodeQueryComponent(p.key) : `${encodeQueryComponent(p.key)}=${encodeQueryComponent(p.value)}`)
+        .join('&');
+      
+      const appendToUrl = (baseStr: string, queryStr: string) => {
+        if (baseStr.endsWith('&')) {
+          return baseStr + queryStr;
+        }
+        if (baseStr.endsWith('?') && baseStr.indexOf('?') === baseStr.length - 1) {
+          return baseStr + queryStr;
+        }
+        return baseStr + (baseStr.includes('?') ? '&' : '?') + queryStr;
+      };
+      
+      const [base, hash] = splitPreservingVars(url, '#', 2);
+      if (hash !== undefined) {
+        url = appendToUrl(base, queryString) + '#' + hash;
+      } else {
+        url = appendToUrl(url, queryString);
       }
-      return baseStr + (baseStr.includes('?') ? '&' : '?') + queryStr;
-    };
-    
-    const hashIndex = url.indexOf('#');
-    if (hashIndex !== -1) {
-      const base = url.substring(0, hashIndex);
-      const hash = url.substring(hashIndex);
-      url = appendToUrl(base, queryString) + hash;
-    } else {
-      url = appendToUrl(url, queryString);
     }
   }
 

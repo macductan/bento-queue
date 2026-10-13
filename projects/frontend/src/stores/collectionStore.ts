@@ -50,7 +50,7 @@ interface CollectionState {
   importProgress: string | null
   error: string | null
   collections: model.Collection[]
-  activeCollectionSlug: string | null
+  activeCollectionId: string | null
   collectionsLoading: boolean
   switching: boolean
 }
@@ -65,18 +65,18 @@ export const useCollectionStore = defineStore('collection', {
     importProgress: null,
     error: null,
     collections: [],
-    activeCollectionSlug: null,
+    activeCollectionId: null,
     collectionsLoading: false,
     switching: false
   }),
   getters: {
     activeCollection(state): model.Collection | null {
-      if (!state.activeCollectionSlug) return null
-      return state.collections.find(c => c.slug === state.activeCollectionSlug) || null
+      if (!state.activeCollectionId) return null
+      return state.collections.find(c => c.id === state.activeCollectionId) || null
     },
     isDefaultActive(state): boolean {
-      if (!state.activeCollectionSlug) return true
-      return state.activeCollectionSlug === 'default' || state.collections.find(c => c.slug === state.activeCollectionSlug)?.is_default === true
+      if (!state.activeCollectionId) return true
+      return state.activeCollectionId === 'default' || state.collections.find(c => c.id === state.activeCollectionId)?.is_default === true
     }
   },
   actions: {
@@ -114,9 +114,9 @@ export const useCollectionStore = defineStore('collection', {
           this.collections = list
           const active = list.find(c => c.is_active)
           if (active) {
-            this.activeCollectionSlug = active.slug
-          } else if (!this.activeCollectionSlug || !list.some(c => c.slug === this.activeCollectionSlug)) {
-            this.activeCollectionSlug = 'default'
+            this.activeCollectionId = active.id || 'default'
+          } else if (!this.activeCollectionId || !list.some(c => c.id === this.activeCollectionId)) {
+            this.activeCollectionId = 'default'
           }
         } else {
           this.collections = []
@@ -131,9 +131,9 @@ export const useCollectionStore = defineStore('collection', {
         this.collectionsLoading = false
       }
     },
-    async switchCollection(targetSlug: string, opts?: { force?: boolean }): Promise<boolean> {
+    async switchCollection(targetId: string, opts?: { force?: boolean }): Promise<boolean> {
       if (this.switching) return false
-      if (targetSlug === this.activeCollectionSlug) return true
+      if (targetId === this.activeCollectionId) return true
 
       this.switching = true
       try {
@@ -154,9 +154,9 @@ export const useCollectionStore = defineStore('collection', {
           // if choice === 'discard', continue
         }
 
-        const result = await SwitchCollection(targetSlug)
+        const result = await SwitchCollection(targetId)
         if (result.success) {
-          this.activeCollectionSlug = targetSlug
+          this.activeCollectionId = targetId
           reqStore.clearRequest()
           const { useResponseStore } = await import('./responseStore')
           const resStore = useResponseStore()
@@ -205,7 +205,7 @@ export const useCollectionStore = defineStore('collection', {
         return false
       }
     },
-    async renameCollection(slug: string, name: string): Promise<boolean> {
+    async renameCollection(id: string, name: string): Promise<boolean> {
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
 
@@ -215,7 +215,7 @@ export const useCollectionStore = defineStore('collection', {
       }
 
       try {
-        const result = await RenameCollection(slug, name.trim())
+        const result = await RenameCollection(id, name.trim())
         if (result.success) {
           await this.loadCollections()
           uiStore.showToast('Đã đổi tên collection')
@@ -229,11 +229,11 @@ export const useCollectionStore = defineStore('collection', {
         return false
       }
     },
-    async deleteCollection(slug: string): Promise<boolean> {
+    async deleteCollection(id: string): Promise<boolean> {
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
 
-      if (slug === 'default') {
+      if (id === 'default') {
         uiStore.showToast('Không thể xóa collection mặc định')
         return false
       }
@@ -244,12 +244,12 @@ export const useCollectionStore = defineStore('collection', {
       resStore.clear()
 
       try {
-        const result = await DeleteCollection(slug)
+        const result = await DeleteCollection(id)
         if (result.success) {
           uiStore.showToast('Đã xóa collection')
-          const isActive = slug === this.activeCollectionSlug || Boolean((result.data as any)?.active_collection)
+          const isActive = id === this.activeCollectionId || Boolean((result.data as any)?.active_collection)
           if (isActive) {
-            this.activeCollectionSlug = 'default'
+            this.activeCollectionId = 'default'
             const { useRequestStore } = await import('./requestStore')
             useRequestStore().clearRequest()
             this.activeRequestId = null
@@ -271,11 +271,11 @@ export const useCollectionStore = defineStore('collection', {
         return false
       }
     },
-    async duplicateCollection(slug: string): Promise<boolean> {
+    async duplicateCollection(id: string): Promise<boolean> {
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
       try {
-        const result = await DuplicateCollection(slug)
+        const result = await DuplicateCollection(id)
         if (result.success) {
           await this.loadCollections()
           uiStore.showToast('Đã nhân bản collection')
@@ -305,12 +305,8 @@ export const useCollectionStore = defineStore('collection', {
       const uiStore = useUiStore()
 
       if (!opts?.force && reqStore.isDirty) {
-        const choice = await uiStore.requestUnsavedPrompt()
-        if (choice === 'cancel') return
-        if (choice === 'save') {
-          await reqStore.saveCurrent()
-          if (reqStore.error) return // abort if save failed
-        }
+        const saved = await reqStore.flush()
+        if (!saved) return // abort switch if save failed
       }
       
       this.activeRequestId = id
@@ -328,25 +324,23 @@ export const useCollectionStore = defineStore('collection', {
     },
     async setActiveFolderId(id: string) {
       if (this.activeFolderId === id) return
-      const { useUiStore } = await import('./uiStore')
-      const uiStore = useUiStore()
       const { useRequestStore } = await import('./requestStore')
       const reqStore = useRequestStore()
       if (reqStore.isDirty) {
-        const choice = await uiStore.requestUnsavedPrompt()
-        if (choice === 'cancel') return
-        if (choice === 'save') {
-          await reqStore.saveCurrent()
-          if (reqStore.error) return // abort if save failed
-        }
+        const saved = await reqStore.flush()
+        if (!saved) return // abort if save failed
       }
       this.activeFolderId = id
       this.activeRequestId = null
-      void import('./requestStore').then(({ useRequestStore }) => {
-        useRequestStore().clearRequest()
-      })
+      reqStore.clearRequest()
     },
     async createRequest(parentId: string = "") {
+      const { useRequestStore } = await import('./requestStore')
+      const reqStore = useRequestStore()
+      if (reqStore.isDirty) {
+        const saved = await reqStore.flush()
+        if (!saved) return // abort if save failed
+      }
       try {
         const result = await CreateRequest(parentId)
         if (result.success) {
@@ -425,6 +419,10 @@ export const useCollectionStore = defineStore('collection', {
       }
     },
     async deleteRequest(id: string) {
+      if (this.activeRequestId === id) {
+        const { useRequestStore } = await import('./requestStore')
+        useRequestStore().cancelAutoSave()
+      }
       try {
         const result = await DeleteRequest(id)
         if (result.success) {
@@ -483,6 +481,13 @@ export const useCollectionStore = defineStore('collection', {
       }
     },
     async duplicateRequest(id: string) {
+      if (this.activeRequestId === id) {
+        const { useRequestStore } = await import('./requestStore')
+        const reqStore = useRequestStore()
+        if (reqStore.isDirty || reqStore.autoSaveTimer) {
+          await reqStore.flush()
+        }
+      }
       try {
         const result = await DuplicateRequest(id)
         if (result.success && result.data) {
