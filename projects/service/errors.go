@@ -27,8 +27,16 @@ func storageErrCode(err error) string {
 }
 
 const (
-	ErrCollectionRootEmpty     = "Đường dẫn collection trống"
-	ErrParentFolderNotFound    = "Không tìm thấy thư mục cha"
+	ErrCollectionRootEmpty      = "Đường dẫn collection trống"
+	ErrCollectionNameEmpty      = "Tên collection không được để trống"
+	ErrCollectionNotFound       = "Không tìm thấy collection"
+	ErrCannotDeleteDefaultColl  = "Không thể xóa collection mặc định"
+	ErrCollectionSlugEmpty      = "Collection slug không được để trống"
+	ErrCollectionCreateFailed   = "Không thể tạo collection"
+	ErrCollectionRenameFailed   = "Không thể lưu tên collection mới"
+	ErrCollectionDeleteFailed   = "Không thể xóa collection"
+	ErrCollectionDuplicateFailed = "Không thể nhân bản collection"
+	ErrParentFolderNotFound     = "Không tìm thấy thư mục cha"
 	ErrParentFolderInvalid     = "Thư mục cha không hợp lệ"
 	ErrFolderCreateFailed      = "Không thể tạo thư mục"
 	ErrFolderInfoSaveFailed    = "Không thể lưu thông tin thư mục"

@@ -36,8 +36,17 @@ func TestLoadOrCreateConfig_FirstLaunch(t *testing.T) {
 		t.Fatal("config should not be nil")
 	}
 
-	if config.CollectionRoot == "" {
-		t.Error("CollectionRoot should not be empty")
+	if config.CollectionsRoot == "" {
+		t.Error("CollectionsRoot should not be empty")
+	}
+	if config.DefaultCollection != "default" {
+		t.Errorf("DefaultCollection = %q, want 'default'", config.DefaultCollection)
+	}
+	if config.ActiveCollection != "default" {
+		t.Errorf("ActiveCollection = %q, want 'default'", config.ActiveCollection)
+	}
+	if config.CollectionRoot != filepath.Join(config.CollectionsRoot, "default") {
+		t.Errorf("CollectionRoot = %q, want %q", config.CollectionRoot, filepath.Join(config.CollectionsRoot, "default"))
 	}
 
 	if config.CreatedAt.IsZero() {
@@ -56,9 +65,12 @@ func TestLoadOrCreateConfig_ExistingValid(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config", configFileName)
 
 	// Tạo config trước
-	customRoot := filepath.Join(tmpDir, "my-collections")
+	customCollections := filepath.Join(tmpDir, "my-collections")
 	original := model.AppConfig{
-		CollectionRoot: customRoot,
+		CollectionsRoot:   customCollections,
+		DefaultCollection: "default",
+		ActiveCollection:  "default",
+		CollectionRoot:    filepath.Join(customCollections, "default"),
 	}
 	if err := svc.fs.WriteJSON(configPath, original); err != nil {
 		t.Fatalf("setup write failed: %v", err)
@@ -69,19 +81,21 @@ func TestLoadOrCreateConfig_ExistingValid(t *testing.T) {
 		t.Fatalf("loadOrCreateConfig failed: %v", err)
 	}
 
-	if config.CollectionRoot != customRoot {
-		t.Errorf("CollectionRoot = %q, want %q", config.CollectionRoot, customRoot)
+	if config.CollectionsRoot != customCollections {
+		t.Errorf("CollectionsRoot = %q, want %q", config.CollectionsRoot, customCollections)
+	}
+	if config.ActiveCollection != "default" {
+		t.Errorf("ActiveCollection = %q, want %q", config.ActiveCollection, "default")
 	}
 }
 
-// TestLoadOrCreateConfig_MissingCollectionRoot — JSON valid, collection_root empty → fill default.
+// TestLoadOrCreateConfig_MissingFields — JSON valid, fields empty → fill defaults.
 func TestLoadOrCreateConfig_MissingCollectionRoot(t *testing.T) {
 	svc, tmpDir := setupTestConfigService(t)
 	configPath := filepath.Join(tmpDir, "config", configFileName)
 
-	// Tạo config với CollectionRoot rỗng
 	empty := model.AppConfig{
-		CollectionRoot: "",
+		CollectionsRoot: "",
 	}
 	if err := svc.fs.WriteJSON(configPath, empty); err != nil {
 		t.Fatalf("setup write failed: %v", err)
@@ -92,8 +106,40 @@ func TestLoadOrCreateConfig_MissingCollectionRoot(t *testing.T) {
 		t.Fatalf("loadOrCreateConfig failed: %v", err)
 	}
 
-	if config.CollectionRoot == "" {
-		t.Error("CollectionRoot should be filled with default path")
+	if config.CollectionsRoot == "" {
+		t.Error("CollectionsRoot should be filled with default path")
+	}
+	if config.DefaultCollection != "default" {
+		t.Errorf("DefaultCollection = %q, want 'default'", config.DefaultCollection)
+	}
+}
+
+// TestLoadOrCreateConfig_ActiveCollectionFallback — active collection folder missing on disk → fallback to default.
+func TestLoadOrCreateConfig_ActiveCollectionFallback(t *testing.T) {
+	svc, tmpDir := setupTestConfigService(t)
+	configPath := filepath.Join(tmpDir, "config", configFileName)
+
+	collectionsRoot := filepath.Join(tmpDir, "collections")
+	cfg := model.AppConfig{
+		CollectionsRoot:   collectionsRoot,
+		DefaultCollection: "default",
+		ActiveCollection:  "non-existent-col-uuid",
+		CollectionRoot:    filepath.Join(collectionsRoot, "non-existent-col-uuid"),
+	}
+	if err := svc.fs.WriteJSON(configPath, cfg); err != nil {
+		t.Fatalf("setup write failed: %v", err)
+	}
+
+	loaded, err := svc.loadOrCreateConfig(configPath)
+	if err != nil {
+		t.Fatalf("loadOrCreateConfig failed: %v", err)
+	}
+
+	if loaded.ActiveCollection != "default" {
+		t.Errorf("ActiveCollection should fallback to 'default', got %q", loaded.ActiveCollection)
+	}
+	if loaded.CollectionRoot != filepath.Join(collectionsRoot, "default") {
+		t.Errorf("CollectionRoot should point to default, got %q", loaded.CollectionRoot)
 	}
 }
 
@@ -274,10 +320,14 @@ func TestInitialize_FullFlow(t *testing.T) {
 	// pointing to our temp directory
 	configDir := filepath.Join(tmpDir, "config")
 	configPath := filepath.Join(configDir, configFileName)
-	collRoot := filepath.Join(tmpDir, "data", "collections", "default")
+	collectionsRoot := filepath.Join(tmpDir, "data", "collections")
+	collRoot := filepath.Join(collectionsRoot, "default")
 
 	config := model.AppConfig{
-		CollectionRoot: collRoot,
+		CollectionsRoot:   collectionsRoot,
+		DefaultCollection: "default",
+		ActiveCollection:  "default",
+		CollectionRoot:    collRoot,
 	}
 	if err := svc.fs.WriteJSON(configPath, config); err != nil {
 		t.Fatalf("setup config write failed: %v", err)
@@ -327,8 +377,9 @@ func TestUpdateCollectionRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got err: %v", err)
 	}
-	if updatedRoot != newRoot {
-		t.Errorf("expected %q, got %q", newRoot, updatedRoot)
+	expectedCollRoot := filepath.Join(newRoot, "default")
+	if updatedRoot != expectedCollRoot {
+		t.Errorf("expected %q, got %q", expectedCollRoot, updatedRoot)
 	}
 
 	// Verify it wrote to config.json
@@ -337,8 +388,11 @@ func TestUpdateCollectionRoot(t *testing.T) {
 	if err := svc.fs.ReadJSON(configPath, &cfg); err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
-	if cfg.CollectionRoot != newRoot {
-		t.Errorf("config has %q, want %q", cfg.CollectionRoot, newRoot)
+	if cfg.CollectionsRoot != newRoot {
+		t.Errorf("config CollectionsRoot has %q, want %q", cfg.CollectionsRoot, newRoot)
+	}
+	if cfg.CollectionRoot != expectedCollRoot {
+		t.Errorf("config CollectionRoot has %q, want %q", cfg.CollectionRoot, expectedCollRoot)
 	}
 
 	// Failure case: Read-only directory
@@ -360,9 +414,53 @@ func TestUpdateCollectionRoot(t *testing.T) {
 		if err := svc.fs.ReadJSON(configPath, &cfgAfter); err != nil {
 			t.Fatalf("failed to read config: %v", err)
 		}
-		if cfgAfter.CollectionRoot != newRoot {
-			t.Errorf("config should remain %q, but got %q", newRoot, cfgAfter.CollectionRoot)
+		if cfgAfter.CollectionsRoot != newRoot {
+			t.Errorf("config CollectionsRoot should remain %q, but got %q", newRoot, cfgAfter.CollectionsRoot)
 		}
+	}
+}
+
+func TestSwitchActiveCollection(t *testing.T) {
+	svc, tmpDir := setupTestConfigService(t)
+	ctx := context.Background()
+
+	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
+	origCacheHome := os.Getenv("XDG_CACHE_HOME")
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
+	os.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
+	t.Cleanup(func() {
+		os.Setenv("XDG_CONFIG_HOME", origConfigHome)
+		os.Setenv("XDG_CACHE_HOME", origCacheHome)
+	})
+
+	cfg, err := svc.Initialize(ctx)
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Switch to non-existent collection -> NOT_FOUND
+	_, err = svc.SwitchActiveCollection(ctx, "non-existent")
+	if err == nil {
+		t.Fatal("expected error switching to non-existent collection")
+	}
+
+	// Create a new collection folder
+	newSlug := "project-alpha-12345"
+	newDir := filepath.Join(cfg.CollectionsRoot, newSlug)
+	if err := os.MkdirAll(newDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	switchedCfg, err := svc.SwitchActiveCollection(ctx, newSlug)
+	if err != nil {
+		t.Fatalf("SwitchActiveCollection failed: %v", err)
+	}
+
+	if switchedCfg.ActiveCollection != newSlug {
+		t.Errorf("ActiveCollection = %q, want %q", switchedCfg.ActiveCollection, newSlug)
+	}
+	if switchedCfg.CollectionRoot != newDir {
+		t.Errorf("CollectionRoot = %q, want %q", switchedCfg.CollectionRoot, newDir)
 	}
 }
 

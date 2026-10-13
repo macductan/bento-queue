@@ -21,7 +21,7 @@ const responseStore = useResponseStore()
 const envStore = useEnvironmentStore()
 
 const handleKeyDown = (e: KeyboardEvent) => {
-  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen) {
+  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen) {
     return
   }
 
@@ -78,6 +78,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
 }
 
 onMounted(() => {
+  collectionStore.loadCollections()
   collectionStore.loadTree()
   envStore.loadAll()
   window.addEventListener('keydown', handleKeyDown)

@@ -6,12 +6,20 @@ export function AbortRequest() {
   return window['go']['main']['App']['AbortRequest']();
 }
 
+export function CreateCollection(arg1) {
+  return window['go']['main']['App']['CreateCollection'](arg1);
+}
+
 export function CreateFolder(arg1) {
   return window['go']['main']['App']['CreateFolder'](arg1);
 }
 
 export function CreateRequest(arg1) {
   return window['go']['main']['App']['CreateRequest'](arg1);
+}
+
+export function DeleteCollection(arg1) {
+  return window['go']['main']['App']['DeleteCollection'](arg1);
 }
 
 export function DeleteEnvironment(arg1) {
@@ -24,6 +32,10 @@ export function DeleteFolder(arg1) {
 
 export function DeleteRequest(arg1) {
   return window['go']['main']['App']['DeleteRequest'](arg1);
+}
+
+export function DuplicateCollection(arg1) {
+  return window['go']['main']['App']['DuplicateCollection'](arg1);
 }
 
 export function DuplicateRequest(arg1) {
@@ -50,6 +62,10 @@ export function ImportPostman(arg1) {
   return window['go']['main']['App']['ImportPostman'](arg1);
 }
 
+export function ListCollections() {
+  return window['go']['main']['App']['ListCollections']();
+}
+
 export function ListEnvironments() {
   return window['go']['main']['App']['ListEnvironments']();
 }
@@ -60,6 +76,10 @@ export function LoadFolder(arg1) {
 
 export function MoveRequest(arg1, arg2) {
   return window['go']['main']['App']['MoveRequest'](arg1, arg2);
+}
+
+export function RenameCollection(arg1, arg2) {
+  return window['go']['main']['App']['RenameCollection'](arg1, arg2);
 }
 
 export function RenameFolder(arg1, arg2) {
@@ -88,6 +108,10 @@ export function SelectPostmanFile() {
 
 export function SendRequest(arg1) {
   return window['go']['main']['App']['SendRequest'](arg1);
+}
+
+export function SwitchCollection(arg1) {
+  return window['go']['main']['App']['SwitchCollection'](arg1);
 }
 
 export function UpdateCollectionRoot(arg1) {

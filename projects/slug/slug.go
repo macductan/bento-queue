@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/uuid"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -136,4 +137,46 @@ func UniqueFilename(filename, dir string) string {
 			return candidate
 		}
 	}
+}
+
+// EntityDir creates a directory name conforming to <slug>-<UUID>.
+// If id is provided and non-empty, it is used as the UUID; otherwise a new UUID v4 is generated.
+// Empty name falls back to "untitled-<UUID>".
+func EntityDir(name string, id ...string) string {
+	u := ""
+	if len(id) > 0 && id[0] != "" {
+		u = id[0]
+	} else {
+		u = uuid.New().String()
+	}
+
+	stem := strings.TrimSuffix(Generate(name), ".json")
+	if len(stem) > 200 {
+		stem = strings.TrimRight(stem[:200], "-")
+	}
+	if stem == "" || stem == "untitled" {
+		return "untitled-" + u
+	}
+	return stem + "-" + u
+}
+
+// EntityFilename creates a filename conforming to <slug>-<UUID>.json.
+// If id is provided and non-empty, it is used as the UUID; otherwise a new UUID v4 is generated.
+// Empty name falls back to "untitled-<UUID>.json".
+func EntityFilename(name string, id ...string) string {
+	u := ""
+	if len(id) > 0 && id[0] != "" {
+		u = id[0]
+	} else {
+		u = uuid.New().String()
+	}
+
+	stem := strings.TrimSuffix(Generate(name), ".json")
+	if len(stem) > 200 {
+		stem = strings.TrimRight(stem[:200], "-")
+	}
+	if stem == "" || stem == "untitled" {
+		return "untitled-" + u + ".json"
+	}
+	return stem + "-" + u + ".json"
 }

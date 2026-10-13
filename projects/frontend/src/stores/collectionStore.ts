@@ -1,6 +1,25 @@
 import { defineStore } from 'pinia'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
-import { GetCollectionTree, CreateRequest, CreateFolder, RenameRequest, RenameFolder, DeleteFolder, DeleteRequest, DuplicateRequest, MoveRequest, SelectPostmanFile, ImportPostman } from '../../wailsjs/go/main/App'
+import { model } from '../../wailsjs/go/models'
+import {
+  GetCollectionTree,
+  CreateRequest,
+  CreateFolder,
+  RenameRequest,
+  RenameFolder,
+  DeleteFolder,
+  DeleteRequest,
+  DuplicateRequest,
+  MoveRequest,
+  SelectPostmanFile,
+  ImportPostman,
+  ListCollections,
+  SwitchCollection,
+  CreateCollection,
+  RenameCollection,
+  DeleteCollection,
+  DuplicateCollection
+} from '../../wailsjs/go/main/App'
 
 export interface AuthConfig {
   type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey'
@@ -30,6 +49,10 @@ interface CollectionState {
   loading: boolean
   importProgress: string | null
   error: string | null
+  collections: model.Collection[]
+  activeCollectionSlug: string | null
+  collectionsLoading: boolean
+  switching: boolean
 }
 
 export const useCollectionStore = defineStore('collection', {
@@ -40,8 +63,22 @@ export const useCollectionStore = defineStore('collection', {
     activeFolderId: null,
     loading: false,
     importProgress: null,
-    error: null
+    error: null,
+    collections: [],
+    activeCollectionSlug: null,
+    collectionsLoading: false,
+    switching: false
   }),
+  getters: {
+    activeCollection(state): model.Collection | null {
+      if (!state.activeCollectionSlug) return null
+      return state.collections.find(c => c.slug === state.activeCollectionSlug) || null
+    },
+    isDefaultActive(state): boolean {
+      if (!state.activeCollectionSlug) return true
+      return state.activeCollectionSlug === 'default' || state.collections.find(c => c.slug === state.activeCollectionSlug)?.is_default === true
+    }
+  },
   actions: {
     async refresh() {
       this.tree = []
@@ -66,6 +103,190 @@ export const useCollectionStore = defineStore('collection', {
         this.error = String(err)
       } finally {
         this.loading = false
+      }
+    },
+    async loadCollections() {
+      this.collectionsLoading = true
+      try {
+        const result = await ListCollections()
+        if (result.success) {
+          const list = (result.data as model.Collection[]) || []
+          this.collections = list
+          const active = list.find(c => c.is_active)
+          if (active) {
+            this.activeCollectionSlug = active.slug
+          } else if (!this.activeCollectionSlug || !list.some(c => c.slug === this.activeCollectionSlug)) {
+            this.activeCollectionSlug = 'default'
+          }
+        } else {
+          this.collections = []
+          const { useUiStore } = await import('./uiStore')
+          useUiStore().showToast(result.error?.message || 'Không thể tải danh sách collection')
+        }
+      } catch (err) {
+        this.collections = []
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(String(err))
+      } finally {
+        this.collectionsLoading = false
+      }
+    },
+    async switchCollection(targetSlug: string, opts?: { force?: boolean }): Promise<boolean> {
+      if (this.switching) return false
+      if (targetSlug === this.activeCollectionSlug) return true
+
+      this.switching = true
+      try {
+        const { useRequestStore } = await import('./requestStore')
+        const reqStore = useRequestStore()
+        const { useUiStore } = await import('./uiStore')
+        const uiStore = useUiStore()
+
+        if (!opts?.force && reqStore.isDirty) {
+          const choice = await uiStore.requestUnsavedPrompt(
+            'Request hiện tại có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi chuyển collection?'
+          )
+          if (choice === 'cancel') return false
+          if (choice === 'save') {
+            await reqStore.saveCurrent()
+            if (reqStore.error || reqStore.isDirty) return false
+          }
+          // if choice === 'discard', continue
+        }
+
+        const result = await SwitchCollection(targetSlug)
+        if (result.success) {
+          this.activeCollectionSlug = targetSlug
+          reqStore.clearRequest()
+          const { useResponseStore } = await import('./responseStore')
+          const resStore = useResponseStore()
+          resStore.clear()
+          this.activeRequestId = null
+          this.activeFolderId = null
+          this.expandedFolders.clear()
+          uiStore.closeContextMenu()
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          return true
+        } else {
+          uiStore.showToast(result.error?.message || 'Không thể chuyển collection')
+          return false
+        }
+      } catch (err) {
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(String(err))
+        return false
+      } finally {
+        this.switching = false
+      }
+    },
+    async createCollection(name: string): Promise<boolean> {
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+
+      if (!name || !name.trim()) {
+        uiStore.showToast('Tên không được để trống')
+        return false
+      }
+
+      try {
+        const result = await CreateCollection(name.trim())
+        if (result.success) {
+          await this.loadCollections()
+          uiStore.showToast('Đã tạo collection')
+          return true
+        } else {
+          uiStore.showToast(result.error?.message || 'Không thể tạo collection')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      }
+    },
+    async renameCollection(slug: string, name: string): Promise<boolean> {
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+
+      if (!name || !name.trim()) {
+        uiStore.showToast('Tên không được để trống')
+        return false
+      }
+
+      try {
+        const result = await RenameCollection(slug, name.trim())
+        if (result.success) {
+          await this.loadCollections()
+          uiStore.showToast('Đã đổi tên collection')
+          return true
+        } else {
+          uiStore.showToast(result.error?.message || 'Không thể đổi tên collection')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      }
+    },
+    async deleteCollection(slug: string): Promise<boolean> {
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+
+      if (slug === 'default') {
+        uiStore.showToast('Không thể xóa collection mặc định')
+        return false
+      }
+
+      // Abort/clear in-flight HTTP request before calling DeleteCollection
+      const { useResponseStore } = await import('./responseStore')
+      const resStore = useResponseStore()
+      resStore.clear()
+
+      try {
+        const result = await DeleteCollection(slug)
+        if (result.success) {
+          uiStore.showToast('Đã xóa collection')
+          const isActive = slug === this.activeCollectionSlug || Boolean((result.data as any)?.active_collection)
+          if (isActive) {
+            this.activeCollectionSlug = 'default'
+            const { useRequestStore } = await import('./requestStore')
+            useRequestStore().clearRequest()
+            this.activeRequestId = null
+            this.activeFolderId = null
+            this.expandedFolders.clear()
+            const { useEnvironmentStore } = await import('./environmentStore')
+            const envStore = useEnvironmentStore()
+            await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          } else {
+            await this.loadCollections()
+          }
+          return true
+        } else {
+          uiStore.showToast(result.error?.message || 'Không thể xóa collection')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      }
+    },
+    async duplicateCollection(slug: string): Promise<boolean> {
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      try {
+        const result = await DuplicateCollection(slug)
+        if (result.success) {
+          await this.loadCollections()
+          uiStore.showToast('Đã nhân bản collection')
+          return true
+        } else {
+          uiStore.showToast(result.error?.message || 'Không thể nhân bản collection')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
       }
     },
     toggleFolder(id: string) {

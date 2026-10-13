@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -88,8 +89,9 @@ func TestRequestDuplicate_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new UUID not in index")
 	}
-	if filepath.Base(newPath) != "login-ban-sao.json" {
-		t.Errorf("expected filename login-ban-sao.json, got %s", filepath.Base(newPath))
+	expectedFilename := fmt.Sprintf("login-ban-sao-%s.json", req.ID)
+	if filepath.Base(newPath) != expectedFilename {
+		t.Errorf("expected filename %s, got %s", expectedFilename, filepath.Base(newPath))
 	}
 	if !fs.Exists(newPath) {
 		t.Errorf("file should exist at %s", newPath)

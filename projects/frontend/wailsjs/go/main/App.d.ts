@@ -4,15 +4,21 @@ import {model} from '../models';
 
 export function AbortRequest():Promise<model.Result>;
 
+export function CreateCollection(arg1:string):Promise<model.Result>;
+
 export function CreateFolder(arg1:string):Promise<model.Result>;
 
 export function CreateRequest(arg1:string):Promise<model.Result>;
+
+export function DeleteCollection(arg1:string):Promise<model.Result>;
 
 export function DeleteEnvironment(arg1:string):Promise<model.Result>;
 
 export function DeleteFolder(arg1:string):Promise<model.Result>;
 
 export function DeleteRequest(arg1:string):Promise<model.Result>;
+
+export function DuplicateCollection(arg1:string):Promise<model.Result>;
 
 export function DuplicateRequest(arg1:string):Promise<model.Result>;
 
@@ -26,11 +32,15 @@ export function GetRequest(arg1:string):Promise<model.Result>;
 
 export function ImportPostman(arg1:string):Promise<model.Result>;
 
+export function ListCollections():Promise<model.Result>;
+
 export function ListEnvironments():Promise<model.Result>;
 
 export function LoadFolder(arg1:string):Promise<model.Result>;
 
 export function MoveRequest(arg1:string,arg2:string):Promise<model.Result>;
+
+export function RenameCollection(arg1:string,arg2:string):Promise<model.Result>;
 
 export function RenameFolder(arg1:string,arg2:string):Promise<model.Result>;
 
@@ -45,6 +55,8 @@ export function SelectDirectoryDialog():Promise<string>;
 export function SelectPostmanFile():Promise<string>;
 
 export function SendRequest(arg1:model.ExecuteRequest):Promise<model.Result>;
+
+export function SwitchCollection(arg1:string):Promise<model.Result>;
 
 export function UpdateCollectionRoot(arg1:string):Promise<model.Result>;
 
