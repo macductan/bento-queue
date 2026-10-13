@@ -75,8 +75,9 @@ When testing Epic 2 features visually, verify the following:
   - Khi pipeline CI bị fail sau release hoặc cần fix nóng cho bản release hiện tại:
     - Tiêu đề commit chuẩn hóa: `v<version> (build <n>)` (với `n` tự tăng dần: `v1.3.0 (build 1)`, `v1.3.0 (build 2)`,...).
     - **Ngoại lệ xác nhận:** Khi người dùng gửi log lỗi build/CI của bản release hoặc yêu cầu fix build, agent tự động sửa lỗi, chạy kiểm thử xác nhận pass 100%, tự động commit `v<version> (build <n>)` và push lên `develop` mà không cần hỏi lại xác nhận.
-- **Wails Binding Model Tracking**:
-  - Thư mục `projects/frontend/wailsjs/` BẮT BUỘC phải được commit và theo dõi trong Git (tuyệt đối không thêm vào `.gitignore`), vì môi trường CI chỉ chạy trên container Node/Bun không có Wails CLI để generate bindings.
+- **Wails Binding Model Generation**:
+  - Thư mục `projects/frontend/wailsjs/` là thư mục sinh tự động và được đưa vào `.gitignore` (không commit lên Git).
+  - Pipeline CI tự động sinh `wailsjs/` qua job `generate:bindings` (Golang + Wails CLI) và chia sẻ sang các job frontend qua CI artifact.
 
 ## Review gate (bmad-build)
 

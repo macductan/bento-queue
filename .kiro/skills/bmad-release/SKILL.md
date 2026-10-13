@@ -28,9 +28,9 @@ Chuẩn hóa và gom (squash) toàn bộ commit trên nhánh `develop` tính t�
      - chore: upgrade bmad to v6.12.2
      - chore(release): bump version to 1.2.0 in package.json
      ```
-4. **Wails Binding Model Type Export & Git Tracking (Lưu ý kỹ thuật)**:
+4. **Wails Binding Model Type Export & CI Generation (Lưu ý kỹ thuật)**:
    - Mọi struct Go (như `model.Collection`, `model.Folder`,...) muốn xuất hiện trong `projects/frontend/wailsjs/go/models.ts` để frontend TypeScript biên dịch được thì BẮT BUỘC phải được tham chiếu trực tiếp qua tham số hoặc kiểu trả về của một method trên `*App` (ví dụ `UpdateCollection(collection model.Collection) model.Result`). Nếu chỉ nằm trong `model.Result.Data` (`interface{}`), Wails CLI sẽ bỏ qua và không sinh TypeScript type.
-   - Thư mục `projects/frontend/wailsjs/` BẮT BUỘC được commit và track trong Git (không thêm vào `.gitignore`) để môi trường CI nhẹ có thể biên dịch và chạy unit/e2e tests.
+   - Thư mục `projects/frontend/wailsjs/` là thư mục sinh tự động và được đưa vào `.gitignore` (không commit lên Git). Pipeline CI sẽ tự động sinh bindings qua job `generate:bindings` và truyền artifact cho các job frontend.
 5. **MANDATORY CONFIRMATION**: Tuyệt đối không tự ý chạy `git commit`, `git reset`, hoặc `git push` nếu chưa xin ý kiến và nhận được sự xác nhận của người dùng (ngoại lệ: quy trình Build Fix sau Release bên dưới).
 6. **Quy trình Build Fix sau Release (Tự động hóa)**:
    - Khi pipeline CI bị fail sau release hoặc cần fix nóng cho bản release hiện tại:
