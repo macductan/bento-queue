@@ -13,6 +13,7 @@ stages:
 variables:
   GIT_DEPTH: 0
   PLAYWRIGHT_BROWSERS_PATH: "$CI_PROJECT_DIR/.cache/ms-playwright"
+  GODEBUG: "http2client=0"
 
 cache:
   key:
@@ -31,9 +32,10 @@ cache:
 generate:bindings:
   stage: setup
   image: golang:1.25
+  retry: 2
   script:
     - export PATH=$PATH:$(go env GOPATH)/bin
-    - which wails || go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+    - which wails || for i in 1 2 3; do go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0 && break || (echo "Retrying go install in 5s..." && sleep 5); done
     - cd projects
     - wails generate module
   artifacts:
