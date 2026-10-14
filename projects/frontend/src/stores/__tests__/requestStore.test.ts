@@ -295,5 +295,35 @@ describe('requestStore', () => {
         headers: []
       }))
     })
+
+    it('detects isDirty and persists disabled _isAuto Content-Type header when user unchecks it', async () => {
+      const store = useRequestStore()
+      store.original = createMockRequest({
+        body: { type: 'json', content: '{"hello":"world"}' },
+        headers: [
+          { key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true }
+        ]
+      })
+      store.current = createMockRequest({
+        body: { type: 'json', content: '{"hello":"world"}' },
+        headers: [
+          { key: 'Content-Type', value: 'application/json', enabled: false, _isAuto: true }
+        ]
+      })
+      store.contentTypeAuto = true
+      expect(store.isDirty).toBe(true)
+
+      vi.mocked(SaveRequest).mockResolvedValueOnce({ success: true } as any)
+
+      const result = await store.saveCurrent({ silent: true })
+      expect(result).toBe(true)
+      expect(store.isDirty).toBe(false)
+      expect(SaveRequest).toHaveBeenCalledWith(expect.objectContaining({
+        headers: [
+          { key: 'Content-Type', value: 'application/json', enabled: false }
+        ]
+      }))
+    })
   })
 })
+

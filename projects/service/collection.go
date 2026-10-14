@@ -120,15 +120,16 @@ func (s *CollectionService) buildFolderNode(fullPath string) (model.TreeNode, bo
 	}
 
 	return model.TreeNode{
-		ID:        folder.ID,
-		Name:      folder.Name,
-		Type:      "folder",
-		Path:      fullPath,
-		Children:  children,
-		Variables: folder.Variables,
-		Headers:   folder.Headers,
-		Auth:      folder.Auth,
-		CreatedAt: folder.CreatedAt,
+		ID:         folder.ID,
+		Name:       folder.Name,
+		Type:       "folder",
+		Path:       fullPath,
+		Children:   children,
+		Variables:  folder.Variables,
+		FolderEnvs: folder.FolderEnvs,
+		Headers:    folder.Headers,
+		Auth:       folder.Auth,
+		CreatedAt:  folder.CreatedAt,
 	}, true
 }
 
@@ -487,8 +488,9 @@ func (s *CollectionService) UpdateFolder(folder model.Folder) model.Result {
 		return model.NewError(model.ErrIO, ErrFolderReadFailed)
 	}
 
-	// Variables, headers, and auth are updated via this method (name is via RenameFolder)
+	// Variables, folder_envs, headers, and auth are updated via this method (name is via RenameFolder)
 	existingFolder.Variables = folder.Variables
+	existingFolder.FolderEnvs = folder.FolderEnvs
 	existingFolder.Headers = folder.Headers
 	if folder.Auth != nil {
 		existingFolder.Auth = folder.Auth
@@ -667,6 +669,57 @@ func (s *CollectionService) RenameCollection(collectionsRoot, id, newName string
 	return model.NewSuccess(coll)
 }
 
+// UpdateCollection updates a collection's details (name, description, variables).
+func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.Collection) model.Result {
+	s.logger.Info("UpdateCollection called", "collectionsRoot", collectionsRoot, "id", coll.ID)
+
+	if collectionsRoot == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
+	}
+
+	id := strings.TrimSpace(coll.ID)
+	if id == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionIDEmpty)
+	}
+	if !isCleanID(id, collectionsRoot) {
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
+	}
+
+	name := strings.TrimSpace(coll.Name)
+	if name == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionNameEmpty)
+	}
+	if len([]rune(name)) > 255 {
+		name = string([]rune(name)[:255])
+	}
+
+	collDir := filepath.Join(collectionsRoot, id)
+	metaPath := filepath.Join(collDir, collectionFileName)
+	if !s.fs.Exists(metaPath) {
+		return model.NewError(model.ErrNotFound, ErrCollectionNotFound)
+	}
+
+	var existingColl model.Collection
+	if err := s.fs.ReadJSON(metaPath, &existingColl); err != nil {
+		s.logger.Error("failed to read collection.json for update", "path", metaPath, "error", err)
+		return model.NewError(model.ErrIO, ErrCollectionUpdateFailed)
+	}
+
+	existingColl.Name = name
+	existingColl.Description = coll.Description
+	existingColl.Variables = coll.Variables
+	existingColl.ID = id
+	existingColl.IsDefault = (id == "default")
+	existingColl.UpdatedAt = time.Now()
+
+	if err := s.fs.WriteJSON(metaPath, existingColl); err != nil {
+		s.logger.Error("failed to update collection.json", "path", metaPath, "error", err)
+		return model.NewError(model.ErrIO, ErrCollectionUpdateFailed)
+	}
+
+	return model.NewSuccess(existingColl)
+}
+
 // DeleteCollection deletes a collection directory from collectionsRoot.
 // It refuses to delete the default collection.
 func (s *CollectionService) DeleteCollection(collectionsRoot, id string) model.Result {
@@ -753,6 +806,7 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) mode
 		ID:          newID,
 		Name:        newName,
 		Description: srcColl.Description,
+		Variables:   srcColl.Variables,
 		IsDefault:   false,
 		IsActive:    false,
 		CreatedAt:   now,

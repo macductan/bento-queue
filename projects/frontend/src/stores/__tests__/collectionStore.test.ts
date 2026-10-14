@@ -27,6 +27,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   RenameCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
   DeleteCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
   DuplicateCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  UpdateCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
   GetRequest: vi.fn(),
   SaveRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
   ListEnvironments: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -43,6 +44,7 @@ import {
   RenameCollection,
   DeleteCollection,
   DuplicateCollection,
+  UpdateCollection,
   GetCollectionTree,
   SaveRequest,
   ListEnvironments,
@@ -619,6 +621,48 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       expect(CreateRequest).not.toHaveBeenCalled()
       expect(store.activeRequestId).toBe('req-1')
+    })
+  })
+
+  describe('updateCollectionVariables', () => {
+    it('filters empty keys and updates collection variables on success', async () => {
+      const store = useCollectionStore()
+      store.collections = [{ id: 'col-1', name: 'Col 1', variables: [] } as any]
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(resSuccess({ id: 'col-1', name: 'Col 1', variables: [{ key: 'apiUrl', value: 'https://api.test', enabled: true }] }))
+
+      const ok = await store.updateCollectionVariables('col-1', [
+        { key: 'apiUrl', value: 'https://api.test', enabled: true },
+        { key: '   ', value: 'empty', enabled: true }
+      ])
+
+      expect(ok).toBe(true)
+      expect(UpdateCollection).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'col-1',
+        variables: [{ key: 'apiUrl', value: 'https://api.test', enabled: true }]
+      }))
+      expect(store.collections[0].variables).toEqual([
+        { key: 'apiUrl', value: 'https://api.test', enabled: true }
+      ])
+    })
+
+    it('returns false when collection id not found', async () => {
+      const store = useCollectionStore()
+      store.collections = [{ id: 'col-1', name: 'Col 1', variables: [] } as any]
+      const ok = await store.updateCollectionVariables('col-unknown', [])
+      expect(ok).toBe(false)
+      expect(UpdateCollection).not.toHaveBeenCalled()
+    })
+
+    it('returns false and displays toast when backend fails', async () => {
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+      store.collections = [{ id: 'col-1', name: 'Col 1', variables: [] } as any]
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(resError('Failed to write collection'))
+
+      const ok = await store.updateCollectionVariables('col-1', [{ key: 'k', value: 'v', enabled: true }])
+      expect(ok).toBe(false)
+      expect(toastSpy).toHaveBeenCalledWith('Failed to write collection')
     })
   })
 })

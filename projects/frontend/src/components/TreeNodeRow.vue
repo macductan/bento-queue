@@ -22,12 +22,18 @@ watch(() => uiStore.renameTrigger, (newVal) => {
 
 const isFolder = computed(() => props.node.type === 'folder')
 const isExpanded = computed(() => store.expandedFolders.has(props.node.id))
-const isActive = computed(() => !isFolder.value && store.activeRequestId === props.node.id)
+const isActive = computed(() => {
+  if (isFolder.value) {
+    return store.activeFolderId === props.node.id
+  }
+  return store.activeRequestId === props.node.id
+})
 
 const toggle = () => {
   if (isEditing.value) return
   if (isFolder.value) {
     store.toggleFolder(props.node.id)
+    void store.selectFolder(props.node.id)
   } else {
     store.selectRequest(props.node.id)
   }
@@ -165,7 +171,7 @@ const paddingLeft = computed(() => {
       :class="{
         'border-l-2 border-brand-primary bg-surface-hover text-text-primary': isActive,
         'border-l-2 border-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary': !isActive && !isFolder,
-        'text-text-primary hover:bg-surface-hover': isFolder
+        'border-l-2 border-transparent text-text-primary hover:bg-surface-hover': !isActive && isFolder
       }"
       :style="{ paddingLeft }"
       @click="toggle"

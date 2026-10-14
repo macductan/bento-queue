@@ -34,6 +34,7 @@ const (
 	ErrCollectionIDEmpty        = "Collection ID không được để trống"
 	ErrCollectionCreateFailed   = "Không thể tạo collection"
 	ErrCollectionRenameFailed   = "Không thể lưu tên collection mới"
+	ErrCollectionUpdateFailed   = "Không thể cập nhật thông tin collection"
 	ErrCollectionDeleteFailed   = "Không thể xóa collection"
 	ErrCollectionDuplicateFailed = "Không thể nhân bản collection"
 	ErrParentFolderNotFound     = "Không tìm thấy thư mục cha"

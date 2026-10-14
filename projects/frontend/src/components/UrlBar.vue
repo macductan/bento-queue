@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { generateCurlCommand } from '@/utils/curl'
+import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
 const requestStore = useRequestStore()
@@ -142,6 +143,9 @@ const isUnknownMethod = computed(() => !methods.includes(req.value?.method || ''
 
 const autoResize = (e: Event) => {
   const target = e.target as HTMLTextAreaElement;
+  if (req.value && typeof target.value === 'string' && req.value.url !== target.value) {
+    req.value.url = target.value;
+  }
   target.style.height = 'auto';
   target.style.height = target.scrollHeight + 'px';
 };
@@ -187,8 +191,12 @@ const copyAsCurl = async () => {
   }
 
   const pathNodes = (collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []).filter(n => n.type === 'folder')
-  const vars = new Map<string, string>()
-  for (const [k, v] of envStore.variablesMap.entries()) vars.set(k, v)
+  const vars = resolveHierarchyVariables({
+    collectionVariables: collectionStore.activeCollection?.variables,
+    activeEnvVariables: envStore.variablesMap,
+    pathFolders: pathNodes,
+    activeEnvId: envStore.activeEnvId
+  })
 
   const curlCmd = generateCurlCommand(req.value, {
     vars,
@@ -262,14 +270,14 @@ const copyAsCurl = async () => {
         :single-line="false"
         :value="req.url" 
                 style="font-variant-ligatures: none;"
-        overlay-class="px-3 pt-2 pb-3 font-mono text-base w-full h-full"
+        overlay-class="px-3 pt-2 pb-3 font-mono text-sm w-full h-full"
       >
         <textarea
           :ref="el => { urlInputRef = el as HTMLTextAreaElement; initResize(el) }"
           id="url-input"
           v-model="req.url"
           rows="1"
-          class="transparent-selection w-full h-full bg-transparent px-3 pt-2 pb-3 font-mono text-base text-transparent caret-text-primary outline-none resize-none overflow-hidden block whitespace-pre-wrap break-all"
+          class="transparent-selection w-full h-full bg-transparent px-3 pt-2 pb-3 font-mono text-sm text-transparent caret-text-primary outline-none resize-none overflow-hidden block whitespace-pre-wrap break-all"
           style="font-variant-ligatures: none;"
           spellcheck="false"
           autocomplete="off"

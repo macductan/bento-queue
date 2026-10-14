@@ -8,6 +8,10 @@ const props = defineProps<{
   modelValue?: any[]
 }>()
 
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: any[]): void
+}>()
+
 const requestStore = useRequestStore()
 
 const rows = computed(() => {
@@ -18,6 +22,10 @@ const rows = computed(() => {
     return list.filter(h => !h._isAuto)
   }
   return list
+})
+
+const displayRows = computed(() => {
+  return [...rows.value, { key: '', value: '', enabled: true, _isPhantom: true }]
 })
 
 const keyInputs = ref<HTMLInputElement[]>([])
@@ -33,48 +41,88 @@ const focusCell = (index: number, part: 'key' | 'value') => {
   }
 }
 
-const onPhantomInput = (part: 'key' | 'value', e: Event) => {
+const getTargetArray = (): any[] | null => {
+  if (props.modelValue) return props.modelValue
+  const cur = requestStore.current
+  if (!cur || !props.field) return null
+  if (!cur[props.field]) {
+    cur[props.field] = []
+  }
+  return cur[props.field]
+}
+
+const ensureRealRow = (index: number) => {
+  const arr = getTargetArray()
+  if (!arr) return
+  if (index >= rows.value.length) {
+    arr.push({ key: '', value: '', enabled: true })
+    if (props.modelValue) {
+      emit('update:modelValue', arr)
+    }
+  }
+}
+
+const onCellInput = (index: number, part: 'key' | 'value', e: Event) => {
   const target = e.target as HTMLInputElement | HTMLTextAreaElement
   const v = target.value
-  target.value = '' // Explicitly clear the DOM value
-  
-  let arr = rows.value
-  if (!props.modelValue) {
-    const cur = requestStore.current
-    if (!cur || !props.field) return
-    if (!cur[props.field]) {
-      cur[props.field] = []
+  const arr = getTargetArray()
+  if (!arr) return
+
+  if (index >= rows.value.length) {
+    arr.push({
+      key: part === 'key' ? v : '',
+      value: part === 'value' ? v : '',
+      enabled: true
+    })
+  } else {
+    const targetRow = rows.value[index]
+    if (targetRow && !targetRow._isAuto) {
+      targetRow[part] = v
     }
-    arr = cur[props.field]
   }
-  
-  arr.push({ key: part === 'key' ? v : '', value: part === 'value' ? v : '', enabled: true })
-  nextTick(() => focusCell(arr.length - 1, part))
+  if (props.modelValue) {
+    emit('update:modelValue', arr)
+  }
+}
+
+const toggleRowEnabled = (index: number) => {
+  const targetRow = rows.value[index]
+  if (targetRow) {
+    targetRow.enabled = !targetRow.enabled
+    if (props.modelValue) {
+      emit('update:modelValue', props.modelValue)
+    }
+  }
 }
 
 const addRow = () => {
-  let arr = rows.value
-  if (!props.modelValue) {
-    const cur = requestStore.current
-    if (!cur || !props.field) return
-    if (!cur[props.field]) {
-      cur[props.field] = []
-    }
-    arr = cur[props.field]
-  }
+  const arr = getTargetArray()
+  if (!arr) return
   arr.push({ key: '', value: '', enabled: true })
-  nextTick(() => focusCell(arr.length - 1, 'key'))
+  if (props.modelValue) {
+    emit('update:modelValue', arr)
+  }
+  nextTick(() => focusCell(rows.value.length - 1, 'key'))
 }
 
 const removeRow = (index: number) => {
-  let arr = rows.value
-  if (!props.modelValue) {
-    const cur = requestStore.current
-    if (!cur || !props.field) return
-    arr = cur[props.field]
-  }
-  if (arr && index >= 0 && index < arr.length) {
-    arr.splice(index, 1)
+  const arr = getTargetArray()
+  if (!arr) return
+  const targetRow = rows.value[index]
+  if (targetRow) {
+    const realIdx = arr.indexOf(targetRow)
+    if (realIdx !== -1) {
+      arr.splice(realIdx, 1)
+    } else if (index >= 0 && index < arr.length) {
+      arr.splice(index, 1)
+    }
+    keyInputs.value.splice(index, 1)
+    valueInputs.value.splice(index, 1)
+    keyHighlighterRefs.value.splice(index, 1)
+    highlighterRefs.value.splice(index, 1)
+    if (props.modelValue) {
+      emit('update:modelValue', arr)
+    }
   }
 }
 
@@ -116,14 +164,33 @@ const initResize = (el: any) => {
     </div>
     
     <div class="flex flex-col gap-1">
-      <!-- Real rows -->
-      <div v-for="(row, index) in rows" :key="index" class="flex items-start gap-2 group" :class="{ 'opacity-50': !row.enabled }">
+      <!-- Unified Real + Phantom rows (keyed by index so DOM inputs are preserved in-place on promotion) -->
+      <div
+        v-for="(row, index) in displayRows"
+        :key="index"
+        class="flex items-start gap-2 group"
+        :class="{ 'opacity-50': !row._isPhantom && !row.enabled }"
+      >
         <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <button 
+            v-if="row._isPhantom"
+            type="button"
+            role="checkbox"
+            aria-checked="true"
+            disabled
+            class="w-4 h-4 rounded-[4px] border bg-surface-input border-border-default text-transparent flex items-center justify-center cursor-not-allowed opacity-50"
+            aria-label="Bật/tắt dòng (trống)"
+          >
+            <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="216 72 104 184 48 128"></polyline>
+            </svg>
+          </button>
+          <button 
+            v-else
             type="button"
             role="checkbox"
             :aria-checked="row.enabled"
-            @click="row.enabled = !row.enabled"
+            @click="toggleRowEnabled(index)"
             class="w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
             :class="row.enabled ? 'bg-brand-primary border-brand-primary text-white' : 'bg-surface-input border-border-default text-transparent hover:border-border-focus'"
             aria-label="Bật/tắt dòng"
@@ -144,9 +211,12 @@ const initResize = (el: any) => {
           >
             <input 
               type="text" 
-              v-model="row.key" 
+              :value="row.key"
               :readonly="row._isAuto"
               :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
+              @compositionstart="ensureRealRow(index)"
+              @input="e => onCellInput(index, 'key', e)"
+              @compositionend="e => onCellInput(index, 'key', e)"
               @scroll="e => keyHighlighterRefs[index]?.syncScroll(e)"
               placeholder="Key"
               class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
@@ -164,25 +234,27 @@ const initResize = (el: any) => {
             overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent"
           >
             <textarea 
-              v-model="row.value" 
               rows="1"
+              :value="row.value"
               :readonly="row._isAuto"
               :ref="el => { if (el) { valueInputs[index] = el as HTMLTextAreaElement; initResize(el) } }"
+              @compositionstart="ensureRealRow(index)"
+              @input="e => { autoResize(e); onCellInput(index, 'value', e) }"
+              @compositionend="e => { autoResize(e); onCellInput(index, 'value', e) }"
               @scroll="e => highlighterRefs[index]?.syncScroll(e)"
-              @input="autoResize"
               placeholder="Value"
               class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
               :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
               spellcheck="false"
               autocomplete="off"
-              @keydown.tab="onValueTab($event, index)"
+              @keydown.tab="row._isPhantom ? undefined : onValueTab($event, index)"
             ></textarea>
           </VariableHighlighter>
         </div>
         
         <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <button 
-            v-if="!row._isAuto"
+            v-if="!row._isPhantom && !row._isAuto"
             @click="removeRow(index)" 
             class="text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-surface-hover rounded outline-none mt-0.5"
             aria-label="Xóa dòng"
@@ -191,69 +263,6 @@ const initResize = (el: any) => {
               <path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"></path>
             </svg>
           </button>
-        </div>
-      </div>
-      
-      <!-- Phantom row -->
-      <div class="flex items-start gap-2 group">
-        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
-          <button 
-            type="button"
-            role="checkbox"
-            aria-checked="true"
-            disabled
-            class="w-4 h-4 rounded-[4px] border bg-surface-input border-border-default text-transparent flex items-center justify-center cursor-not-allowed opacity-50"
-            aria-label="Bật/tắt dòng (trống)"
-          >
-            <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="216 72 104 184 48 128"></polyline>
-            </svg>
-          </button>
-        </div>
-        
-        <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded">
-          <VariableHighlighter
-            :ref="el => { if (el) keyHighlighterRefs[rows.length] = el }"
-            :value="''"
-            :wrap="false"
-            :single-line="true"
-            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent whitespace-pre overflow-hidden"
-          >
-            <input 
-              type="text" 
-              :value="''"
-              @input="e => onPhantomInput('key', e)"
-              :ref="el => { if (el) keyInputs[rows.length] = el as HTMLInputElement }"
-              placeholder="Key"
-              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
-              spellcheck="false"
-              autocomplete="off"
-            />
-          </VariableHighlighter>
-        </div>
-        
-        <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">
-          <VariableHighlighter
-            :ref="el => { if (el) highlighterRefs[rows.length] = el }"
-            :value="''"
-            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent"
-          >
-            <textarea 
-              rows="1"
-              :value="''"
-              @input="e => { autoResize(e); onPhantomInput('value', e) }"
-              :ref="el => { if (el) { valueInputs[rows.length] = el as HTMLTextAreaElement; initResize(el) } }"
-              @scroll="e => highlighterRefs[rows.length]?.syncScroll(e)"
-              placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
-              spellcheck="false"
-              autocomplete="off"
-            ></textarea>
-          </VariableHighlighter>
-        </div>
-        
-        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
-          <!-- No delete button for phantom row -->
         </div>
       </div>
     </div>
@@ -271,3 +280,4 @@ const initResize = (el: any) => {
     </div>
   </div>
 </template>
+

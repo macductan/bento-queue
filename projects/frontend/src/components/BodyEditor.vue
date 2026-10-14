@@ -103,6 +103,7 @@ const handleTab = (e: KeyboardEvent) => {
           <textarea 
             ref="textareaRef"
             v-model="bodyContent"
+            @input="e => { bodyContent = (e.target as HTMLTextAreaElement).value }"
             @scroll="handleScroll"
             @keydown.tab="handleTab"
             class="w-full h-full bg-transparent border-none outline-none resize-none p-2 pb-32 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto" style="line-height: 21px; font-size: 13px;"

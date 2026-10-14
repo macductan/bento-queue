@@ -47,7 +47,7 @@ function stringifySorted(obj: any): string {
   if (obj === null || obj === undefined) return String(obj)
   if (typeof obj !== 'object') return String(obj)
   if (Array.isArray(obj)) {
-    const filtered = obj.filter((item: any) => !item || !item._isAuto)
+    const filtered = obj.filter((item: any) => !item || !(item._isAuto && item.enabled))
     return `[${filtered.map(stringifySorted).join(',')}]`
   }
   const keys = Object.keys(obj).sort()
@@ -91,15 +91,18 @@ export const useRequestStore = defineStore('request', {
           if (!this.original.auth) {
             this.original.auth = { type: 'inherit' }
           }
-          this.current = JSON.parse(JSON.stringify(this.original))
-          
-          if (this.current?.body?.type === 'json' && this.current.headers && this.current.headers.length > 0) {
-            const h = this.current.headers[0]
-            if (h.key.trim().toLowerCase() === 'content-type' && h.value.trim().toLowerCase() === 'application/json') {
+          if (this.original?.body?.type === 'json' && this.original.headers) {
+            const h = this.original.headers.find(
+              item => item && typeof item.key === 'string' &&
+              item.key.trim().toLowerCase() === 'content-type' &&
+              item.value.trim().toLowerCase() === 'application/json'
+            )
+            if (h) {
               h._isAuto = true
               this.contentTypeAuto = true
             }
           }
+          this.current = JSON.parse(JSON.stringify(this.original))
         } else {
           this.error = result.error?.message || 'Không thể tải request'
           this.original = null
@@ -196,7 +199,9 @@ export const useRequestStore = defineStore('request', {
         try {
           toSave = JSON.parse(JSON.stringify(this.current))
           if (toSave.headers) {
-            toSave.headers = toSave.headers.filter((h: any) => !h._isAuto)
+            toSave.headers = toSave.headers
+              .filter((h: any) => !(h._isAuto && h.enabled))
+              .map(({ _isAuto, ...rest }: any) => rest)
           }
           const result = await SaveRequest(toSave as any)
           if (result.success) {

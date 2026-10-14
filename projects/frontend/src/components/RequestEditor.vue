@@ -16,6 +16,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUrlParamsSync } from '@/composables/useUrlParamsSync'
 import { useAutoSave } from '@/composables/useAutoSave'
+import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
@@ -41,18 +42,12 @@ useUrlParamsSync(req)
 useAutoSave(req)
 
 const effectiveVariables = computed(() => {
-  const map = new Map<string, string>()
-  for (const [k, v] of envStore.variablesMap.entries()) map.set(k, v)
-  for (const node of pathNodes.value) {
-    if (node.variables) {
-      for (const v of node.variables) {
-        if (v.enabled && typeof v.key === 'string' && v.key.trim() !== '') {
-          map.set(v.key.trim(), v.value)
-        }
-      }
-    }
-  }
-  return map
+  return resolveHierarchyVariables({
+    collectionVariables: collectionStore.activeCollection?.variables,
+    activeEnvVariables: envStore.variablesMap,
+    pathFolders: pathNodes.value,
+    activeEnvId: envStore.activeEnvId
+  })
 })
 
 provide('effectiveVariables', effectiveVariables)
@@ -88,7 +83,11 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
 
   if (idx !== -1) {
     if (!req.value.headers[idx].enabled) {
-      req.value.headers.splice(idx, 1)
+      if (req.value.headers[idx]._isAuto) {
+        req.value.headers[idx].enabled = true
+      } else {
+        req.value.headers.splice(idx, 1)
+      }
     } else {
       req.value.headers[idx].enabled = false
     }
@@ -97,7 +96,8 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
     req.value.headers.push({
       key: item.key,
       value: item.source === 'auth' ? '' : (item.value || ''),
-      enabled: false
+      enabled: false,
+      ...(item.source === 'auto' ? { _isAuto: true } : {})
     })
   }
 }

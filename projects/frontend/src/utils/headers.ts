@@ -48,7 +48,7 @@ export function mergeHeaders(requestHeaders: KVPair[] = [], inheritedHeaders: KV
   // Determine keys explicitly defined in request headers
   const reqKeySet = new Set<string>()
   for (const h of reqHeaders) {
-    if (!h || typeof h.key !== 'string') continue
+    if (!h || h._isAuto || typeof h.key !== 'string') continue
     const trimmedKey = h.key.trim()
     if (!trimmedKey) continue
     reqKeySet.add(trimmedKey.toLowerCase())
@@ -75,7 +75,7 @@ export function mergeHeaders(requestHeaders: KVPair[] = [], inheritedHeaders: KV
 
   // 2. Add all enabled request headers (preserving multiple values with the same key)
   for (const h of reqHeaders) {
-    if (!h || typeof h.key !== 'string') continue
+    if (!h || h._isAuto || typeof h.key !== 'string') continue
     const trimmedKey = h.key.trim()
     if (!trimmedKey || !h.enabled) continue
 
@@ -115,12 +115,13 @@ export function getDefaultHeaders(
   const safeAuth = authHeaders || []
 
   // Check request headers to know what keys the request explicitly defines
-  // Distinguishing enabled vs disabled request headers
+  // Distinguishing enabled vs disabled request headers (ignoring enabled _isAuto headers)
   const reqEnabledKeys = new Set<string>()
   const reqDisabledKeys = new Set<string>()
   if (req?.headers) {
     for (const h of req.headers) {
       if (h && typeof h.key === 'string') {
+        if (h._isAuto && h.enabled) continue
         const trimmed = h.key.trim()
         if (trimmed) {
           const lower = trimmed.toLowerCase()

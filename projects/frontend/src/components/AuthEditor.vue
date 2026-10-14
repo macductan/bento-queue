@@ -158,17 +158,24 @@ const apiKeyAddTo = computed({
       <label for="auth-type-select" class="text-xs font-semibold uppercase text-text-muted w-24 shrink-0">
         Auth Type
       </label>
-      <select
-        id="auth-type-select"
-        v-model="authType"
-        class="bg-surface-raised border border-border-default rounded px-3 py-1.5 text-sm text-text-primary focus:border-brand-primary outline-none cursor-pointer"
-      >
-        <option value="inherit">Inherit from parent</option>
-        <option value="none">No Auth</option>
-        <option value="bearer">Bearer Token</option>
-        <option value="basic">Basic Auth</option>
-        <option value="apiKey">API Key</option>
-      </select>
+      <div class="relative flex items-center">
+        <select
+          id="auth-type-select"
+          v-model="authType"
+          class="peer appearance-none bg-surface-overlay border border-border-default rounded px-3 py-1.5 pr-8 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
+        >
+          <option value="inherit" class="bg-surface-overlay text-text-primary">Inherit from parent</option>
+          <option value="none" class="bg-surface-overlay text-text-primary">No Auth</option>
+          <option value="bearer" class="bg-surface-overlay text-text-primary">Bearer Token</option>
+          <option value="basic" class="bg-surface-overlay text-text-primary">Basic Auth</option>
+          <option value="apiKey" class="bg-surface-overlay text-text-primary">API Key</option>
+        </select>
+        <div class="absolute right-2.5 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
+          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"/>
+          </svg>
+        </div>
+      </div>
     </div>
 
     <!-- Inherit Mode Details -->
@@ -302,14 +309,21 @@ const apiKeyAddTo = computed({
       </div>
       <div class="flex flex-col gap-1">
         <label for="api-key-add-to-select" class="text-xs font-medium text-text-muted">Add to</label>
-        <select
-          id="api-key-add-to-select"
-          v-model="apiKeyAddTo"
-          class="bg-surface-raised border border-border-default rounded px-3 py-2 text-sm text-text-primary focus:border-brand-primary outline-none cursor-pointer"
-        >
-          <option value="header">Header</option>
-          <option value="query">Query Params</option>
-        </select>
+        <div class="relative flex items-center">
+          <select
+            id="api-key-add-to-select"
+            v-model="apiKeyAddTo"
+            class="peer appearance-none w-full bg-surface-overlay border border-border-default rounded px-3 py-2 pr-8 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
+          >
+            <option value="header" class="bg-surface-overlay text-text-primary">Header</option>
+            <option value="query" class="bg-surface-overlay text-text-primary">Query Params</option>
+          </select>
+          <div class="absolute right-2.5 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
+            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </div>
+        </div>
       </div>
     </div>
   </div>

@@ -6,6 +6,7 @@ import { useEnvironmentStore } from '@/stores/environmentStore'
 import KvpEditor from '@/components/KvpEditor.vue'
 import AuthEditor from '@/components/AuthEditor.vue'
 import { LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
+import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
@@ -15,9 +16,33 @@ const loading = ref(false)
 const saving = ref(false)
 const folder = ref<any>(null)
 const variables = ref<{ key: string, value: string, enabled: boolean }[]>([])
+const folder_envs = ref<Record<string, { key: string, value: string, enabled: boolean }[]>>({})
+const selectedEnvScope = ref<string>('__folder_global__')
 const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
 const activeTab = ref<'headers' | 'variables' | 'auth'>('headers')
+
+watch(selectedEnvScope, (scope) => {
+  if (scope !== '__folder_global__' && !folder_envs.value[scope]) {
+    folder_envs.value[scope] = []
+  }
+})
+
+const currentScopeVariables = computed<{ key: string, value: string, enabled: boolean }[]>({
+  get() {
+    if (selectedEnvScope.value === '__folder_global__') {
+      return variables.value
+    }
+    return folder_envs.value[selectedEnvScope.value] || []
+  },
+  set(newVal) {
+    if (selectedEnvScope.value === '__folder_global__') {
+      variables.value = [...newVal]
+    } else {
+      folder_envs.value = { ...folder_envs.value, [selectedEnvScope.value]: [...newVal] }
+    }
+  }
+})
 
 const folderName = computed(() => {
   if (!folder.value) return ''
@@ -32,18 +57,12 @@ const parentNodes = computed(() => {
 })
 
 const effectiveVariables = computed(() => {
-  const map = new Map<string, string>()
-  for (const [k, v] of envStore.variablesMap.entries()) map.set(k, v)
-  for (const node of parentNodes.value) {
-    if (node.variables) {
-      for (const v of node.variables) {
-        if (v.enabled && typeof v.key === 'string' && v.key.trim() !== '') {
-          map.set(v.key.trim(), v.value)
-        }
-      }
-    }
-  }
-  return map
+  return resolveHierarchyVariables({
+    collectionVariables: collectionStore.activeCollection?.variables,
+    activeEnvVariables: envStore.variablesMap,
+    pathFolders: parentNodes.value,
+    activeEnvId: envStore.activeEnvId
+  })
 })
 
 provide('effectiveVariables', effectiveVariables)
@@ -52,8 +71,24 @@ const headersCount = computed(() => {
   return headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '').length
 })
 
-const variablesCount = computed(() => {
+const folderGlobalVarsCount = computed(() => {
   return variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== '').length
+})
+
+const getEnvVarsCount = (envId: string) => {
+  const envVars = folder_envs.value[envId]
+  if (!envVars || !Array.isArray(envVars)) return 0
+  return envVars.filter(v => typeof v?.key === 'string' && v.key.trim() !== '').length
+}
+
+const totalVariablesCount = computed(() => {
+  let count = folderGlobalVarsCount.value
+  for (const list of Object.values(folder_envs.value)) {
+    if (Array.isArray(list)) {
+      count += list.filter(v => typeof v?.key === 'string' && v.key.trim() !== '').length
+    }
+  }
+  return count
 })
 
 const authCount = computed(() => {
@@ -70,11 +105,21 @@ const saveStatus = ref<'saved' | 'unsaved' | 'saving' | 'error'>('saved')
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 let activeSavePromise: Promise<boolean> | null = null
 
-const getCleanSnapshot = () => JSON.stringify({
-  variables: variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== ''),
-  headers: headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== ''),
-  auth: auth.value
-})
+const getCleanSnapshot = () => {
+  const cleanFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+  for (const [envId, vars] of Object.entries(folder_envs.value)) {
+    const clean = (vars || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+    if (clean.length > 0) {
+      cleanFolderEnvs[envId] = clean
+    }
+  }
+  return JSON.stringify({
+    variables: variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== ''),
+    folder_envs: cleanFolderEnvs,
+    headers: headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== ''),
+    auth: auth.value
+  })
+}
 
 const isDirty = computed(() => {
   if (!initialData.value) return false
@@ -105,7 +150,7 @@ const scheduleAutoSave = (delay = 800) => {
   }
 }
 
-watch([variables, headers, auth], () => {
+watch([variables, folder_envs, headers, auth], () => {
   if (loading.value) return
   if (isDirty.value) {
     scheduleAutoSave()
@@ -124,6 +169,7 @@ const loadFolderData = async () => {
     if (result.success && result.data) {
       folder.value = result.data
       variables.value = result.data.variables || []
+      folder_envs.value = result.data.folder_envs || {}
       headers.value = result.data.headers || []
       auth.value = result.data.auth || { type: 'inherit' }
       initialData.value = getCleanSnapshot()
@@ -162,10 +208,18 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
     try {
       const cleanHeaders = headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '')
       const cleanVariables = variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+      const cleanFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+      for (const [envId, vars] of Object.entries(folder_envs.value)) {
+        const clean = (vars || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+        if (clean.length > 0) {
+          cleanFolderEnvs[envId] = clean
+        }
+      }
 
       const dataToSave = { 
         ...folder.value, 
         variables: cleanVariables,
+        folder_envs: cleanFolderEnvs,
         headers: cleanHeaders,
         auth: auth.value
       }
@@ -214,10 +268,17 @@ const handleBeforeUnload = (e: BeforeUnloadEvent) => {
   }
 }
 
+let isReverting = false
+
 watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
+  if (isReverting) {
+    isReverting = false
+    return
+  }
   if (oldId && isDirty.value) {
     const saved = await saveFolderData({ silent: true })
     if (!saved) {
+      isReverting = true
       collectionStore.activeFolderId = oldId
       return
     }
@@ -240,7 +301,8 @@ onBeforeUnmount(async () => {
     window.removeEventListener('beforeunload', handleBeforeUnload)
   }
   cancelAutoSave()
-  if (isDirty.value) {
+  const stillExists = folder.value && collectionStore.findNode(collectionStore.tree, folder.value.id)
+  if (isDirty.value && stillExists) {
     await saveFolderData({ silent: true })
   }
 })
@@ -345,11 +407,11 @@ onBeforeUnmount(async () => {
         >
           Variables
           <span 
-            v-if="variablesCount > 0" 
+            v-if="totalVariablesCount > 0" 
             class="flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[9px] font-bold"
             :class="activeTab === 'variables' ? 'bg-brand-primary text-white' : 'bg-surface-raised text-text-secondary'"
           >
-            {{ variablesCount }}
+            {{ totalVariablesCount }}
           </span>
         </button>
       </div>
@@ -362,8 +424,38 @@ onBeforeUnmount(async () => {
         <div v-show="activeTab === 'auth'">
           <AuthEditor v-model="auth" :path-nodes="parentNodes" :is-folder="true" />
         </div>
-        <div v-show="activeTab === 'variables'">
-          <KvpEditor v-model="variables" />
+        <div v-show="activeTab === 'variables'" class="flex flex-col gap-3">
+          <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
+            <div class="flex items-center gap-2">
+              <label for="folder-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
+                Phạm vi môi trường:
+              </label>
+              <div class="relative flex items-center">
+                <select
+                  id="folder-env-scope-select"
+                  v-model="selectedEnvScope"
+                  class="peer appearance-none bg-surface-overlay border border-border-default rounded-md h-[32px] pl-2.5 pr-7 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
+                  data-test="folder-env-scope-select"
+                >
+                  <option value="__folder_global__" class="bg-surface-overlay text-text-primary">
+                    Folder Global Env (Dùng chung) {{ folderGlobalVarsCount > 0 ? `(${folderGlobalVarsCount})` : '' }}
+                  </option>
+                  <option v-for="env in envStore.environments" :key="env.id" :value="env.id" class="bg-surface-overlay text-text-primary">
+                    {{ env.name }} {{ getEnvVarsCount(env.id) > 0 ? `(${getEnvVarsCount(env.id)})` : '' }}
+                  </option>
+                </select>
+                <div class="absolute right-2 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
+                  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m6 9 6 6 6-6"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+            <span class="text-xs text-text-muted">
+              {{ selectedEnvScope === '__folder_global__' ? 'Có hiệu lực cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}
+            </span>
+          </div>
+          <KvpEditor v-model="currentScopeVariables" />
         </div>
       </div>
     </div>

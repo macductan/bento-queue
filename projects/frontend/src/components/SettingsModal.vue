@@ -7,6 +7,7 @@ import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { model } from '../../wailsjs/go/models'
 import CollectionModal from './CollectionModal.vue'
+import CollectionEnvModal from './CollectionEnvModal.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -29,6 +30,14 @@ const isCollectionModalOpen = ref(false)
 const collectionModalMode = ref<'create' | 'rename'>('create')
 const collectionModalInitialName = ref('')
 const targetId = ref('')
+
+const isEnvModalOpen = ref(false)
+const envModalCollectionId = ref('')
+
+const openCollectionEnv = (c: model.Collection) => {
+  envModalCollectionId.value = c.id || ''
+  isEnvModalOpen.value = true
+}
 
 const fetchRoot = async () => {
   try {
@@ -245,6 +254,21 @@ const handleCollectionModalSubmit = async (name: string) => {
                 </div>
 
                 <div class="flex items-center gap-1 shrink-0">
+                  <!-- Variables -->
+                  <button
+                    type="button"
+                    class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+                    title="Biến môi trường Collection"
+                    aria-label="Biến collection"
+                    data-test="collection-variables-btn"
+                    @click="openCollectionEnv(c)"
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="3"></circle>
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                  </button>
+
                   <!-- Rename -->
                   <button
                     type="button"
@@ -306,6 +330,12 @@ const handleCollectionModalSubmit = async (name: string) => {
       :mode="collectionModalMode"
       :initial-name="collectionModalInitialName"
       @submit="handleCollectionModalSubmit"
+    />
+
+    <!-- Collection Environment Modal -->
+    <CollectionEnvModal
+      v-model="isEnvModalOpen"
+      :collection-id="envModalCollectionId"
     />
   </div>
 </template>

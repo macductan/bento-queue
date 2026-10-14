@@ -6,6 +6,7 @@ import { useEnvironmentStore } from './environmentStore'
 import { useCollectionStore } from './collectionStore'
 import { buildExecuteRequest } from '../utils/buildExecuteRequest'
 import { getInheritedHeaders } from '../utils/headers'
+import { resolveHierarchyVariables } from '../utils/resolveHierarchyVariables'
 
 export interface ExecuteResponse {
   status_code: number
@@ -44,20 +45,14 @@ export const useResponseStore = defineStore('response', {
       this.urlInvalid = false
 
       const collectionStore = useCollectionStore()
+      const envStore = useEnvironmentStore()
       const pathNodes = (collectionStore.findFolderPath(collectionStore.tree, req.id) || []).filter(n => n.type === 'folder')
-      const vars = new Map<string, string>()
-      
-      for (const [k, v] of useEnvironmentStore().variablesMap.entries()) vars.set(k, v)
-
-      for (const node of pathNodes) {
-        if (node.variables) {
-          for (const v of node.variables) {
-            if (v.enabled && typeof v.key === 'string' && v.key.trim() !== '') {
-              vars.set(v.key.trim(), v.value)
-            }
-          }
-        }
-      }
+      const vars = resolveHierarchyVariables({
+        collectionVariables: collectionStore.activeCollection?.variables,
+        activeEnvVariables: envStore.variablesMap,
+        pathFolders: pathNodes,
+        activeEnvId: envStore.activeEnvId
+      })
 
       const inheritedHeaders = getInheritedHeaders(pathNodes)
       const execReq = buildExecuteRequest(req, vars, inheritedHeaders, pathNodes)
