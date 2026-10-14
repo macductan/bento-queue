@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ExecuteResponse } from '@/stores/responseStore'
-import { isJsonContentType, tryParseJson, formatJsonHtml, formatJsonText } from '@/utils/jsonHighlight'
+import { isJsonContentType, tryParseJson, formatJsonHtml } from '@/utils/jsonHighlight'
 
 const props = defineProps<{
   response: ExecuteResponse
@@ -17,7 +17,6 @@ const PRETTY_DEFAULT_MAX_BYTES = 15 * 1024 * 1024 // 15MB — xem Implementation
 
 const isOversized = computed(() => props.response.size_bytes > PRETTY_DEFAULT_MAX_BYTES)
 const isValidJson = computed(() => tryParseJson(props.response.body))
-const canBePretty = computed(() => isValidJson.value)
 
 watch(() => props.response, (newRes) => {
   hasRenderedPretty.value = false

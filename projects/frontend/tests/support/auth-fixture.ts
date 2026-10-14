@@ -17,12 +17,12 @@ const myAuthProvider: AuthProvider = {
     return response?.token || null;
   },
 
-  extractCookies: (response: any): { name: string; value: string }[] => {
+  extractCookies: (_response: any): { name: string; value: string }[] => {
     // TODO: return any required cookies
     return [];
   },
 
-  isTokenExpired: (token: string): boolean => {
+  isTokenExpired: (_token: string): boolean => {
     // TODO: implement actual expiration check
     return false;
   },

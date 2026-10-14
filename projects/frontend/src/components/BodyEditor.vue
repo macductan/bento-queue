@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 

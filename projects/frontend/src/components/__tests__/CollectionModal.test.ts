@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mount, config } from '@vue/test-utils'
 import CollectionModal from '../CollectionModal.vue'
 

@@ -654,7 +654,7 @@ describe('VariableHighlighter', () => {
       await vi.advanceTimersByTimeAsync(150)
       await nextTick()
 
-      let popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
       expect(popover).not.toBeNull()
 
       // Mouse leaves highlighter but enters popover within 200ms grace period

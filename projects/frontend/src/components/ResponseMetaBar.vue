@@ -32,7 +32,6 @@ const toneClasses: Record<string, { badge: string; dot: string }> = {
 
 const tone = computed(() => statusTone(props.response.status_code))
 const badgeClass = computed(() => toneClasses[tone.value].badge)
-const dotClass = computed(() => toneClasses[tone.value].dot)
 const sizeText = computed(() => formatSize(props.response.size_bytes))
 const timeText = computed(() => `${props.response.time_ms} ms`)
 const timestampText = computed(() => formatTimestamp(props.response.timestamp))
