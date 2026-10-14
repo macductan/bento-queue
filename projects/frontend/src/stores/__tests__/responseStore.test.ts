@@ -129,4 +129,70 @@ describe('responseStore integration', () => {
       enabled: true
     })
   })
+
+  it('should resolve 4-tier variables hierarchy on send and substitute into request URL', async () => {
+    const responseStore = useResponseStore()
+    const requestStore = useRequestStore()
+    const environmentStore = useEnvironmentStore()
+    const { useCollectionStore } = await import('../collectionStore')
+    const collectionStore = useCollectionStore()
+
+    // 1. Collection Env
+    collectionStore.collections = [
+      {
+        id: 'c-test',
+        name: 'Test Collection',
+        description: '',
+        variables: [{ key: 'apiUrl', value: 'https://base.api', enabled: true }]
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'c-test'
+
+    // 2. Global Env
+    environmentStore.environments = [
+      {
+        id: 'env-dev',
+        name: 'Dev',
+        variables: [{ key: 'apiUrl', value: 'https://dev.api', enabled: true }],
+        created_at: '',
+        updated_at: ''
+      } as any
+    ]
+    environmentStore.setActive('env-dev')
+
+    // 3 & 4. Folder Global and Folder-Env
+    collectionStore.tree = [
+      {
+        id: 'f-auth',
+        name: 'Auth Folder',
+        type: 'folder',
+        path: '/coll/f-auth',
+        created_at: '',
+        variables: [{ key: 'apiUrl', value: 'https://folder.api', enabled: true }],
+        folder_envs: {
+          'env-dev': [{ key: 'apiUrl', value: 'https://custom.folder.api', enabled: true }]
+        },
+        children: [
+          {
+            id: 'req-users',
+            name: 'Users',
+            type: 'request',
+            path: '/coll/f-auth/users.json',
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    requestStore.current = createMockRequest({
+      id: 'req-users',
+      url: '{{apiUrl}}/users'
+    })
+
+    await responseStore.send()
+
+    expect(SendRequest).toHaveBeenCalledTimes(1)
+    const sentReq = (SendRequest as any).mock.calls[0][0]
+    expect(sentReq.url).toBe('https://custom.folder.api/users')
+  })
 })

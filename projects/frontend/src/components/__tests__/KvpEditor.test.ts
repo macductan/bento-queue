@@ -95,4 +95,61 @@ describe('KvpEditor', () => {
     await deleteBtn.trigger('click')
     expect(reqStore.current.params.length).toBe(0)
   })
+
+  it('should preserve DOM input identity and update value in real time during IME composition in phantom row', async () => {
+    const model: { key: string; value: string; enabled: boolean }[] = []
+    const wrapper = mount(KvpEditor, {
+      props: {
+        modelValue: model
+      }
+    })
+    await nextTick()
+
+    const firstKeyInput = wrapper.find('input[placeholder="Key"]')
+    const originalDomEl = firstKeyInput.element
+
+    // Start IME composition on phantom row
+    await firstKeyInput.trigger('compositionstart')
+    await nextTick()
+    expect(model.length).toBe(1)
+
+    // Type Vietnamese characters while composing
+    ;(firstKeyInput.element as HTMLInputElement).value = 'tiếng'
+    await firstKeyInput.trigger('input')
+    await nextTick()
+
+    // Ensure the exact same DOM input element is reused at index 0
+    const inputsAfter = wrapper.findAll('input[placeholder="Key"]')
+    expect(inputsAfter.length).toBe(2)
+    expect(inputsAfter[0].element).toBe(originalDomEl)
+    expect(model[0].key).toBe('tiếng')
+  })
+
+  it('should preserve textarea element identity during IME composition in Value column of phantom row', async () => {
+    const model: { key: string; value: string; enabled: boolean }[] = []
+    const wrapper = mount(KvpEditor, {
+      props: {
+        modelValue: model
+      }
+    })
+    await nextTick()
+
+    const firstValTextarea = wrapper.find('textarea[placeholder="Value"]')
+    const originalTextareaEl = firstValTextarea.element
+
+    await firstValTextarea.trigger('compositionstart')
+    await nextTick()
+    expect(model.length).toBe(1)
+
+    ;(firstValTextarea.element as HTMLTextAreaElement).value = 'việt nam'
+    await firstValTextarea.trigger('input')
+    await nextTick()
+
+    const textareasAfter = wrapper.findAll('textarea[placeholder="Value"]')
+    expect(textareasAfter.length).toBe(2)
+    expect(textareasAfter[0].element).toBe(originalTextareaEl)
+    expect(model[0].value).toBe('việt nam')
+  })
 })
+
+

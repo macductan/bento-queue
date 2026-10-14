@@ -4,6 +4,7 @@ import { useCollectionStore } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { model } from '../../wailsjs/go/models'
 import CollectionModal from './CollectionModal.vue'
+import CollectionEnvModal from './CollectionEnvModal.vue'
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
@@ -16,6 +17,15 @@ const isModalOpen = ref(false)
 const modalMode = ref<'create' | 'rename'>('create')
 const modalInitialName = ref('')
 const targetId = ref('')
+
+const isEnvModalOpen = ref(false)
+const envModalCollectionId = ref('')
+
+const openCollectionEnv = (c: model.Collection) => {
+  envModalCollectionId.value = c.id || ''
+  isEnvModalOpen.value = true
+  isOpen.value = false
+}
 
 const activeCollectionName = computed(() => {
   if (collectionStore.collectionsLoading && collectionStore.collections.length === 0) {
@@ -212,6 +222,21 @@ onUnmounted(() => {
 
           <!-- Quick Actions -->
           <div class="flex items-center gap-0.5 shrink-0 opacity-80 group-hover:opacity-100" @click.stop>
+            <!-- Variables -->
+            <button
+              type="button"
+              class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+              title="Biến môi trường Collection"
+              aria-label="Biến collection"
+              data-test="collection-variables-btn"
+              @click="openCollectionEnv(c)"
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
+
             <!-- Rename -->
             <button
               type="button"
@@ -296,6 +321,12 @@ onUnmounted(() => {
       :mode="modalMode"
       :initial-name="modalInitialName"
       @submit="handleModalSubmit"
+    />
+
+    <!-- Modal for collection variables -->
+    <CollectionEnvModal
+      v-model="isEnvModalOpen"
+      :collection-id="envModalCollectionId"
     />
   </div>
 </template>

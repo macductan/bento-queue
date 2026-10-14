@@ -246,4 +246,100 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(UpdateFolder).not.toHaveBeenCalled()
   })
+
+  it('allows switching environment scope and editing folder_envs', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-dev', name: 'Development', variables: [] } as any,
+      { id: 'env-prod', name: 'Production', variables: [] } as any
+    ]
+
+    const folderWithEnvs = {
+      ...mockFolder,
+      variables: [{ key: 'f_global', value: '1', enabled: true }],
+      folder_envs: {
+        'env-dev': [{ key: 'auth_url', value: 'https://dev.auth.com', enabled: true }]
+      }
+    }
+    vi.mocked(LoadFolder).mockResolvedValue({ success: true, data: folderWithEnvs } as any)
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await nextTick()
+    await nextTick()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+    expect(vm.currentScopeVariables[0].key).toBe('f_global')
+
+    // Switch scope to env-dev
+    vm.selectedEnvScope = 'env-dev'
+    await nextTick()
+    expect(vm.currentScopeVariables[0].key).toBe('auth_url')
+    expect(vm.currentScopeVariables[0].value).toBe('https://dev.auth.com')
+
+    // Add a variable for env-dev
+    vm.currentScopeVariables.push({ key: 'timeout', value: '2000', enabled: true })
+    await nextTick()
+    expect(vm.isDirty).toBe(true)
+
+    // Save
+    await vm.saveFolderData()
+    expect(UpdateFolder).toHaveBeenCalledWith(expect.objectContaining({
+      variables: [{ key: 'f_global', value: '1', enabled: true }],
+      folder_envs: {
+        'env-dev': [
+          { key: 'auth_url', value: 'https://dev.auth.com', enabled: true },
+          { key: 'timeout', value: '2000', enabled: true }
+        ]
+      }
+    }))
+  })
+
+  it('renders select with dark mode styling, updates total variables badge, and switches scope via DOM', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-dev', name: 'Development', variables: [] } as any
+    ]
+
+    const folderWithEnvs = {
+      ...mockFolder,
+      variables: [{ key: 'f_global', value: '1', enabled: true }],
+      folder_envs: {
+        'env-dev': [
+          { key: 'auth_url', value: 'https://dev.auth.com', enabled: true },
+          { key: 'empty_ignore', value: '', enabled: true },
+          { key: '   ', value: 'ignored', enabled: true }
+        ]
+      }
+    }
+    vi.mocked(LoadFolder).mockResolvedValue({ success: true, data: folderWithEnvs } as any)
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await nextTick()
+    await nextTick()
+
+    const vm = wrapper.vm as any
+    // 1 valid in variables + 2 valid non-blank keys in folder_envs['env-dev'] = 3
+    expect(vm.totalVariablesCount).toBe(3)
+
+    const select = wrapper.find('select#folder-env-scope-select')
+    expect(select.exists()).toBe(true)
+    expect(select.classes()).toContain('appearance-none')
+    expect(select.classes()).toContain('bg-surface-overlay')
+
+    await select.setValue('env-dev')
+    expect(vm.selectedEnvScope).toBe('env-dev')
+    expect(vm.currentScopeVariables[0].key).toBe('auth_url')
+  })
 })
+

@@ -1024,6 +1024,16 @@ func TestCollection_Duplicate(t *testing.T) {
 	}
 	reqNode := resReq.Data.(model.TreeNode)
 
+	// Set variables on origColl
+	resUpd := svc.UpdateCollection(collectionsRoot, model.Collection{
+		ID:        origColl.ID,
+		Name:      origColl.Name,
+		Variables: []model.KVPair{{Key: "collKey", Value: "collVal", Enabled: true}},
+	})
+	if !resUpd.Success {
+		t.Fatal(resUpd.Error)
+	}
+
 	// Duplicate collection
 	resDup := svc.DuplicateCollection(collectionsRoot, origColl.ID)
 	if !resDup.Success {
@@ -1036,6 +1046,9 @@ func TestCollection_Duplicate(t *testing.T) {
 	}
 	if dupColl.Name != "My Project (bản sao)" {
 		t.Errorf("expected Name 'My Project (bản sao)', got %q", dupColl.Name)
+	}
+	if len(dupColl.Variables) != 1 || dupColl.Variables[0].Key != "collKey" {
+		t.Errorf("expected duplicated collection to retain variables, got: %+v", dupColl.Variables)
 	}
 
 	// Verify files in duplicated collection directory
@@ -1141,4 +1154,223 @@ func TestCollection_ValidationAndEdgeCases(t *testing.T) {
 		t.Errorf("expected to find no-id-folder in ListCollections")
 	}
 }
+
+func TestUpdateFolder_FolderEnvs_Persistence(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+
+	folderID := "f-test-envs-1"
+	folderPath := filepath.Join(root, "my-folder")
+	if err := fs.MakeDir(folderPath); err != nil {
+		t.Fatalf("MakeDir failed: %v", err)
+	}
+
+	initialFolder := model.Folder{
+		ID:        folderID,
+		Name:      "My Folder",
+		Variables: []model.KVPair{{Key: "f_global", Value: "100", Enabled: true}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	if err := fs.WriteJSON(filepath.Join(folderPath, "_folder.json"), initialFolder); err != nil {
+		t.Fatalf("WriteJSON failed: %v", err)
+	}
+	fs.IndexSet(folderID, folderPath)
+
+	folderEnvsToUpdate := map[string][]model.KVPair{
+		"env-dev": {
+			{Key: "apiUrl", Value: "https://dev.api.internal", Enabled: true},
+			{Key: "debug", Value: "true", Enabled: false},
+		},
+		"env-prod": {
+			{Key: "apiUrl", Value: "https://api.company.com", Enabled: true},
+		},
+	}
+
+	updatePayload := model.Folder{
+		ID:         folderID,
+		Variables:  []model.KVPair{{Key: "f_global", Value: "200", Enabled: true}},
+		FolderEnvs: folderEnvsToUpdate,
+		Headers:    []model.KVPair{{Key: "X-Folder", Value: "test", Enabled: true}},
+	}
+
+	res := svc.UpdateFolder(updatePayload)
+	if !res.Success {
+		t.Fatalf("UpdateFolder failed: %+v", res.Error)
+	}
+
+	updated, ok := res.Data.(model.Folder)
+	if !ok {
+		t.Fatalf("expected model.Folder, got %T", res.Data)
+	}
+	if len(updated.FolderEnvs) != 2 {
+		t.Fatalf("expected 2 folder_envs in response, got %d", len(updated.FolderEnvs))
+	}
+
+	// Verify persistence on disk
+	var diskFolder model.Folder
+	if err := fs.ReadJSON(filepath.Join(folderPath, "_folder.json"), &diskFolder); err != nil {
+		t.Fatalf("failed to read disk _folder.json: %v", err)
+	}
+
+	if len(diskFolder.Variables) != 1 || diskFolder.Variables[0].Value != "200" {
+		t.Errorf("expected Variables to be updated to 200, got: %+v", diskFolder.Variables)
+	}
+	if len(diskFolder.FolderEnvs) != 2 {
+		t.Fatalf("expected 2 folder_envs on disk, got %d", len(diskFolder.FolderEnvs))
+	}
+	if len(diskFolder.FolderEnvs["env-dev"]) != 2 {
+		t.Errorf("expected 2 env-dev vars on disk, got %d", len(diskFolder.FolderEnvs["env-dev"]))
+	}
+}
+
+func TestGetTree_FolderEnvs(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+
+	folderPath := filepath.Join(root, "tree-folder")
+	_ = fs.MakeDir(folderPath)
+
+	folder := model.Folder{
+		ID:   "f-tree-1",
+		Name: "Tree Folder",
+		FolderEnvs: map[string][]model.KVPair{
+			"env-qa": {
+				{Key: "qaHost", Value: "qa.test.com", Enabled: true},
+			},
+		},
+		CreatedAt: time.Now(),
+	}
+	_ = fs.WriteJSON(filepath.Join(folderPath, "_folder.json"), folder)
+
+	res := svc.GetTree(root)
+	if !res.Success {
+		t.Fatalf("GetTree failed: %+v", res.Error)
+	}
+
+	nodes := res.Data.([]model.TreeNode)
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	node := nodes[0]
+	if len(node.FolderEnvs) != 1 {
+		t.Fatalf("expected 1 FolderEnvs entry in TreeNode, got %d", len(node.FolderEnvs))
+	}
+	if node.FolderEnvs["env-qa"][0].Value != "qa.test.com" {
+		t.Errorf("expected 'qa.test.com', got %q", node.FolderEnvs["env-qa"][0].Value)
+	}
+}
+
+func TestUpdateCollection_SuccessAndPersistence(t *testing.T) {
+	svc, fs, collectionsRoot := setupCollectionService(t)
+
+	collID := "c-test-123"
+	collDir := filepath.Join(collectionsRoot, collID)
+	_ = fs.MakeDir(collDir)
+
+	initialColl := model.Collection{
+		ID:          collID,
+		Name:        "Initial Name",
+		Description: "Initial Desc",
+		CreatedAt:   time.Now().Add(-1 * time.Hour),
+		UpdatedAt:   time.Now().Add(-1 * time.Hour),
+	}
+	_ = fs.WriteJSON(filepath.Join(collDir, "collection.json"), initialColl)
+
+	vars := []model.KVPair{
+		{Key: "colVar1", Value: "val1", Enabled: true},
+		{Key: "colVar2", Value: "val2", Enabled: false},
+	}
+
+	updateReq := model.Collection{
+		ID:          collID,
+		Name:        "Updated Name",
+		Description: "Updated Desc",
+		Variables:   vars,
+	}
+
+	res := svc.UpdateCollection(collectionsRoot, updateReq)
+	if !res.Success {
+		t.Fatalf("UpdateCollection failed: %+v", res.Error)
+	}
+
+	updated := res.Data.(model.Collection)
+	if updated.Name != "Updated Name" {
+		t.Errorf("expected name 'Updated Name', got %q", updated.Name)
+	}
+	if updated.Description != "Updated Desc" {
+		t.Errorf("expected description 'Updated Desc', got %q", updated.Description)
+	}
+	if len(updated.Variables) != 2 {
+		t.Fatalf("expected 2 variables, got %d", len(updated.Variables))
+	}
+
+	// Verify persistence on disk
+	var diskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collDir, "collection.json"), &diskColl); err != nil {
+		t.Fatalf("failed to read disk collection.json: %v", err)
+	}
+
+	if diskColl.Name != "Updated Name" || diskColl.Description != "Updated Desc" {
+		t.Errorf("disk collection mismatch: %+v", diskColl)
+	}
+	if len(diskColl.Variables) != 2 || diskColl.Variables[0].Key != "colVar1" {
+		t.Errorf("disk variables mismatch: %+v", diskColl.Variables)
+	}
+}
+
+func TestUpdateCollection_ValidationAndErrors(t *testing.T) {
+	svc, fs, collectionsRoot := setupCollectionService(t)
+
+	collID := "valid-coll"
+	collDir := filepath.Join(collectionsRoot, collID)
+	_ = fs.MakeDir(collDir)
+	_ = fs.WriteJSON(filepath.Join(collDir, "collection.json"), model.Collection{
+		ID:   collID,
+		Name: "Valid Name",
+	})
+
+	// 1. Empty root
+	res := svc.UpdateCollection("", model.Collection{ID: collID, Name: "New Name"})
+	if res.Success || res.Error.Code != model.ErrValidation {
+		t.Errorf("expected ErrValidation for empty root, got %+v", res)
+	}
+
+	// 2. Empty ID
+	res = svc.UpdateCollection(collectionsRoot, model.Collection{ID: "", Name: "New Name"})
+	if res.Success || res.Error.Code != model.ErrValidation {
+		t.Errorf("expected ErrValidation for empty ID, got %+v", res)
+	}
+
+	// 3. Invalid / traversal ID
+	res = svc.UpdateCollection(collectionsRoot, model.Collection{ID: "../escape", Name: "New Name"})
+	if res.Success || res.Error.Code != model.ErrValidation {
+		t.Errorf("expected ErrValidation for traversal ID, got %+v", res)
+	}
+
+	// 4. Empty Name
+	res = svc.UpdateCollection(collectionsRoot, model.Collection{ID: collID, Name: "   "})
+	if res.Success || res.Error.Code != model.ErrValidation {
+		t.Errorf("expected ErrValidation for empty name, got %+v", res)
+	}
+
+	// 5. Not found
+	res = svc.UpdateCollection(collectionsRoot, model.Collection{ID: "non-existent-id", Name: "Name"})
+	if res.Success || res.Error.Code != model.ErrNotFound {
+		t.Errorf("expected ErrNotFound for non-existent ID, got %+v", res)
+	}
+}
+
+func TestUpdateFolder_NotFound(t *testing.T) {
+	svc, _, _ := setupCollectionService(t)
+	res := svc.UpdateFolder(model.Folder{
+		ID: "non-existent-folder-uuid",
+		FolderEnvs: map[string][]model.KVPair{
+			"env-dev": {{Key: "k", Value: "v", Enabled: true}},
+		},
+	})
+	if res.Success || res.Error.Code != model.ErrNotFound {
+		t.Errorf("expected ErrNotFound for non-existent folder, got %+v", res)
+	}
+}
+
 

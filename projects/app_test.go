@@ -12,6 +12,16 @@ import (
 )
 
 func TestApp_startup(t *testing.T) {
+	tmpDir := t.TempDir()
+	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
+	origCacheHome := os.Getenv("XDG_CACHE_HOME")
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
+	os.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
+	t.Cleanup(func() {
+		os.Setenv("XDG_CONFIG_HOME", origConfigHome)
+		os.Setenv("XDG_CACHE_HOME", origCacheHome)
+	})
+
 	tests := []struct {
 		name string
 	}{
@@ -80,6 +90,22 @@ func TestApp_CollectionCRUD_And_Switch(t *testing.T) {
 	dupColl, ok := dupRes.Data.(model.Collection)
 	assert.True(t, ok)
 	assert.Equal(t, "Project Beta Renamed (bản sao)", dupColl.Name)
+
+	// 4b. Update collection with variables
+	updateCollRes := app.UpdateCollection(model.Collection{
+		ID:          betaColl.ID,
+		Name:        "Project Beta Renamed",
+		Description: "Updated description",
+		Variables: []model.KVPair{
+			{Key: "collVar", Value: "collVal", Enabled: true},
+		},
+	})
+	assert.True(t, updateCollRes.Success)
+	updatedColl, ok := updateCollRes.Data.(model.Collection)
+	assert.True(t, ok)
+	assert.Equal(t, "Updated description", updatedColl.Description)
+	assert.Len(t, updatedColl.Variables, 1)
+	assert.Equal(t, "collVar", updatedColl.Variables[0].Key)
 
 	// 5. Switch to Beta
 	switchRes := app.SwitchCollection(betaColl.ID)

@@ -1,0 +1,37 @@
+- id: "1"
+  title: Backend Models, Storage & Services for Collection & Folder Environments
+  description: >-
+    Bổ sung trường Variables vào struct model.Collection và trường FolderEnvs vào struct model.Folder cùng model.TreeNode.
+    Cập nhật CollectionService (UpdateCollection, UpdateFolder, GetTree) lưu trữ bền vững vào collection.json và _folder.json với tương thích ngược và kiểm thử an toàn trên Test-Collection.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Cập nhật model.Collection thêm 'Variables []KVPair json:"variables,omitempty"' và model.Folder, model.TreeNode thêm 'FolderEnvs map[string][]KVPair json:"folder_envs,omitempty"'.
+    Triển khai CollectionService.UpdateCollection lưu variables vào collection.json; cập nhật UpdateFolder lưu folder_envs vào _folder.json; buildFolderNode nạp folder_envs vào TreeNode.
+    Đảm bảo tương thích ngược khi đọc dữ liệu cũ và tuân thủ tuyệt đối quy tắc chỉ test trên collection Test-Collection hoặc t.TempDir(), dọn dẹp sạch sau khi test; 'go test ./...' pass 100%.
+
+- id: "2"
+  title: Variable Resolution Engine & Multi-Tier Environment Hierarchy
+  description: >-
+    Xây dựng thuật toán phân giải biến 4 cấp độ theo đúng thứ tự ưu tiên: Collection Env -> Global Env -> Folder Global Env -> Folder-Env.
+    Tích hợp engine vào RequestEditor, FolderEditor, responseStore và VariableHighlighter kèm bộ kiểm thử toàn diện mọi kịch bản ghi đè biến.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Cập nhật TypeScript interfaces trong models và xây dựng helper phân giải biến 4 cấp độ (collection env -> global env -> folder global env -> folder-env) với duyệt cây cha con.
+    Tích hợp effectiveVariables vào RequestEditor.vue, FolderEditor.vue, responseStore.ts (trước khi SendRequest), và VariableHighlighter.vue.
+    Viết unit tests Vitest bao phủ đầy đủ các trường hợp ghi đè, lồng nhau, bật/tắt enabled, cô lập hoàn toàn không đụng dữ liệu thật; 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "3"
+  title: Folder Click UX, Environment Editors & URL Bar Typography
+  description: >-
+    Cập nhật TreeNodeRow click mở FolderEditor ngay trên ContentArea và hiển thị visual active, bổ sung giao diện cấu hình Folder-Env và Collection Env.
+    Giảm font-size URL bar và VariableHighlighter từ text-base xuống text-sm trong UrlBar.vue, hoàn thiện kiểm thử UI và smoke test.
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Trong TreeNodeRow.vue, click vào thư mục gọi selectFolder/setActiveFolderId, flushes dirty state, hiển thị FolderEditor trong ContentArea và áp dụng class active.
+    Trong FolderEditor.vue tab Variables, bổ sung Environment Scope Selector cho phép chọn Folder Global Env hoặc từng Environment để chỉnh sửa folder_envs.
+    Thêm giao diện chỉnh sửa Collection Env (qua CollectionSwitcher / modal hoặc header) đồng bộ với UpdateCollection.
+    Trong UrlBar.vue và VariableHighlighter.vue, đổi font-size từ 'text-base' sang 'text-sm' đồng bộ pixel-perfect.
+    Chạy kiểm thử frontend và backend, tuân thủ an toàn chỉ test trên Test-Collection; đảm bảo 'bun run type-check', 'bun run test', 'go test ./...' pass 100%.

@@ -387,4 +387,22 @@ describe('CollectionSwitcher.vue', () => {
     expect(wrapper.find('div[role="menu"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Không có collection nào')
   })
+
+  it('opens CollectionEnvModal when clicking collection-variables-btn in dropdown', async () => {
+    const store = useCollectionStore()
+    store.collections = [...mockCollections]
+    store.activeCollectionId = 'default'
+
+    const wrapper = mount(CollectionSwitcher)
+    await wrapper.find('button[aria-label="Chọn collection"]').trigger('click')
+
+    const varBtns = wrapper.findAll('[data-test="collection-variables-btn"]')
+    expect(varBtns.length).toBe(3)
+
+    await varBtns[1].trigger('click')
+    const envModal = wrapper.findComponent({ name: 'CollectionEnvModal' })
+    expect(envModal.exists()).toBe(true)
+    expect(envModal.props('modelValue')).toBe(true)
+    expect(envModal.props('collectionId')).toBe('proj-ecom-123')
+  })
 })

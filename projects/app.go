@@ -290,7 +290,10 @@ func (a *App) RenameCollection(id, newName string) model.Result {
 
 // UpdateCollection updates a collection's details.
 func (a *App) UpdateCollection(collection model.Collection) model.Result {
-	return a.RenameCollection(collection.ID, collection.Name)
+	a.mu.RLock()
+	cRoot := a.collectionsRoot
+	a.mu.RUnlock()
+	return a.collSvc.UpdateCollection(cRoot, collection)
 }
 
 // DeleteCollection deletes a collection from disk, ensuring active collection falls back to default.

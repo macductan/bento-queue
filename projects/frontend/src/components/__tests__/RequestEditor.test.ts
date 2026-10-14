@@ -102,4 +102,106 @@ describe('RequestEditor.vue - Save State Indicator', () => {
     expect(indicator.text()).toContain('Lỗi khi lưu')
     expect(indicator.find('.bg-red-500').exists()).toBe(true)
   })
+
+  it('provides effectiveVariables computed via 4-tier hierarchy to child components', async () => {
+    const { useCollectionStore } = await import('@/stores/collectionStore')
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const collectionStore = useCollectionStore()
+    const envStore = useEnvironmentStore()
+    const requestStore = useRequestStore()
+
+    // 1. Collection Env
+    collectionStore.collections = [
+      {
+        id: 'c1',
+        name: 'Test Coll',
+        variables: [{ key: 'apiUrl', value: 'https://base.api', enabled: true }]
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'c1'
+
+    // 2. Global Env
+    envStore.environments = [
+      {
+        id: 'env-dev',
+        name: 'Dev',
+        variables: [{ key: 'apiUrl', value: 'https://dev.api', enabled: true }]
+      } as any
+    ]
+    envStore.activeEnvId = 'env-dev'
+
+    // 3. Tree with Folder-Env
+    collectionStore.tree = [
+      {
+        id: 'f1',
+        name: 'Auth',
+        type: 'folder',
+        path: '/coll/f1',
+        created_at: '',
+        folder_envs: {
+          'env-dev': [{ key: 'apiUrl', value: 'https://custom.dev.api', enabled: true }]
+        },
+        children: [
+          {
+            id: 'req-1',
+            name: 'Get Users',
+            type: 'request',
+            path: '/coll/f1/users.json',
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    requestStore.current = createMockRequest({ id: 'req-1' })
+    const wrapper = mountEditor()
+    const provided = (wrapper.vm as any).effectiveVariables
+    expect(provided.get('apiUrl')).toBe('https://custom.dev.api')
+  })
+
+  it('toggleDefaultHeader toggles enabled on _isAuto header instead of removing it', () => {
+    const store = useRequestStore()
+    store.current = createMockRequest({
+      body: { type: 'json', content: '{"a":1}' },
+      headers: [
+        { key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true }
+      ]
+    })
+
+    const wrapper = mountEditor()
+    const vm = wrapper.vm as any
+
+    // Disable auto Content-Type header
+    vm.toggleDefaultHeader({
+      key: 'Content-Type',
+      value: 'application/json',
+      enabled: true,
+      overridden: false,
+      isAuto: true
+    })
+    expect(store.current.headers.length).toBe(1)
+    expect(store.current.headers[0]).toEqual({
+      key: 'Content-Type',
+      value: 'application/json',
+      enabled: false,
+      _isAuto: true
+    })
+
+    // Re-enable auto Content-Type header
+    vm.toggleDefaultHeader({
+      key: 'Content-Type',
+      value: 'application/json',
+      enabled: false,
+      overridden: false,
+      isAuto: true
+    })
+    expect(store.current.headers.length).toBe(1)
+    expect(store.current.headers[0]).toEqual({
+      key: 'Content-Type',
+      value: 'application/json',
+      enabled: true,
+      _isAuto: true
+    })
+  })
 })
+

@@ -93,28 +93,30 @@ type Request struct {
 
 // TreeNode represents a node in the collection tree (folder or request) (Story 2.1).
 type TreeNode struct {
-	ID        string      `json:"id"`
-	Name      string      `json:"name"`
-	Type      string      `json:"type"` // "folder" or "request"
-	Method    string      `json:"method,omitempty"`
-	Path      string      `json:"path"`
-	Children  []TreeNode  `json:"children,omitempty"`
-	Variables []KVPair    `json:"variables,omitempty"`
-	Headers   []KVPair    `json:"headers,omitempty"`
-	Auth      *AuthConfig `json:"auth,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Type       string              `json:"type"` // "folder" or "request"
+	Method     string              `json:"method,omitempty"`
+	Path       string              `json:"path"`
+	Children   []TreeNode          `json:"children,omitempty"`
+	Variables  []KVPair            `json:"variables,omitempty"`
+	FolderEnvs map[string][]KVPair `json:"folder_envs,omitempty"`
+	Headers    []KVPair            `json:"headers,omitempty"`
+	Auth       *AuthConfig         `json:"auth,omitempty"`
+	CreatedAt  time.Time           `json:"created_at"`
 }
 
 // Folder represents a folder in the collection tree.
 // Stored as _folder.json on disk.
 type Folder struct {
-	ID        string      `json:"id"`
-	Name      string      `json:"name"`
-	Variables []KVPair    `json:"variables"`
-	Headers   []KVPair    `json:"headers"`
-	Auth      *AuthConfig `json:"auth,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Variables  []KVPair            `json:"variables"`
+	FolderEnvs map[string][]KVPair `json:"folder_envs,omitempty"`
+	Headers    []KVPair            `json:"headers"`
+	Auth       *AuthConfig         `json:"auth,omitempty"`
+	CreatedAt  time.Time           `json:"created_at"`
+	UpdatedAt  time.Time           `json:"updated_at"`
 }
 
 // Environment represents a set of key-value variables for variable substitution.
@@ -133,6 +135,7 @@ type Collection struct {
 	ID          string    `json:"id,omitempty"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	Variables   []KVPair  `json:"variables,omitempty"`
 	IsDefault   bool      `json:"is_default,omitempty"`
 	IsActive    bool      `json:"is_active,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`

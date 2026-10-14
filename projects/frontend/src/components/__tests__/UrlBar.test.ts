@@ -214,4 +214,108 @@ describe('UrlBar.vue', () => {
 
     expect(toastSpy).toHaveBeenCalledWith('Không thể sao chép vào clipboard')
   })
+
+  it('applies text-sm typography to url input and highlighter overlay', () => {
+    const requestStore = useRequestStore()
+    requestStore.current = {
+      id: 'req-1',
+      name: 'Typography Req',
+      method: 'GET',
+      url: 'https://api.example.com/test',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      created_at: '2026-10-13',
+      updated_at: '2026-10-13'
+    }
+
+    const wrapper = mount(UrlBar)
+    const textarea = wrapper.find('#url-input')
+    expect(textarea.exists()).toBe(true)
+    expect(textarea.classes()).toContain('text-sm')
+    expect(textarea.classes()).not.toContain('text-base')
+
+    const highlighter = wrapper.findComponent({ name: 'VariableHighlighter' })
+    expect(highlighter.exists()).toBe(true)
+    expect(highlighter.props('overlayClass')).toContain('text-sm')
+    expect(highlighter.props('overlayClass')).not.toContain('text-base')
+  })
+
+  it('resolves 4-tier variable hierarchy (Collection Env and Folder-Env) during copyAsCurl', async () => {
+    const { useCollectionStore } = await import('@/stores/collectionStore')
+    const collectionStore = useCollectionStore()
+    const envStore = useEnvironmentStore()
+    const requestStore = useRequestStore()
+
+    collectionStore.collections = [
+      {
+        id: 'col-1',
+        name: 'My Collection',
+        variables: [
+          { key: 'base_url', value: 'https://col.example.com', enabled: true },
+          { key: 'api_ver', value: 'v1', enabled: true }
+        ]
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'col-1'
+
+    envStore.environments = [
+      {
+        id: 'env-local',
+        name: 'Local',
+        variables: [
+          { key: 'base_url', value: 'http://localhost:8000', enabled: true }
+        ]
+      } as any
+    ]
+    envStore.activeEnvId = 'env-local'
+
+    collectionStore.tree = [
+      {
+        id: 'f-auth',
+        name: 'Auth Folder',
+        type: 'folder',
+        path: '/col-1/f-auth',
+        created_at: '',
+        variables: [
+          { key: 'base_url', value: 'https://folder-global.example.com', enabled: true }
+        ],
+        folder_envs: {
+          'env-local': [
+            { key: 'base_url', value: 'http://localhost:9001', enabled: true }
+          ]
+        },
+        children: [
+          {
+            id: 'req-4tier',
+            name: 'Login',
+            type: 'request',
+            path: '/col-1/f-auth/login.json',
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    requestStore.current = {
+      id: 'req-4tier',
+      name: 'Login',
+      method: 'POST',
+      url: '{{base_url}}/{{api_ver}}/login',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      created_at: '2026-10-13',
+      updated_at: '2026-10-13'
+    }
+
+    const wrapper = mount(UrlBar)
+    const curlBtn = wrapper.find('#copy-curl-btn')
+    await curlBtn.trigger('click')
+
+    expect(writeTextMock).toHaveBeenCalledTimes(1)
+    const copiedCommand = writeTextMock.mock.calls[0][0]
+    expect(copiedCommand).toContain("'http://localhost:9001/v1/login'")
+  })
 })
+

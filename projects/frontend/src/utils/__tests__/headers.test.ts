@@ -190,6 +190,21 @@ describe('mergeHeaders', () => {
     expect(() => mergeHeaders(requestHeaders, inherited)).not.toThrow()
     expect(mergeHeaders(requestHeaders, inherited)).toEqual([])
   })
+
+  it('ignores headers marked with _isAuto', () => {
+    const inherited: KVPair[] = [{ key: 'X-App', value: '1', enabled: true }]
+    const requestHeaders: KVPair[] = [
+      { key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true },
+      { key: 'X-Custom', value: 'custom', enabled: true }
+    ]
+
+    const merged = mergeHeaders(requestHeaders, inherited)
+    expect(merged).toEqual([
+      { key: 'X-App', value: '1', enabled: true },
+      { key: 'X-Custom', value: 'custom', enabled: true }
+    ])
+    expect(merged.some(h => h.key === 'Content-Type')).toBe(false)
+  })
 })
 
 describe('getDefaultHeaders', () => {
@@ -214,6 +229,27 @@ describe('getDefaultHeaders', () => {
     const result = getDefaultHeaders(req, [])
     expect(result).toEqual([
       { key: 'Content-Type', value: 'application/json', source: 'auto', overridden: false, disabled: false }
+    ])
+  })
+
+  it('does not mark auto Content-Type as overridden when req.headers contains enabled _isAuto Content-Type', () => {
+    const req = {
+      headers: [{ key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true }],
+      body: { type: 'json' }
+    }
+
+    const result = getDefaultHeaders(req, [])
+    expect(result).toEqual([
+      { key: 'Content-Type', value: 'application/json', source: 'auto', overridden: false, disabled: false }
+    ])
+
+    // When disabled via DefaultHeadersTable toggle, marks disabled: true and overridden: false
+    const disabledReq = {
+      headers: [{ key: 'Content-Type', value: 'application/json', enabled: false, _isAuto: true }],
+      body: { type: 'json' }
+    }
+    expect(getDefaultHeaders(disabledReq, [])).toEqual([
+      { key: 'Content-Type', value: 'application/json', source: 'auto', overridden: false, disabled: true }
     ])
   })
 

@@ -62,6 +62,7 @@ export function generateCurlCommand(
   extraPathNodes?: TreeNode[]
 ): string {
   let vars = new Map<string, string>();
+  let hasExplicitVars = false;
   let inheritedHeaders: KVPair[] = extraInheritedHeaders ? [...extraInheritedHeaders] : [];
   let pathNodes: TreeNode[] = extraPathNodes ? [...extraPathNodes] : [];
   let multiline = false;
@@ -81,6 +82,7 @@ export function generateCurlCommand(
       const opts = envOrOptions as GenerateCurlOptions;
       if (opts.vars) {
         vars = new Map(opts.vars);
+        hasExplicitVars = true;
       } else if (opts.environment) {
         vars = extractVarsFromEnv(opts.environment);
       }
@@ -100,12 +102,14 @@ export function generateCurlCommand(
     inheritedHeaders = getInheritedHeaders(pathNodes);
   }
 
-  // Merge folder variables from pathNodes if present
-  for (const node of pathNodes) {
-    if (node.variables) {
-      for (const v of node.variables) {
-        if (v.enabled && typeof v.key === 'string' && v.key.trim() !== '') {
-          vars.set(v.key.trim(), v.value || '');
+  // Merge folder variables from pathNodes only when pre-resolved vars were not explicitly supplied
+  if (!hasExplicitVars) {
+    for (const node of pathNodes) {
+      if (node.variables) {
+        for (const v of node.variables) {
+          if (v.enabled && typeof v.key === 'string' && v.key.trim() !== '') {
+            vars.set(v.key.trim(), v.value || '');
+          }
         }
       }
     }

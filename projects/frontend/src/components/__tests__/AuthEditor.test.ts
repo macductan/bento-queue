@@ -221,4 +221,24 @@ describe('AuthEditor.vue', () => {
     expect(last.type).toBe('none')
     expect(last.bearer).toBeUndefined()
   })
+
+  it('applies dark mode appearance-none and bg-surface-overlay classes to auth selects', () => {
+    const wrapper = mount(AuthEditor, {
+      props: {
+        modelValue: {
+          type: 'apiKey',
+          apiKey: { key: 'X-Key', value: '123', addTo: 'header' }
+        }
+      }
+    })
+
+    const typeSelect = wrapper.find('select#auth-type-select')
+    const addToSelect = wrapper.find('select#api-key-add-to-select')
+
+    expect(typeSelect.classes()).toContain('appearance-none')
+    expect(typeSelect.classes()).toContain('bg-surface-overlay')
+    expect(addToSelect.classes()).toContain('appearance-none')
+    expect(addToSelect.classes()).toContain('bg-surface-overlay')
+  })
 })
+

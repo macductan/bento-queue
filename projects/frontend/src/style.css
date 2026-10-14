@@ -268,7 +268,14 @@
    ============================================================ */
 
 html {
+  color-scheme: dark;
   background-color: var(--color-surface-base);
+  color: var(--color-text-primary);
+}
+
+select,
+option {
+  background-color: var(--color-surface-overlay);
   color: var(--color-text-primary);
 }
 
@@ -295,3 +302,11 @@ body {
   color: transparent;
   background-color: rgba(59, 130, 246, 0.4);
 }
+
+/* Show native input/textarea text during IME composition (e.g. Ubuntu IBus/Fcitx Vietnamese) */
+.is-ime-composing input.text-transparent,
+.is-ime-composing textarea.text-transparent {
+  color: var(--color-text-primary) !important;
+  -webkit-text-fill-color: var(--color-text-primary) !important;
+}
+

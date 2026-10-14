@@ -183,4 +183,24 @@ describe('SettingsModal.vue', () => {
     expect(uiStore.autoSaveEnabled).toBe(true)
     expect(toggleBtn.attributes('aria-checked')).toBe('true')
   })
+
+  it('renders collection variables button and opens CollectionEnvModal on click', async () => {
+    const store = useCollectionStore()
+    store.collections = [...mockCollections]
+
+    const wrapper = mount(SettingsModal, {
+      props: {
+        modelValue: true
+      }
+    })
+
+    const varBtns = wrapper.findAll('[data-test="collection-variables-btn"]')
+    expect(varBtns.length).toBe(2)
+
+    await varBtns[0].trigger('click')
+    const envModal = wrapper.findComponent({ name: 'CollectionEnvModal' })
+    expect(envModal.exists()).toBe(true)
+    expect(envModal.props('modelValue')).toBe(true)
+    expect(envModal.props('collectionId')).toBe('default')
+  })
 })

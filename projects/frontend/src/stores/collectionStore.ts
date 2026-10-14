@@ -17,6 +17,7 @@ import {
   SwitchCollection,
   CreateCollection,
   RenameCollection,
+  UpdateCollection,
   DeleteCollection,
   DuplicateCollection
 } from '../../wailsjs/go/main/App'
@@ -36,6 +37,7 @@ export interface TreeNode {
   path: string
   children?: TreeNode[]
   variables?: { key: string; value: string; enabled: boolean }[]
+  folder_envs?: Record<string, { key: string; value: string; enabled: boolean }[]>
   headers?: { key: string; value: string; enabled: boolean }[]
   auth?: AuthConfig
   created_at: string
@@ -333,6 +335,38 @@ export const useCollectionStore = defineStore('collection', {
       this.activeFolderId = id
       this.activeRequestId = null
       reqStore.clearRequest()
+    },
+    async selectFolder(id: string) {
+      await this.setActiveFolderId(id)
+    },
+    async updateCollectionVariables(id: string, variables: { key: string; value: string; enabled: boolean }[]): Promise<boolean> {
+      const coll = this.collections.find(c => c.id === id)
+      if (!coll) return false
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      try {
+        const cleanVars = (variables || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+        const payload: any = {
+          ...coll,
+          id,
+          variables: cleanVars
+        }
+        const result = await UpdateCollection(payload)
+        if (result.success) {
+          if (result.data) {
+            Object.assign(coll, result.data)
+          } else {
+            coll.variables = cleanVars
+          }
+          return true
+        } else {
+          uiStore.showToast(result.error?.message || 'Không thể cập nhật biến collection')
+          return false
+        }
+      } catch (err: any) {
+        uiStore.showToast(String(err))
+        return false
+      }
     },
     async createRequest(parentId: string = "") {
       const { useRequestStore } = await import('./requestStore')

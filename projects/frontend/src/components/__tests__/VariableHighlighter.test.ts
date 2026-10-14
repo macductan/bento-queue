@@ -128,4 +128,34 @@ describe('VariableHighlighter', () => {
     expect(overlay.classes()).toContain('overflow-hidden')
     expect(overlay.classes()).not.toContain('whitespace-pre-wrap')
   })
+
+  it('IME Composition (Ubuntu Vietnamese): toggles is-ime-composing and syncs live input value', async () => {
+    const wrapper = mount(VariableHighlighter, {
+      props: {
+        value: '',
+        singleLine: true
+      },
+      slots: {
+        default: '<input type="text" class="text-transparent" />'
+      }
+    })
+
+    const input = wrapper.find('input')
+    const overlay = wrapper.find('.pointer-events-none')
+
+    await input.trigger('compositionstart')
+    expect(wrapper.classes()).toContain('is-ime-composing')
+    expect(overlay.classes()).toContain('opacity-0')
+
+    ;(input.element as HTMLInputElement).value = 'tiếng'
+    await input.trigger('compositionupdate')
+    expect(overlay.text()).toContain('tiếng')
+
+    ;(input.element as HTMLInputElement).value = 'tiếng việt'
+    await input.trigger('compositionend')
+    expect(wrapper.classes()).not.toContain('is-ime-composing')
+    expect(overlay.classes()).not.toContain('opacity-0')
+    expect(overlay.text()).toContain('tiếng việt')
+  })
 })
+
