@@ -51,6 +51,7 @@ const effectiveVariables = computed(() => {
 })
 
 provide('effectiveVariables', effectiveVariables)
+provide('variableHierarchyFolders', pathNodes)
 
 const defaultHeaders = computed(() => {
   if (!req.value) return []

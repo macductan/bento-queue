@@ -120,6 +120,11 @@ export const useCollectionStore = defineStore('collection', {
           } else if (!this.activeCollectionId || !list.some(c => c.id === this.activeCollectionId)) {
             this.activeCollectionId = 'default'
           }
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          if (envStore.loaded) {
+            envStore.syncActiveEnvFromCollection()
+          }
         } else {
           this.collections = []
           const { useUiStore } = await import('./uiStore')
@@ -170,6 +175,7 @@ export const useCollectionStore = defineStore('collection', {
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
           await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          envStore.syncActiveEnvFromCollection()
           return true
         } else {
           uiStore.showToast(result.error?.message || 'Không thể chuyển collection')
@@ -260,6 +266,7 @@ export const useCollectionStore = defineStore('collection', {
             const { useEnvironmentStore } = await import('./environmentStore')
             const envStore = useEnvironmentStore()
             await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+            envStore.syncActiveEnvFromCollection()
           } else {
             await this.loadCollections()
           }
@@ -346,15 +353,23 @@ export const useCollectionStore = defineStore('collection', {
       const uiStore = useUiStore()
       try {
         const cleanVars = (variables || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+        const preservedActiveEnvId = coll.active_env_id || ''
+        const prevIsActive = coll.is_active
         const payload: any = {
           ...coll,
           id,
-          variables: cleanVars
+          variables: cleanVars,
+          active_env_id: preservedActiveEnvId
         }
         const result = await UpdateCollection(payload)
         if (result.success) {
-          if (result.data) {
+          if (result.data && Object.keys(result.data).length > 0) {
             Object.assign(coll, result.data)
+            coll.is_active = prevIsActive
+            coll.variables = result.data.variables ?? cleanVars
+            if (result.data.active_env_id === undefined && preservedActiveEnvId) {
+              coll.active_env_id = preservedActiveEnvId
+            }
           } else {
             coll.variables = cleanVars
           }
@@ -364,6 +379,55 @@ export const useCollectionStore = defineStore('collection', {
           return false
         }
       } catch (err: any) {
+        uiStore.showToast(String(err))
+        return false
+      }
+    },
+    async updateActiveCollectionEnv(activeEnvId: string | null): Promise<boolean> {
+      const coll = this.activeCollection
+      if (!coll) return false
+      const normalizedEnvId = activeEnvId ? activeEnvId.trim() : ''
+      const prevActiveEnvId = coll.active_env_id
+      const prevIsActive = coll.is_active
+      const prevVariables = coll.variables
+      coll.active_env_id = normalizedEnvId
+
+      let updateFn: typeof UpdateCollection | undefined
+      try {
+        updateFn = UpdateCollection
+      } catch {
+        return true
+      }
+      if (typeof updateFn !== 'function') {
+        return true
+      }
+
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      try {
+        const payload: any = {
+          ...coll,
+          id: coll.id || this.activeCollectionId,
+          active_env_id: normalizedEnvId
+        }
+        const result = await updateFn(payload)
+        if (result.success) {
+          if (result.data && Object.keys(result.data).length > 0) {
+            Object.assign(coll, result.data)
+            coll.is_active = prevIsActive
+            if (result.data.variables === undefined && prevVariables !== undefined) {
+              coll.variables = prevVariables
+            }
+          }
+          coll.active_env_id = normalizedEnvId
+          return true
+        } else {
+          coll.active_env_id = prevActiveEnvId
+          uiStore.showToast(result.error?.message || 'Không thể lưu môi trường đang chọn')
+          return false
+        }
+      } catch (err: any) {
+        coll.active_env_id = prevActiveEnvId
         uiStore.showToast(String(err))
         return false
       }
@@ -424,9 +488,11 @@ export const useCollectionStore = defineStore('collection', {
           if (this.activeRequestId === id) {
             const { useRequestStore } = await import('./requestStore')
             const reqStore = useRequestStore()
-            if (reqStore.current && reqStore.original) {
-              reqStore.current.name = name
-              reqStore.original.name = name
+            if (reqStore.current?.id === id && reqStore.original?.id === id) {
+              const updatedNode = this.findNode(this.tree, id)
+              const resolvedName = updatedNode ? updatedNode.name : name
+              reqStore.current.name = resolvedName
+              reqStore.original.name = resolvedName
             }
           }
         } else {
@@ -465,6 +531,8 @@ export const useCollectionStore = defineStore('collection', {
           
           // Must run against the pre-delete tree so sibling lookup still sees the deleted node
           if (this.activeRequestId === id) {
+            const { useRequestStore } = await import('./requestStore')
+            useRequestStore().clearRequest()
             this.selectNextRequestOrClear(id)
           }
           await this.loadTree()
@@ -488,6 +556,11 @@ export const useCollectionStore = defineStore('collection', {
       const activeFolderInside = !!this.activeFolderId && 
         (this.activeFolderId === id || !!this.findNode(folderNode?.children || [], this.activeFolderId))
 
+      if (activeInside) {
+        const { useRequestStore } = await import('./requestStore')
+        useRequestStore().cancelAutoSave()
+      }
+
       try {
         const result = await DeleteFolder(id)
         if (result.success) {
@@ -497,7 +570,12 @@ export const useCollectionStore = defineStore('collection', {
           this.expandedFolders.delete(id)
           
           // Pre-delete tree is still in place: pick next/previous request at the folder's level
-          if (activeInside) {
+          const stillActiveInside = !!this.activeRequestId &&
+            !!folderNode?.children &&
+            !!this.findNode(folderNode.children, this.activeRequestId)
+          if (stillActiveInside) {
+            const { useRequestStore } = await import('./requestStore')
+            useRequestStore().clearRequest()
             this.selectNextRequestOrClear(id)
           }
           if (activeFolderInside) {

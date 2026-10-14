@@ -708,6 +708,7 @@ func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.
 	existingColl.Name = name
 	existingColl.Description = coll.Description
 	existingColl.Variables = coll.Variables
+	existingColl.ActiveEnvID = strings.TrimSpace(coll.ActiveEnvID)
 	existingColl.ID = id
 	existingColl.IsDefault = (id == "default")
 	existingColl.UpdatedAt = time.Now()
@@ -807,6 +808,7 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) mode
 		Name:        newName,
 		Description: srcColl.Description,
 		Variables:   srcColl.Variables,
+		ActiveEnvID: srcColl.ActiveEnvID,
 		IsDefault:   false,
 		IsActive:    false,
 		CreatedAt:   now,

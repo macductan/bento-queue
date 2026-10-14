@@ -1,7 +1,25 @@
 <script lang="ts" setup>
-import { computed, ref, watch, inject, type Ref, type ComputedRef } from 'vue'
+import {
+  computed,
+  ref,
+  watch,
+  inject,
+  unref,
+  onBeforeUnmount,
+  type Ref,
+  type ComputedRef
+} from 'vue'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useCollectionStore } from '@/stores/collectionStore'
 import { parseVariables } from '@/utils/variables'
+import {
+  resolveHierarchyVariables,
+  type FolderNodeLike
+} from '@/utils/resolveHierarchyVariables'
+import VariableHoverPopover, { type AnchorRectLike } from './VariableHoverPopover.vue'
+
+const HOVER_OPEN_DELAY_MS = 150
+const HOVER_CLOSE_DELAY_MS = 200
 
 const props = withDefaults(defineProps<{
   value: string;
@@ -9,16 +27,133 @@ const props = withDefaults(defineProps<{
   singleLine?: boolean;
   wrap?: boolean;
   variablesMap?: Map<string, string>;
+  hierarchyFolders?: FolderNodeLike[];
 }>(), {
   singleLine: false,
   wrap: true
 })
 
+const instanceId = Symbol('variable-highlighter')
 const envStore = useEnvironmentStore()
-const injectedVars = inject<Ref<Map<string, string>> | ComputedRef<Map<string, string>> | null>('effectiveVariables', null)
+const collectionStore = useCollectionStore()
+const injectedVars = inject<Ref<Map<string, string>> | ComputedRef<Map<string, string>> | Map<string, string> | null>('effectiveVariables', null)
+const injectedFolders = inject<Ref<FolderNodeLike[]> | ComputedRef<FolderNodeLike[]> | FolderNodeLike[] | null>('variableHierarchyFolders', null)
 
 const isComposing = ref(false)
 const liveInputValue = ref<string | null>(null)
+const localRevision = ref(0)
+
+const resolvedHierarchyFolders = computed<FolderNodeLike[]>(() => {
+  void localRevision.value
+  if (props.hierarchyFolders) {
+    return props.hierarchyFolders
+  }
+  const fromInject = unref(injectedFolders)
+  if (Array.isArray(fromInject)) {
+    return fromInject
+  }
+  if (collectionStore.activeRequestId) {
+    const full = collectionStore.findFolderPath(collectionStore.tree, collectionStore.activeRequestId) || []
+    return full.filter(n => n.type === 'folder')
+  }
+  if (collectionStore.activeFolderId) {
+    const full = collectionStore.findFolderPath(collectionStore.tree, collectionStore.activeFolderId) || []
+    return full.filter(n => n.type === 'folder')
+  }
+  return []
+})
+
+const fallbackVariablesMap = computed(() => {
+  void localRevision.value
+  const activeEnvObj = envStore.activeEnvId
+    ? envStore.environments.find(e => e.id === envStore.activeEnvId)
+    : null
+  return resolveHierarchyVariables({
+    collectionVariables: collectionStore.activeCollection?.variables,
+    activeEnvVariables: activeEnvObj?.variables ?? envStore.variablesMap,
+    pathFolders: resolvedHierarchyFolders.value,
+    activeEnvId: envStore.activeEnvId
+  })
+})
+
+const hoveredVarName = ref<string | null>(null)
+const anchorRect = ref<AnchorRectLike | null>(null)
+const isMouseInPopover = ref(false)
+
+let pendingVarName: string | null = null
+let pendingRect: AnchorRectLike | null = null
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+let windowListenersAttached = false
+
+const isFocusInsidePopover = (): boolean => {
+  if (typeof document === 'undefined' || !document.activeElement) return false
+  return Boolean((document.activeElement as HTMLElement).closest?.('[data-test="variable-hover-popover"]'))
+}
+
+const clearHoverTimer = () => {
+  if (hoverTimer !== null) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+  pendingVarName = null
+  pendingRect = null
+}
+
+const clearCloseTimer = () => {
+  if (closeTimer !== null) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+}
+
+const handleWindowKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && (hoveredVarName.value !== null || hoverTimer !== null)) {
+    closePopoverImmediately()
+  }
+}
+
+const handleExternalPopoverOpen = (e: Event) => {
+  const ce = e as CustomEvent
+  if (ce?.detail?.instanceId !== instanceId) {
+    closePopoverImmediately()
+  }
+}
+
+const attachWindowListeners = () => {
+  if (typeof window === 'undefined' || windowListenersAttached) return
+  windowListenersAttached = true
+  window.addEventListener('keydown', handleWindowKeydown)
+  window.addEventListener('hecto:variable-popover-open', handleExternalPopoverOpen)
+}
+
+const removeWindowListeners = () => {
+  if (typeof window === 'undefined' || !windowListenersAttached) return
+  windowListenersAttached = false
+  window.removeEventListener('keydown', handleWindowKeydown)
+  window.removeEventListener('hecto:variable-popover-open', handleExternalPopoverOpen)
+}
+
+const closePopoverImmediately = () => {
+  clearHoverTimer()
+  clearCloseTimer()
+  hoveredVarName.value = null
+  anchorRect.value = null
+  isMouseInPopover.value = false
+  removeWindowListeners()
+}
+
+const scheduleClosePopover = (delay = HOVER_CLOSE_DELAY_MS) => {
+  clearHoverTimer()
+  if (!hoveredVarName.value) return
+  if (closeTimer !== null) return
+  closeTimer = setTimeout(() => {
+    closeTimer = null
+    if (!isMouseInPopover.value && !isFocusInsidePopover()) {
+      closePopoverImmediately()
+    }
+  }, delay)
+}
 
 watch(() => props.value, (newVal) => {
   if (!isComposing.value || liveInputValue.value === newVal) {
@@ -35,6 +170,7 @@ const syncLiveValue = (e: Event) => {
 
 const handleCompositionStart = (e: CompositionEvent) => {
   isComposing.value = true
+  closePopoverImmediately()
   syncLiveValue(e)
 }
 
@@ -54,7 +190,20 @@ const handleInput = (e: Event) => {
   if (ie?.isComposing || target?.composing) {
     isComposing.value = true
   }
+  closePopoverImmediately()
   syncLiveValue(e)
+}
+
+const handleKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape') {
+    closePopoverImmediately()
+    return
+  }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Enter') {
+      closePopoverImmediately()
+    }
+  }
 }
 
 const handleBlur = () => {
@@ -67,13 +216,191 @@ const effectiveValue = computed(() => {
 })
 
 const segments = computed(() => {
-  const vars = props.variablesMap || injectedVars?.value || envStore.variablesMap
+  void localRevision.value
+  const vars = props.variablesMap || unref(injectedVars) || fallbackVariablesMap.value
   return parseVariables(effectiveValue.value, vars)
+})
+
+watch(segments, (newSegments) => {
+  if (hoveredVarName.value) {
+    const stillExists = newSegments.some(
+      s => (s.type === 'resolved' || s.type === 'missing') && s.key === hoveredVarName.value
+    )
+    if (!stillExists) {
+      closePopoverImmediately()
+    }
+  }
+  if (pendingVarName) {
+    const pendingStillExists = newSegments.some(
+      s => (s.type === 'resolved' || s.type === 'missing') && s.key === pendingVarName
+    )
+    if (!pendingStillExists) {
+      closePopoverImmediately()
+    }
+  }
 })
 
 const overlayRef = ref<HTMLElement | null>(null)
 
+const toAnchorRect = (r: {
+  top: number
+  left: number
+  bottom: number
+  right: number
+  width: number
+  height: number
+}): AnchorRectLike => ({
+  top: r.top,
+  left: r.left,
+  bottom: r.bottom,
+  right: r.right,
+  width: r.width,
+  height: r.height
+})
+
+const findHoveredVarSpan = (
+  e: MouseEvent
+): { span: HTMLElement; varName: string; rect: AnchorRectLike } | null => {
+  const container = overlayRef.value
+  if (!container) return null
+
+  const spans = Array.from(container.querySelectorAll<HTMLElement>('[data-var-name]'))
+  if (spans.length === 0) return null
+
+  const { clientX, clientY } = e
+  let anyNonZeroRect = false
+
+  for (const span of spans) {
+    const varName = span.getAttribute('data-var-name')?.trim()
+    if (!varName) continue
+
+    const clientRects =
+      typeof span.getClientRects === 'function' ? Array.from(span.getClientRects()) : []
+    const nonZeroRects = clientRects.filter(r => r.width > 0 || r.height > 0)
+
+    if (nonZeroRects.length > 0) {
+      anyNonZeroRect = true
+      for (const r of nonZeroRects) {
+        if (
+          clientX >= r.left &&
+          clientX <= r.right &&
+          clientY >= r.top &&
+          clientY <= r.bottom
+        ) {
+          return { span, varName, rect: toAnchorRect(r) }
+        }
+      }
+    } else if (typeof span.getBoundingClientRect === 'function') {
+      const bcr = span.getBoundingClientRect()
+      if (bcr.width > 0 || bcr.height > 0) {
+        anyNonZeroRect = true
+        if (
+          clientX >= bcr.left &&
+          clientX <= bcr.right &&
+          clientY >= bcr.top &&
+          clientY <= bcr.bottom
+        ) {
+          return { span, varName, rect: toAnchorRect(bcr) }
+        }
+      }
+    }
+  }
+
+  // Fallback for synthetic test events triggered directly on [data-var-name] when DOM has zero-sized layout rects
+  if (!anyNonZeroRect) {
+    const targetEl = e.target as HTMLElement | null
+    const targetSpan = targetEl?.closest?.('[data-var-name]') as HTMLElement | null
+    if (targetSpan && container.contains(targetSpan)) {
+      const varName = targetSpan.getAttribute('data-var-name')?.trim()
+      if (varName) {
+        const bcr =
+          typeof targetSpan.getBoundingClientRect === 'function'
+            ? targetSpan.getBoundingClientRect()
+            : { top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 }
+        return { span: targetSpan, varName, rect: toAnchorRect(bcr) }
+      }
+    }
+  }
+
+  return null
+}
+
+const handleMouseMove = (e: MouseEvent) => {
+  if (isComposing.value) return
+
+  const hit = findHoveredVarSpan(e)
+  if (hit) {
+    clearCloseTimer()
+    if (hoveredVarName.value === hit.varName) {
+      anchorRect.value = hit.rect
+      return
+    }
+    if (pendingVarName === hit.varName && hoverTimer !== null) {
+      pendingRect = hit.rect
+      return
+    }
+    clearHoverTimer()
+    pendingVarName = hit.varName
+    pendingRect = hit.rect
+    attachWindowListeners()
+    hoverTimer = setTimeout(() => {
+      hoverTimer = null
+      const targetVar = pendingVarName
+      const targetRect = pendingRect
+      pendingVarName = null
+      pendingRect = null
+      if (!targetVar) return
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('hecto:variable-popover-open', { detail: { instanceId } })
+        )
+      }
+      hoveredVarName.value = targetVar
+      anchorRect.value = targetRect
+    }, HOVER_OPEN_DELAY_MS)
+  } else {
+    clearHoverTimer()
+    if (hoveredVarName.value && !isMouseInPopover.value) {
+      scheduleClosePopover(HOVER_CLOSE_DELAY_MS)
+    } else if (!hoveredVarName.value) {
+      removeWindowListeners()
+    }
+  }
+}
+
+const handleMouseLeave = () => {
+  clearHoverTimer()
+  if (hoveredVarName.value && !isMouseInPopover.value) {
+    scheduleClosePopover(HOVER_CLOSE_DELAY_MS)
+  } else if (!hoveredVarName.value) {
+    removeWindowListeners()
+  }
+}
+
+const handlePopoverMouseEnter = () => {
+  isMouseInPopover.value = true
+  clearCloseTimer()
+}
+
+const handlePopoverMouseLeave = () => {
+  isMouseInPopover.value = false
+  scheduleClosePopover(HOVER_CLOSE_DELAY_MS)
+}
+
+const handlePopoverFocusOut = () => {
+  setTimeout(() => {
+    if (hoveredVarName.value && !isMouseInPopover.value && !isFocusInsidePopover()) {
+      scheduleClosePopover(HOVER_CLOSE_DELAY_MS)
+    }
+  }, 0)
+}
+
+const handlePopoverSaved = () => {
+  localRevision.value++
+}
+
 const syncScroll = (e: Event) => {
+  closePopoverImmediately()
   if (overlayRef.value) {
     const target = e.target as HTMLElement
     overlayRef.value.scrollTop = target.scrollTop
@@ -81,8 +408,13 @@ const syncScroll = (e: Event) => {
   }
 }
 
+onBeforeUnmount(() => {
+  closePopoverImmediately()
+})
+
 defineExpose({
-  syncScroll
+  syncScroll,
+  closePopoverImmediately
 })
 </script>
 
@@ -94,6 +426,9 @@ defineExpose({
     @compositionupdate="handleCompositionUpdate"
     @compositionend="handleCompositionEnd"
     @input="handleInput"
+    @keydown="handleKeydown"
+    @mousemove="handleMouseMove"
+    @mouseleave="handleMouseLeave"
     @blur.capture="handleBlur"
   >
     <!-- Overlay -->
@@ -111,22 +446,35 @@ defineExpose({
         <span>
           <template v-for="(seg, idx) in segments" :key="idx">
             <span v-if="seg.type === 'text'">{{ seg.value }}</span>
-            <span v-else-if="seg.type === 'resolved'" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
-            <span v-else-if="seg.type === 'missing'" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
+            <span v-else-if="seg.type === 'resolved'" :data-var-name="seg.key" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
+            <span v-else-if="seg.type === 'missing'" :data-var-name="seg.key" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
           </template>
         </span>
       </div>
       <template v-else>
         <template v-for="(seg, idx) in segments" :key="idx">
           <span v-if="seg.type === 'text'">{{ seg.value }}</span>
-          <span v-else-if="seg.type === 'resolved'" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
-          <span v-else-if="seg.type === 'missing'" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
+          <span v-else-if="seg.type === 'resolved'" :data-var-name="seg.key" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
+          <span v-else-if="seg.type === 'missing'" :data-var-name="seg.key" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
         </template>
       </template>
     </div>
     
     <!-- Input/Textarea Slot -->
     <slot></slot>
+
+    <!-- Hover Popover -->
+    <VariableHoverPopover
+      v-if="hoveredVarName"
+      :variable-name="hoveredVarName"
+      :anchor-rect="anchorRect"
+      :hierarchy-folders="resolvedHierarchyFolders"
+      @mouseenter="handlePopoverMouseEnter"
+      @mouseleave="handlePopoverMouseLeave"
+      @focusout="handlePopoverFocusOut"
+      @close="closePopoverImmediately"
+      @saved="handlePopoverSaved"
+    />
   </div>
 </template>
 
@@ -144,4 +492,5 @@ defineExpose({
   -webkit-text-fill-color: var(--color-text-primary) !important;
 }
 </style>
+
 

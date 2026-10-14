@@ -47,6 +47,23 @@ export function setupWailsMock() {
       }
     }
 
+    function normalizeName(name: string): string {
+      const trimmed = (name || '').trim();
+      return Array.from(trimmed).slice(0, 255).join('');
+    }
+
+    function deleteChildRequestDetails(node: any): void {
+      if (!node) return;
+      if (node.type === 'request') {
+        requestDetails.delete(node.id);
+      }
+      if (Array.isArray(node.children)) {
+        for (const child of node.children) {
+          deleteChildRequestDetails(child);
+        }
+      }
+    }
+
     window['go'] = {
       main: {
         App: {
@@ -77,7 +94,7 @@ export function setupWailsMock() {
             const id = 'folder_' + counter++;
             const folder = {
               id,
-              name: 'New Folder',
+              name: 'Thư mục mới',
               type: 'folder',
               parentId: parentId || null,
               children: []
@@ -86,22 +103,36 @@ export function setupWailsMock() {
             return { success: true, data: clone(folder) };
           },
           RenameRequest: async (id: string, name: string) => {
+            const normalized = normalizeName(name);
+            if (!normalized) {
+              return {
+                success: false,
+                error: { code: 'VALIDATION', message: 'Tên request không được để trống' }
+              };
+            }
             const node = findNode(tree, id);
-            if (node) node.name = name;
+            if (node) node.name = normalized;
             const details = requestDetails.get(id);
-            if (details) details.name = name;
-            return { success: true, data: clone(node || { id, name }) };
+            if (details) details.name = normalized;
+            return { success: true, data: clone(node || { id, name: normalized }) };
           },
           RenameFolder: async (id: string, name: string) => {
+            const normalized = normalizeName(name);
+            if (!normalized) {
+              return {
+                success: false,
+                error: { code: 'VALIDATION', message: 'Tên thư mục không được để trống' }
+              };
+            }
             const node = findNode(tree, id);
-            if (node) node.name = name;
-            return { success: true, data: clone(node || { id, name }) };
+            if (node) node.name = normalized;
+            return { success: true, data: clone(node || { id, name: normalized }) };
           },
           DuplicateRequest: async (id: string) => {
             const original = findNode(tree, id);
             const origDetails = requestDetails.get(id);
             const newId = 'req_' + counter++;
-            const name = (original?.name || 'Request') + ' (bản sao)';
+            const name = normalizeName((original?.name || 'Request') + ' (bản sao)');
             const copy = {
               ...(original || {}),
               id: newId,
@@ -121,6 +152,10 @@ export function setupWailsMock() {
             return { success: true, data: null };
           },
           DeleteFolder: async (id: string) => {
+            const folderNode = findNode(tree, id);
+            if (folderNode) {
+              deleteChildRequestDetails(folderNode);
+            }
             removeNode(tree, id);
             return { success: true, data: null };
           },

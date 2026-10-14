@@ -1373,4 +1373,73 @@ func TestUpdateFolder_NotFound(t *testing.T) {
 	}
 }
 
+func TestCollection_ActiveEnvID_PersistenceAndBackwardCompat(t *testing.T) {
+	svc, fs, collectionsRoot := setupCollectionService(t)
 
+	// 1. Legacy collection.json without active_env_id field
+	collID := "legacy-coll"
+	collDir := filepath.Join(collectionsRoot, collID)
+	_ = fs.MakeDir(collDir)
+	_ = fs.WriteJSON(filepath.Join(collDir, "collection.json"), map[string]interface{}{
+		"id":   collID,
+		"name": "Legacy Collection",
+	})
+
+	listRes := svc.ListCollections(collectionsRoot, collID)
+	if !listRes.Success {
+		t.Fatalf("ListCollections failed: %+v", listRes)
+	}
+	list := listRes.Data.([]model.Collection)
+	if len(list) != 1 || list[0].ActiveEnvID != "" {
+		t.Fatalf("expected ActiveEnvID '' for legacy collection, got %+v", list)
+	}
+
+	// 2. UpdateCollection sets ActiveEnvID and persists to disk
+	updRes := svc.UpdateCollection(collectionsRoot, model.Collection{
+		ID:          collID,
+		Name:        "Legacy Collection",
+		ActiveEnvID: "env-local",
+	})
+	if !updRes.Success {
+		t.Fatalf("UpdateCollection failed: %+v", updRes)
+	}
+	updated := updRes.Data.(model.Collection)
+	if updated.ActiveEnvID != "env-local" {
+		t.Errorf("expected ActiveEnvID 'env-local', got %q", updated.ActiveEnvID)
+	}
+
+	var diskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collDir, "collection.json"), &diskColl); err != nil {
+		t.Fatalf("ReadJSON failed: %v", err)
+	}
+	if diskColl.ActiveEnvID != "env-local" {
+		t.Errorf("expected disk ActiveEnvID 'env-local', got %q", diskColl.ActiveEnvID)
+	}
+
+	// 3. DuplicateCollection preserves ActiveEnvID
+	dupRes := svc.DuplicateCollection(collectionsRoot, collID)
+	if !dupRes.Success {
+		t.Fatalf("DuplicateCollection failed: %+v", dupRes)
+	}
+	dupColl := dupRes.Data.(model.Collection)
+	if dupColl.ActiveEnvID != "env-local" {
+		t.Errorf("expected duplicated collection ActiveEnvID 'env-local', got %q", dupColl.ActiveEnvID)
+	}
+
+	// 4. Clearing ActiveEnvID (setting to "") persists empty string
+	clearRes := svc.UpdateCollection(collectionsRoot, model.Collection{
+		ID:          collID,
+		Name:        "Legacy Collection",
+		ActiveEnvID: "",
+	})
+	if !clearRes.Success {
+		t.Fatalf("UpdateCollection clear failed: %+v", clearRes)
+	}
+	var clearedDiskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collDir, "collection.json"), &clearedDiskColl); err != nil {
+		t.Fatalf("ReadJSON failed: %v", err)
+	}
+	if clearedDiskColl.ActiveEnvID != "" {
+		t.Errorf("expected cleared ActiveEnvID '', got %q", clearedDiskColl.ActiveEnvID)
+	}
+}

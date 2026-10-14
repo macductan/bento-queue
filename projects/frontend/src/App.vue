@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ContentArea from '@/components/ContentArea.vue'
@@ -19,6 +19,35 @@ const uiStore = useUiStore()
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const envStore = useEnvironmentStore()
+
+const isDraggingSidebar = ref(false)
+
+const handleSidebarMouseMove = (e: MouseEvent) => {
+  if (!isDraggingSidebar.value) return
+  uiStore.setSidebarWidth(e.clientX, window.innerWidth)
+}
+
+const stopSidebarResize = () => {
+  if (isDraggingSidebar.value) {
+    isDraggingSidebar.value = false
+    document.body.style.userSelect = ''
+  }
+  window.removeEventListener('mousemove', handleSidebarMouseMove)
+  window.removeEventListener('mouseup', stopSidebarResize)
+}
+
+const startSidebarResize = (e: MouseEvent) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  isDraggingSidebar.value = true
+  document.body.style.userSelect = 'none'
+  window.addEventListener('mousemove', handleSidebarMouseMove)
+  window.addEventListener('mouseup', stopSidebarResize)
+}
+
+const handleWindowResize = () => {
+  uiStore.setSidebarWidth(uiStore.sidebarWidth, window.innerWidth)
+}
 
 const handleKeyDown = (e: KeyboardEvent) => {
   if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen) {
@@ -77,15 +106,24 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 }
 
-onMounted(() => {
-  collectionStore.loadCollections()
-  collectionStore.loadTree()
-  envStore.loadAll()
+onMounted(async () => {
+  if (window.innerWidth > 0) {
+    handleWindowResize()
+  }
   window.addEventListener('keydown', handleKeyDown)
+  window.addEventListener('resize', handleWindowResize)
+  await Promise.all([
+    collectionStore.loadCollections(),
+    collectionStore.loadTree(),
+    envStore.loadAll()
+  ])
+  envStore.syncActiveEnvFromCollection()
 })
 
 onUnmounted(() => {
+  stopSidebarResize()
   window.removeEventListener('keydown', handleKeyDown)
+  window.removeEventListener('resize', handleWindowResize)
 })
 </script>
 
@@ -94,6 +132,16 @@ onUnmounted(() => {
     <AppHeader />
     <div class="flex-1 flex min-h-0">
       <AppSidebar />
+      <div
+        data-test="sidebar-splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Điều chỉnh chiều rộng thanh bên"
+        class="w-1.5 shrink-0 cursor-col-resize select-none transition-colors hover:bg-brand-primary"
+        :class="isDraggingSidebar ? 'bg-brand-primary' : 'bg-transparent'"
+        @mousedown="startSidebarResize"
+        @dblclick="uiStore.resetSidebarWidth()"
+      />
       <ContentArea />
     </div>
     <ToastNotification />

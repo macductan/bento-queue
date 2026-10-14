@@ -61,7 +61,7 @@ const cancelEdit = () => {
 const saveEdit = async () => {
   if (!isEditing.value) return
   
-  const newName = editName.value.trim()
+  const newName = Array.from(editName.value.trim()).slice(0, 255).join('')
   if (!newName) {
     cancelEdit()
     return
@@ -217,11 +217,17 @@ const paddingLeft = computed(() => {
 
       <!-- Name -->
       <span v-if="!isEditing" class="truncate ui-sm min-w-0 flex items-center gap-2 flex-1" :class="{ 'italic text-text-tertiary': isUnnamed }">
-        {{ displayName }}
+        <span data-test="tree-row-name" class="truncate">{{ displayName }}</span>
         <span v-if="isFolder" class="shrink-0 text-[10px] leading-none bg-surface-overlay text-text-muted px-1 py-0.5 rounded border border-border-default font-mono opacity-50" title="Cấp độ thư mục">
           {{ depth }}
         </span>
-        <span v-if="isActive && requestStore.isDirty" class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu"></span>
+        <span
+          v-if="!isFolder && isActive && requestStore.current?.id === props.node.id && requestStore.isDirty"
+          data-test="tree-row-unsaved-dot"
+          aria-label="Chưa lưu"
+          class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"
+          title="Chưa lưu"
+        ></span>
       </span>
       <input
         v-else

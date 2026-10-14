@@ -71,8 +71,10 @@ test:backend:
     - mkdir -p frontend/dist && touch frontend/dist/.gitkeep
     - go test -v -coverprofile=coverage.out ./...
   artifacts:
+    when: always
     paths:
       - projects/coverage.out
+      - projects/test-results/
     expire_in: 30 days
 
 test:frontend:unit:
@@ -97,7 +99,7 @@ test:frontend:unit:
     - bun install --frozen-lockfile
     - bunx playwright install --with-deps chromium
   artifacts:
-    when: on_failure
+    when: always
     paths:
       - projects/frontend/test-results/
       - projects/frontend/playwright-report/
@@ -108,11 +110,23 @@ test:frontend:e2e:shard-1:
   <<: *frontend-e2e-template
   script:
     - bun run test:e2e -- --shard=1/2
+    - test -f test-results/nfr-performance-metrics.json
+    - cp test-results/nfr-performance-metrics.json test-results/nfr-performance-metrics-shard-1.json
+    - cp test-results/nfr-performance-summary.md test-results/nfr-performance-summary-shard-1.md
+  after_script:
+    - if [ -f projects/frontend/test-results/nfr-performance-metrics.json ]; then cp projects/frontend/test-results/nfr-performance-metrics.json projects/frontend/test-results/nfr-performance-metrics-shard-1.json; fi
+    - if [ -f projects/frontend/test-results/nfr-performance-summary.md ]; then cp projects/frontend/test-results/nfr-performance-summary.md projects/frontend/test-results/nfr-performance-summary-shard-1.md; fi
 
 test:frontend:e2e:shard-2:
   <<: *frontend-e2e-template
   script:
     - bun run test:e2e -- --shard=2/2
+    - test -f test-results/nfr-performance-metrics.json
+    - cp test-results/nfr-performance-metrics.json test-results/nfr-performance-metrics-shard-2.json
+    - cp test-results/nfr-performance-summary.md test-results/nfr-performance-summary-shard-2.md
+  after_script:
+    - if [ -f projects/frontend/test-results/nfr-performance-metrics.json ]; then cp projects/frontend/test-results/nfr-performance-metrics.json projects/frontend/test-results/nfr-performance-metrics-shard-2.json; fi
+    - if [ -f projects/frontend/test-results/nfr-performance-summary.md ]; then cp projects/frontend/test-results/nfr-performance-summary.md projects/frontend/test-results/nfr-performance-summary-shard-2.md; fi
 
 # Burn-in stage
 burn-in:frontend:
@@ -135,7 +149,7 @@ burn-in:frontend:
     - echo "🔥 Starting burn-in loop using @seontechnologies/playwright-utils"
     - bun run scripts/burn-in-changed.ts
   artifacts:
-    when: on_failure
+    when: always
     paths:
       - projects/frontend/test-results/
       - projects/frontend/playwright-report/
@@ -152,5 +166,14 @@ report:
     - test:frontend:e2e:shard-2
   when: always
   script:
-    - echo "## Test Execution Summary"
+    - echo "## Test Execution & NFR Performance Summary"
+    - if [ -f projects/test-results/backend-nfr-metrics.json ]; then echo "### Backend NFR Metrics"; cat projects/test-results/backend-nfr-metrics.json; fi
+    - if [ -f projects/frontend/test-results/nfr-performance-summary-shard-1.md ]; then echo "### Frontend E2E Shard 1 NFR Summary"; cat projects/frontend/test-results/nfr-performance-summary-shard-1.md; fi
+    - if [ -f projects/frontend/test-results/nfr-performance-summary-shard-2.md ]; then echo "### Frontend E2E Shard 2 NFR Summary"; cat projects/frontend/test-results/nfr-performance-summary-shard-2.md; fi
     - echo "View detailed results in job artifacts"
+  artifacts:
+    when: always
+    paths:
+      - projects/test-results/
+      - projects/frontend/test-results/
+    expire_in: 30 days

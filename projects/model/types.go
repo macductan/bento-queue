@@ -136,6 +136,7 @@ type Collection struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Variables   []KVPair  `json:"variables,omitempty"`
+	ActiveEnvID string    `json:"active_env_id,omitempty"`
 	IsDefault   bool      `json:"is_default,omitempty"`
 	IsActive    bool      `json:"is_active,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`

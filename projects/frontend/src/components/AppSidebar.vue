@@ -16,7 +16,11 @@ const handleRootContextMenu = (e: MouseEvent) => {
 </script>
 
 <template>
-  <nav class="w-sidebar-width min-w-sidebar-width bg-surface-raised border-r border-border-default flex flex-col overflow-hidden" aria-label="Bộ sưu tập">
+  <nav
+    class="shrink-0 bg-surface-raised border-r border-border-default flex flex-col overflow-hidden"
+    :style="{ width: `${uiStore.sidebarWidth}px`, minWidth: `${uiStore.sidebarWidth}px` }"
+    aria-label="Bộ sưu tập"
+  >
     <div class="px-3 py-2 border-b border-border-default shrink-0 flex items-center justify-between gap-1">
       <CollectionSwitcher />
       <div class="flex items-center gap-1 shrink-0">

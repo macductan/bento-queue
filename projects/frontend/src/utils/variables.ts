@@ -2,6 +2,7 @@ export interface VariableSegment {
   type: 'text' | 'resolved' | 'missing';
   value: string;
   original?: string;
+  key?: string;
 }
 
 const VARIABLE_PATTERN_STR = '\\{\\{([^}]+)\\}\\}';
@@ -39,12 +40,14 @@ export function parseVariables(input: string, vars: Map<string, string>): Variab
       segments.push({
         type: 'resolved',
         value: vars.get(trimmedKey)!,
-        original: match[0]
+        original: match[0],
+        key: trimmedKey
       });
     } else {
       segments.push({
         type: 'missing',
-        value: match[0]
+        value: match[0],
+        key: trimmedKey
       });
     }
 

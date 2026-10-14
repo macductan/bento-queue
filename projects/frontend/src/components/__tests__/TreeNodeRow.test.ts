@@ -118,4 +118,99 @@ describe('TreeNodeRow.vue', () => {
     expect(row.attributes('data-active')).toBe('true')
     expect(row.classes()).toContain('border-brand-primary')
   })
+
+  it('displays tree-row-unsaved-dot with aria-label when active request is dirty', async () => {
+    const store = useCollectionStore()
+    const { useRequestStore } = await import('@/stores/requestStore')
+    const reqStore = useRequestStore()
+
+    const requestNode: TreeNode = {
+      id: 'req-dirty',
+      name: 'Dirty Request',
+      type: 'request',
+      method: 'GET',
+      path: '/req-dirty',
+      created_at: '2026-10-14'
+    }
+
+    store.activeRequestId = 'req-dirty'
+    reqStore.original = {
+      id: 'req-dirty',
+      name: 'Dirty Request',
+      method: 'GET',
+      url: 'https://api.example.com/v1',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      created_at: '',
+      updated_at: ''
+    }
+    reqStore.current = {
+      ...reqStore.original,
+      url: 'https://api.example.com/v2'
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: {
+        node: requestNode,
+        depth: 0
+      }
+    })
+
+    const dot = wrapper.find('[data-test="tree-row-unsaved-dot"]')
+    expect(dot.exists()).toBe(true)
+    expect(dot.classes()).toContain('bg-unsaved-dot')
+    expect(dot.attributes('aria-label')).toBe('Chưa lưu')
+  })
+
+  it('truncates >255-character input in saveEdit before calling store.renameRequest and store.renameFolder', async () => {
+    const store = useCollectionStore()
+    const renameReqSpy = vi.spyOn(store, 'renameRequest').mockResolvedValue()
+    const renameFolderSpy = vi.spyOn(store, 'renameFolder').mockResolvedValue()
+
+    const long300 = 'R'.repeat(300)
+    const expected255 = 'R'.repeat(255)
+
+    const requestNode: TreeNode = {
+      id: 'req-long',
+      name: 'Short',
+      type: 'request',
+      method: 'GET',
+      path: '/req-long',
+      created_at: '2026-10-14'
+    }
+
+    const reqWrapper = mount(TreeNodeRow, {
+      props: { node: requestNode, depth: 0 }
+    })
+
+    await reqWrapper.find('[data-tree-row="true"]').trigger('dblclick')
+    const reqInput = reqWrapper.find('input[type="text"]')
+    expect(reqInput.exists()).toBe(true)
+    await reqInput.setValue(`   ${long300}   `)
+    await reqInput.trigger('keydown.enter')
+
+    expect(renameReqSpy).toHaveBeenCalledWith('req-long', expected255)
+
+    const folderNode: TreeNode = {
+      id: 'folder-long',
+      name: 'Short Folder',
+      type: 'folder',
+      path: '/folder-long',
+      children: [],
+      created_at: '2026-10-14'
+    }
+
+    const folderWrapper = mount(TreeNodeRow, {
+      props: { node: folderNode, depth: 0 }
+    })
+
+    await folderWrapper.find('[data-tree-row="true"]').trigger('dblclick')
+    const folderInput = folderWrapper.find('input[type="text"]')
+    expect(folderInput.exists()).toBe(true)
+    await folderInput.setValue(long300)
+    await folderInput.trigger('keydown.enter')
+
+    expect(renameFolderSpy).toHaveBeenCalledWith('folder-long', expected255)
+  })
 })

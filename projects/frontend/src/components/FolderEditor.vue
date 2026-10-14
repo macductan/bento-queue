@@ -17,7 +17,15 @@ const saving = ref(false)
 const folder = ref<any>(null)
 const variables = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const folder_envs = ref<Record<string, { key: string, value: string, enabled: boolean }[]>>({})
-const selectedEnvScope = ref<string>('__folder_global__')
+const resolveDefaultEnvScope = (): string => {
+  const activeId = envStore.activeEnvId
+  if (activeId && envStore.environments.some(e => e.id === activeId)) {
+    return activeId
+  }
+  return '__folder_global__'
+}
+
+const selectedEnvScope = ref<string>(resolveDefaultEnvScope())
 const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
 const activeTab = ref<'headers' | 'variables' | 'auth'>('headers')
@@ -27,6 +35,26 @@ watch(selectedEnvScope, (scope) => {
     folder_envs.value[scope] = []
   }
 })
+
+watch(() => envStore.activeEnvId, () => {
+  selectedEnvScope.value = resolveDefaultEnvScope()
+})
+
+watch(
+  () => envStore.environments.map(e => e.id).join(','),
+  () => {
+    const envs = envStore.environments
+    if (selectedEnvScope.value !== '__folder_global__' && !envs.some(e => e.id === selectedEnvScope.value)) {
+      selectedEnvScope.value = resolveDefaultEnvScope()
+    } else if (
+      selectedEnvScope.value === '__folder_global__' &&
+      envStore.activeEnvId &&
+      envs.some(e => e.id === envStore.activeEnvId)
+    ) {
+      selectedEnvScope.value = resolveDefaultEnvScope()
+    }
+  }
+)
 
 const currentScopeVariables = computed<{ key: string, value: string, enabled: boolean }[]>({
   get() {
@@ -56,16 +84,30 @@ const parentNodes = computed(() => {
   return fullPath.slice(0, -1)
 })
 
+const folderHierarchyNodes = computed(() => {
+  if (!folder.value) return []
+  return [
+    ...parentNodes.value,
+    {
+      id: folder.value.id,
+      name: folderName.value || folder.value.name,
+      variables: variables.value,
+      folder_envs: folder_envs.value
+    }
+  ]
+})
+
 const effectiveVariables = computed(() => {
   return resolveHierarchyVariables({
     collectionVariables: collectionStore.activeCollection?.variables,
     activeEnvVariables: envStore.variablesMap,
-    pathFolders: parentNodes.value,
+    pathFolders: folderHierarchyNodes.value,
     activeEnvId: envStore.activeEnvId
   })
 })
 
 provide('effectiveVariables', effectiveVariables)
+provide('variableHierarchyFolders', folderHierarchyNodes)
 
 const headersCount = computed(() => {
   return headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '').length
@@ -170,6 +212,11 @@ const loadFolderData = async () => {
       folder.value = result.data
       variables.value = result.data.variables || []
       folder_envs.value = result.data.folder_envs || {}
+      const defaultScope = resolveDefaultEnvScope()
+      if (defaultScope !== '__folder_global__' && !folder_envs.value[defaultScope]) {
+        folder_envs.value[defaultScope] = []
+      }
+      selectedEnvScope.value = defaultScope
       headers.value = result.data.headers || []
       auth.value = result.data.auth || { type: 'inherit' }
       initialData.value = getCleanSnapshot()
@@ -287,11 +334,47 @@ watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
   await loadFolderData()
 })
 
+const syncExternalFolderVariables = (updatedData: any) => {
+  if (!folder.value || loading.value || saving.value || isDirty.value || !updatedData || updatedData.id !== folder.value.id) return
+  const nextVars = Array.isArray(updatedData.variables)
+    ? updatedData.variables.map((v: any) => ({ ...v }))
+    : []
+  const nextFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+  if (updatedData.folder_envs && typeof updatedData.folder_envs === 'object') {
+    for (const [envId, list] of Object.entries(updatedData.folder_envs)) {
+      if (Array.isArray(list)) {
+        nextFolderEnvs[envId] = list.map((v: any) => ({ ...v }))
+      }
+    }
+  }
+  if (selectedEnvScope.value !== '__folder_global__' && !nextFolderEnvs[selectedEnvScope.value]) {
+    nextFolderEnvs[selectedEnvScope.value] = []
+  }
+  folder.value = {
+    ...folder.value,
+    variables: nextVars,
+    folder_envs: nextFolderEnvs
+  }
+  variables.value = nextVars
+  folder_envs.value = nextFolderEnvs
+  cancelAutoSave()
+  initialData.value = getCleanSnapshot()
+  saveStatus.value = 'saved'
+}
+
+const handleExternalFolderUpdated = (e: Event) => {
+  const ce = e as CustomEvent
+  if (ce?.detail) {
+    syncExternalFolderVariables(ce.detail)
+  }
+}
+
 onMounted(() => {
   loadFolderData()
   window.addEventListener('keydown', handleKeydown)
   if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('hecto:folder-updated', handleExternalFolderUpdated)
   }
 })
 
@@ -299,6 +382,7 @@ onBeforeUnmount(async () => {
   window.removeEventListener('keydown', handleKeydown)
   if (typeof window !== 'undefined') {
     window.removeEventListener('beforeunload', handleBeforeUnload)
+    window.removeEventListener('hecto:folder-updated', handleExternalFolderUpdated)
   }
   cancelAutoSave()
   const stillExists = folder.value && collectionStore.findNode(collectionStore.tree, folder.value.id)

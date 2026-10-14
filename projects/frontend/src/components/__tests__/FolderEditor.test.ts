@@ -341,5 +341,174 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     expect(vm.selectedEnvScope).toBe('env-dev')
     expect(vm.currentScopeVariables[0].key).toBe('auth_url')
   })
+
+  it('auto-detects selectedEnvScope from envStore.activeEnvId on folder open and folder switch without dirtying state', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Prod', variables: [] } as any
+    ]
+    envStore.activeEnvId = 'env-local'
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [
+      { ...mockTreeNode },
+      { ...mockTreeNode, id: 'folder-2', name: 'Folder 2' }
+    ]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('env-local')
+    expect(vm.folder_envs['env-local']).toEqual([])
+    expect(vm.isDirty).toBe(false)
+    expect(vm.saveStatus).toBe('saved')
+
+    // User manually switches dropdown to Folder Global Env
+    const select = wrapper.find('select#folder-env-scope-select')
+    await select.setValue('__folder_global__')
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+
+    // User switches to folder-2 -> auto-detects 'env-local' again
+    colStore.activeFolderId = 'folder-2'
+    await flushPromises()
+    expect(vm.selectedEnvScope).toBe('env-local')
+    expect(vm.isDirty).toBe(false)
+  })
+
+  it('updates selectedEnvScope reactively when envStore.activeEnvId changes on Header while preserving folder edits', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Prod', variables: [] } as any
+    ]
+    envStore.activeEnvId = 'env-local'
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('env-local')
+
+    // Edit variable in env-local scope
+    vm.currentScopeVariables = [{ key: 'local_key', value: 'local_val', enabled: true }]
+    await nextTick()
+    expect(vm.isDirty).toBe(true)
+
+    // Header changes activeEnvId to 'env-prod'
+    envStore.activeEnvId = 'env-prod'
+    await nextTick()
+    expect(vm.selectedEnvScope).toBe('env-prod')
+    expect(vm.folder_envs['env-local']).toEqual([{ key: 'local_key', value: 'local_val', enabled: true }])
+    expect(vm.isDirty).toBe(true)
+
+    // Header changes activeEnvId to null ("Không dùng env")
+    envStore.activeEnvId = null
+    await nextTick()
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+    expect(vm.isDirty).toBe(true)
+  })
+
+  it('falls back to __folder_global__ when activeEnvId is not in environments or when a manually selected env is deleted from environments', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Prod', variables: [] } as any
+    ]
+    // activeEnvId points to a non-existent environment
+    envStore.activeEnvId = 'env-missing'
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+
+    // User manually selects 'env-prod'
+    const select = wrapper.find('select#folder-env-scope-select')
+    await select.setValue('env-prod')
+    expect(vm.selectedEnvScope).toBe('env-prod')
+
+    // 'env-prod' is deleted from envStore.environments while activeEnvId is 'env-local'
+    envStore.activeEnvId = null
+    await nextTick()
+    await select.setValue('env-prod')
+    expect(vm.selectedEnvScope).toBe('env-prod')
+
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any
+    ]
+    await nextTick()
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+  })
+
+  it('includes current folder in folderHierarchyNodes and effectiveVariables while keeping parentNodes for AuthEditor, and guards syncExternalFolderVariables when dirty', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [
+      {
+        id: 'parent-folder',
+        name: 'Parent Folder',
+        type: 'folder',
+        path: 'Parent Folder',
+        created_at: '2026-10-13',
+        variables: [{ key: 'parent_var', value: 'p1', enabled: true }],
+        children: [
+          { ...mockTreeNode, path: 'Parent Folder/Auth Module' }
+        ]
+      }
+    ]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.parentNodes.map((n: any) => n.id)).toEqual(['parent-folder'])
+    expect(vm.folderHierarchyNodes.map((n: any) => n.id)).toEqual(['parent-folder', 'folder-1'])
+    expect(vm.effectiveVariables.get('parent_var')).toBe('p1')
+    expect(vm.effectiveVariables.get('base_url')).toBe('https://api.com')
+
+    // External update when clean should sync
+    window.dispatchEvent(new CustomEvent('hecto:folder-updated', {
+      detail: {
+        id: 'folder-1',
+        variables: [{ key: 'base_url', value: 'https://synced.api.com', enabled: true }],
+        folder_envs: {}
+      }
+    }))
+    await nextTick()
+    expect(vm.variables[0].value).toBe('https://synced.api.com')
+    expect(vm.isDirty).toBe(false)
+
+    // External update when dirty should NOT overwrite unsaved edits
+    vm.headers.push({ key: 'X-Unsaved', value: '1', enabled: true })
+    await nextTick()
+    expect(vm.isDirty).toBe(true)
+
+    window.dispatchEvent(new CustomEvent('hecto:folder-updated', {
+      detail: {
+        id: 'folder-1',
+        variables: [{ key: 'base_url', value: 'https://overwrite-attempt.api.com', enabled: true }],
+        folder_envs: {}
+      }
+    }))
+    await nextTick()
+    expect(vm.variables[0].value).toBe('https://synced.api.com')
+  })
 })
+
+
 
