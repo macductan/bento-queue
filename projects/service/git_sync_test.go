@@ -194,3 +194,203 @@ func TestGitSyncService_PullDetectsMergeConflictAndBlocksPush(t *testing.T) {
 		t.Fatalf("expected Push to be blocked with GIT_CONFLICT while conflicts exist, got: %+v", pushWhileConflict)
 	}
 }
+
+func TestGitSyncService_ClearAndPull(t *testing.T) {
+	gitSvc, _, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+
+	// Peer initializes remote repo with remote-only.json
+	peerDir := filepath.Join(filepath.Dir(collectionsRoot), "peer-init")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, peerDir)
+	runTestGit(t, peerDir, "config", "user.name", "Peer Dev")
+	runTestGit(t, peerDir, "config", "user.email", "peer@hecto.local")
+	if err := os.WriteFile(filepath.Join(peerDir, "collection.json"), []byte(`{"id":"`+collID+`","name":"Remote Coll"}`), 0644); err != nil {
+		t.Fatalf("write peer collection.json failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, "remote-only.json"), []byte(`{"id":"r1","name":"Remote Req"}`), 0644); err != nil {
+		t.Fatalf("write remote-only.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "initial remote commit")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	// Local collection has an untracked local file that should be wiped by ClearAndPull
+	collDir := filepath.Join(collectionsRoot, collID)
+	localUntracked := filepath.Join(collDir, "local-dirty.json")
+	if err := os.WriteFile(localUntracked, []byte(`{"id":"l1"}`), 0644); err != nil {
+		t.Fatalf("write local-dirty.json failed: %v", err)
+	}
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	clearRes := gitSvc.ClearAndPull(collectionsRoot, collID)
+	if !clearRes.Success {
+		t.Fatalf("ClearAndPull failed: %+v", clearRes.Error)
+	}
+
+	if _, err := os.Stat(localUntracked); !os.IsNotExist(err) {
+		t.Errorf("expected local-dirty.json to be removed by ClearAndPull, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(collDir, "remote-only.json")); err != nil {
+		t.Errorf("expected remote-only.json to exist after ClearAndPull, got err: %v", err)
+	}
+
+	// Switch to a brand new empty remote and verify ClearAndPull removes previously committed files
+	emptyBareDir := filepath.Join(filepath.Dir(collectionsRoot), "empty-remote.git")
+	if err := os.MkdirAll(emptyBareDir, 0755); err != nil {
+		t.Fatalf("failed to create emptyBareDir: %v", err)
+	}
+	runTestGit(t, emptyBareDir, "init", "--bare")
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, emptyBareDir); !res.Success {
+		t.Fatalf("SaveRemoteURL to empty remote failed: %+v", res.Error)
+	}
+	clearEmptyRes := gitSvc.ClearAndPull(collectionsRoot, collID)
+	if !clearEmptyRes.Success {
+		t.Fatalf("ClearAndPull against empty remote failed: %+v", clearEmptyRes.Error)
+	}
+	if _, err := os.Stat(filepath.Join(collDir, "remote-only.json")); !os.IsNotExist(err) {
+		t.Errorf("expected remote-only.json to be cleared when switching to empty remote, stat err: %v", err)
+	}
+}
+
+func TestGitSyncService_StashAndPull_SuccessAndConflict(t *testing.T) {
+	gitSvc, collSvc, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+
+	// Peer initializes remote repo with shared.json
+	peerDir := filepath.Join(filepath.Dir(collectionsRoot), "peer-stash")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, peerDir)
+	runTestGit(t, peerDir, "config", "user.name", "Peer Dev")
+	runTestGit(t, peerDir, "config", "user.email", "peer@hecto.local")
+	if err := os.WriteFile(filepath.Join(peerDir, "shared.json"), []byte("{\n  \"id\": \"s1\",\n  \"url\": \"https://remote.example.com\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write peer shared.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "add shared.json")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	collDir := filepath.Join(collectionsRoot, collID)
+	localExtra := filepath.Join(collDir, "local-extra.json")
+	if err := os.WriteFile(localExtra, []byte(`{"id":"local-1"}`), 0644); err != nil {
+		t.Fatalf("write local-extra.json failed: %v", err)
+	}
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	// Non-conflicting StashAndPull preserves local-extra.json and brings shared.json
+	stashRes := gitSvc.StashAndPull(collectionsRoot, collID)
+	if !stashRes.Success {
+		t.Fatalf("StashAndPull failed: %+v", stashRes.Error)
+	}
+	if _, err := os.Stat(localExtra); err != nil {
+		t.Errorf("expected local-extra.json to be preserved after StashAndPull: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(collDir, "shared.json")); err != nil {
+		t.Errorf("expected shared.json to exist after StashAndPull: %v", err)
+	}
+
+	// Now create a conflict on shared.json: peer updates shared.json and pushes, local also modifies shared.json uncommitted
+	if err := os.WriteFile(filepath.Join(peerDir, "shared.json"), []byte("{\n  \"id\": \"s1\",\n  \"url\": \"https://remote-v2.example.com\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write peer shared.json v2 failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "update shared.json v2")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	if err := os.WriteFile(filepath.Join(collDir, "shared.json"), []byte("{\n  \"id\": \"s1\",\n  \"url\": \"https://local-conflict.example.com\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write local shared.json conflict failed: %v", err)
+	}
+
+	conflictRes := gitSvc.StashAndPull(collectionsRoot, collID)
+	if conflictRes.Success {
+		t.Fatalf("expected StashAndPull to fail with ErrGitConflict on conflicting stash pop")
+	}
+	if conflictRes.Error == nil || conflictRes.Error.Code != model.ErrGitConflict {
+		t.Fatalf("expected ErrGitConflict, got %+v", conflictRes.Error)
+	}
+
+	// Also verify untracked-file stash pop collision ("already exists, no checkout") on a fresh collection with no prior commits
+	freshCreate := collSvc.CreateCollection(collectionsRoot, "Fresh-Uncommitted")
+	if !freshCreate.Success {
+		t.Fatalf("CreateCollection Fresh-Uncommitted failed: %+v", freshCreate.Error)
+	}
+	freshColl := freshCreate.Data.(model.Collection)
+	freshDir := filepath.Join(collectionsRoot, freshColl.ID)
+	if err := os.WriteFile(filepath.Join(freshDir, "shared.json"), []byte("{\n  \"id\": \"s1\",\n  \"url\": \"https://untracked-collision.example.com\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write untracked shared.json failed: %v", err)
+	}
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, freshColl.ID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL for freshColl failed: %+v", res.Error)
+	}
+	untrackedConflictRes := gitSvc.StashAndPull(collectionsRoot, freshColl.ID)
+	if untrackedConflictRes.Success {
+		t.Fatalf("expected StashAndPull on untracked colliding shared.json to fail with ErrGitConflict")
+	}
+	if untrackedConflictRes.Error == nil || untrackedConflictRes.Error.Code != model.ErrGitConflict {
+		t.Fatalf("expected ErrGitConflict for untracked collision, got %+v", untrackedConflictRes.Error)
+	}
+	if !strings.Contains(untrackedConflictRes.Error.Message, "shared.json") {
+		t.Errorf("expected conflict error message to list shared.json, got: %s", untrackedConflictRes.Error.Message)
+	}
+}
+
+func TestGitSyncService_ListLocalBranchesAndPushToBranch(t *testing.T) {
+	gitSvc, _, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	// First push to create initial commit & default branch
+	if res := gitSvc.Push(collectionsRoot, collID); !res.Success {
+		t.Fatalf("initial Push failed: %+v", res.Error)
+	}
+
+	collDir := filepath.Join(collectionsRoot, collID)
+	runTestGit(t, collDir, "branch", "feature-branch")
+
+	branchesRes := gitSvc.ListLocalBranches(collectionsRoot, collID)
+	if !branchesRes.Success {
+		t.Fatalf("ListLocalBranches failed: %+v", branchesRes.Error)
+	}
+	branches := branchesRes.Data.([]string)
+	foundFeature := false
+	for _, b := range branches {
+		if b == "feature-branch" {
+			foundFeature = true
+			break
+		}
+	}
+	if !foundFeature {
+		t.Fatalf("expected feature-branch in ListLocalBranches, got %v", branches)
+	}
+
+	// Without checking out feature-branch (keeping HEAD on default branch, matching GitSyncModal dropdown behavior),
+	// add feat.json and push to non-current local branch feature-branch
+	if err := os.WriteFile(filepath.Join(collDir, "feat.json"), []byte(`{"id":"f1"}`), 0644); err != nil {
+		t.Fatalf("write feat.json failed: %v", err)
+	}
+
+	pushBranchRes := gitSvc.Push(collectionsRoot, collID, "feature-branch")
+	if !pushBranchRes.Success {
+		t.Fatalf("Push to feature-branch failed: %+v", pushBranchRes.Error)
+	}
+
+	// Verify feature-branch exists on bare remote AND contains the newly committed feat.json
+	remoteBranches := runTestGit(t, bareRepoDir, "branch", "--list", "--format=%(refname:short)")
+	if !strings.Contains(remoteBranches, "feature-branch") {
+		t.Fatalf("expected feature-branch on remote bare repo, got: %s", remoteBranches)
+	}
+	remoteFiles := runTestGit(t, bareRepoDir, "ls-tree", "--name-only", "feature-branch")
+	if !strings.Contains(remoteFiles, "feat.json") {
+		t.Fatalf("expected feat.json to be pushed to remote feature-branch, got tree: %s", remoteFiles)
+	}
+}
+
+

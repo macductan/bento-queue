@@ -4,6 +4,7 @@ import { resolveVariables } from './variables';
 import { mergeHeaders } from './headers';
 import { resolveEffectiveAuth, getAuthArtifacts, type ResolveEffectiveAuthOptions } from './auth';
 import { parseUrl, encodeQueryComponent, splitPreservingVars } from './urlParams';
+import { stripJsoncToJson } from './jsonEditor';
 
 export interface ExecuteRequest {
   method: string;
@@ -144,7 +145,9 @@ export function buildExecuteRequest(
   // Body
   let bodyContent = '';
   const bodyType = req.body?.type || 'none';
-  if (bodyType === 'json' || bodyType === 'text' || bodyType === 'xml') {
+  if (bodyType === 'json') {
+    bodyContent = stripJsoncToJson(resolveVariables(stripJsoncToJson(req.body?.content || ''), vars));
+  } else if (bodyType === 'text' || bodyType === 'xml') {
     bodyContent = resolveVariables(req.body?.content || '', vars);
   } else if (bodyType === 'urlencoded') {
     if (Array.isArray(req.body?.urlencoded) && req.body.urlencoded.length > 0) {

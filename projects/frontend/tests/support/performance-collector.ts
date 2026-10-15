@@ -24,7 +24,7 @@ export interface StartupTimingResult {
 export async function measureColdStart(page: Page, url: string = '/'): Promise<StartupTimingResult> {
   const navStartWall = performance.now()
   await page.goto(url, { waitUntil: 'domcontentloaded' })
-  await page.getByLabel('Request mới').waitFor({ state: 'visible' })
+  await page.getByLabel('Thêm mới').waitFor({ state: 'visible' })
   const wallElapsedMs = normalizeIntegerMs(performance.now() - navStartWall)
 
   const navTimings = await page.evaluate(() => {

@@ -487,5 +487,54 @@ describe('RequestEditor.vue - Save State Indicator', () => {
     expect(outputBox.text()).toContain('[Pre-request] hello script')
     expect(outputBox.text()).toContain('Post-response script error: unexpected token')
   })
+
+  it('normalizes smart quotes/fullwidth brackets on input, displays inline amber error indicator, and supports JSONC badge + format + strip on send (Bugs 6, 7 & Enh 8)', async () => {
+    const BodyEditor = (await import('../BodyEditor.vue')).default
+    const { buildExecuteRequest } = await import('@/utils/buildExecuteRequest')
+    const requestStore = useRequestStore()
+
+    requestStore.current = createMockRequest({
+      method: 'POST',
+      url: 'https://api.example.com/items',
+      body: { type: 'json', content: '' }
+    })
+
+    const wrapper = mount(BodyEditor)
+    const textarea = wrapper.find('textarea')
+    expect(textarea.exists()).toBe(true)
+    expect(textarea.attributes('autocorrect')).toBe('off')
+    expect(textarea.attributes('autocapitalize')).toBe('off')
+
+    // Simulate OS smart quotes / fullwidth braces input
+    const el = textarea.element as HTMLTextAreaElement
+    el.value = '｛\u201Cname\u201D: \u201CHecto\u201D｝'
+    el.setSelectionRange(el.value.length, el.value.length)
+    await textarea.trigger('input')
+    expect(el.value).toBe('{"name": "Hecto"}')
+    expect(requestStore.current.body.content).toBe('{"name": "Hecto"}')
+
+    // Verify JSONC badge and formatting preserves comments & trailing commas
+    await textarea.setValue('{\n// user comment\n"name": "Hecto",\n}')
+    const badge = wrapper.find('[data-test="json-valid-badge"]')
+    expect(badge.text()).toContain('✓ JSONC')
+
+    await wrapper.find('[data-test="prettify-json-btn"]').trigger('click')
+    expect(requestStore.current.body.content).toContain('// user comment')
+    expect(requestStore.current.body.content).toContain('"name": "Hecto",')
+
+    // Verify buildExecuteRequest strips JSONC comments and trailing commas before sending
+    const payload = buildExecuteRequest(requestStore.current, new Map<string, string>())
+    expect(JSON.parse(payload.body)).toEqual({ name: 'Hecto' })
+    expect(payload.body).not.toContain('// user comment')
+
+    // Verify invalid JSON shows inline amber error span (not red box) and amber border
+    await textarea.setValue('{"broken": }')
+    const errSpan = wrapper.find('[data-test="json-error-banner"]')
+    expect(errSpan.exists()).toBe(true)
+    expect(errSpan.element.tagName.toLowerCase()).toBe('span')
+    expect(errSpan.classes()).toContain('text-amber-400/70')
+    expect(wrapper.html()).toContain('border-amber-500/40')
+  })
 })
+
 

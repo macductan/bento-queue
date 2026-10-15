@@ -9,6 +9,7 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
   });
 
   async function createTestRequest(page: Page, requestName: string) {
+    await page.getByLabel('Thêm mới').click();
     await page.getByLabel('Request mới').click();
     const activeRequestNode = page.locator('[data-tree-row][data-active="true"]').first();
     await expect(activeRequestNode).toBeVisible();
@@ -43,6 +44,7 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
     const requestName = `Request ${timeId}`;
 
     log.step('Create a new request');
+    await page.getByLabel('Thêm mới').click();
     await page.getByLabel('Request mới').click();
     
     const activeRequestNode = page.locator('[data-tree-row][data-active="true"]').first();
@@ -138,6 +140,7 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
   });
 
   async function createTestFolder(page: Page, folderName: string) {
+    await page.getByLabel('Thêm mới').click();
     await page.getByLabel('Thư mục mới').click();
     const defaultFolderNode = page.locator('[data-tree-row]').filter({ hasText: 'Thư mục mới' }).last();
     await expect(defaultFolderNode).toBeVisible();
@@ -441,7 +444,7 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
     await page.evaluate(() => localStorage.setItem('hecto_auto_save_enabled', 'false'));
     try {
       await page.reload();
-      await expect(page.getByLabel('Request mới')).toBeVisible();
+      await expect(page.getByLabel('Thêm mới')).toBeVisible();
 
       const timeId = Date.now().toString();
       const cleanSiblingName = `Clean Sibling ${timeId}`;

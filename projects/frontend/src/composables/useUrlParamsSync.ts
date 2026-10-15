@@ -13,7 +13,10 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
   let lastSyncedParams: KVPair[] = []
   let currentRequestId = ''
 
+  let currentRequestRef: Request | null = null
+
   function syncInitialState() {
+    currentRequestRef = req.value
     if (!req.value) {
       currentRequestId = ''
       lastSyncedUrl = ''
@@ -53,11 +56,11 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
   // Initial synchronization on mount
   syncInitialState()
 
-  // Watch for request id switch to reset and re-synchronize state cleanly
+  // Watch for request reference or id switch to reset and re-synchronize state cleanly
   watch(
-    () => req.value?.id,
-    (newId) => {
-      if (newId !== currentRequestId) {
+    () => req.value,
+    (newReq) => {
+      if (newReq !== currentRequestRef || (newReq?.id || '') !== currentRequestId) {
         syncInitialState()
       }
     }

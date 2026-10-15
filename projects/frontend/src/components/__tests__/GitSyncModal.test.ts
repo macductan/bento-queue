@@ -9,6 +9,10 @@ const saveRemoteMock = vi.fn()
 const getStatusMock = vi.fn()
 const gitPullMock = vi.fn()
 const gitPushMock = vi.fn()
+const gitPushToBranchMock = vi.fn()
+const gitClearAndPullMock = vi.fn()
+const gitStashAndPullMock = vi.fn()
+const gitListLocalBranchesMock = vi.fn()
 const listCollectionsMock = vi.fn()
 const getTreeMock = vi.fn()
 
@@ -17,6 +21,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetCollectionGitStatus: (...args: any[]) => getStatusMock(...args),
   GitPullCollection: (...args: any[]) => gitPullMock(...args),
   GitPushCollection: (...args: any[]) => gitPushMock(...args),
+  GitPushCollectionToBranch: (...args: any[]) => gitPushToBranchMock(...args),
+  GitClearAndPullCollection: (...args: any[]) => gitClearAndPullMock(...args),
+  GitStashAndPullCollection: (...args: any[]) => gitStashAndPullMock(...args),
+  GitListLocalBranches: (...args: any[]) => gitListLocalBranchesMock(...args),
   ListCollections: (...args: any[]) => listCollectionsMock(...args),
   GetCollectionTree: (...args: any[]) => getTreeMock(...args),
   CreateRequest: vi.fn(),
@@ -56,6 +64,10 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
         has_conflicts: false
       }
     })
+    gitListLocalBranchesMock.mockResolvedValue({
+      success: true,
+      data: ['main', 'develop', 'feature/auth']
+    })
     listCollectionsMock.mockResolvedValue({
       success: true,
       data: [
@@ -73,7 +85,7 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     })
   })
 
-  it('saves Git remote URL for Test-Collection via GitSyncModal', async () => {
+  it('saves unchanged Git remote URL directly without confirmation dialog', async () => {
     const collectionStore = useCollectionStore()
     const uiStore = useUiStore()
 
@@ -82,7 +94,7 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
         id: 'Test-Collection',
         name: 'Test-Collection',
         description: '',
-        git_remote_url: '',
+        git_remote_url: 'git@github.com:org/test-collection.git',
         is_active: true,
         created_at: '',
         updated_at: ''
@@ -103,6 +115,7 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
 
     uiStore.gitSyncModalOpen = true
     const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
 
     const input = wrapper.find('[data-test="git-remote-input"]')
     expect(input.exists()).toBe(true)
@@ -112,8 +125,136 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     await saveBtn.trigger('click')
     await new Promise(r => setTimeout(r, 10))
 
+    expect(wrapper.find('[data-test="git-remote-confirm-dialog"]').exists()).toBe(false)
     expect(saveRemoteMock).toHaveBeenCalledWith('Test-Collection', 'git@github.com:org/test-collection.git')
     expect(uiStore.toast?.text).toBe('Đã lưu cấu hình Git Remote')
+  })
+
+  it('shows Clear/Stash confirmation dialog when remote URL changes and executes chosen action', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        description: '',
+        git_remote_url: 'https://github.com/org/old-repo.git',
+        is_active: true,
+        created_at: '',
+        updated_at: ''
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    saveRemoteMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/new-repo.git',
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+    gitClearAndPullMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/new-repo.git',
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+    gitStashAndPullMock.mockResolvedValue({
+      success: false,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/new-repo.git',
+        branch: 'main',
+        has_changes: true,
+        has_conflicts: true,
+        conflict_files: ['req-1.json']
+      },
+      error: {
+        code: 'GIT_CONFLICT',
+        message: 'Xung đột khi Stash & Pull tại req-1.json'
+      }
+    })
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    const input = wrapper.find('[data-test="git-remote-input"]')
+    await input.setValue('https://github.com/org/new-repo.git')
+    await wrapper.find('[data-test="save-git-remote-btn"]').trigger('click')
+
+    // Confirm dialog appears
+    const confirmDialog = wrapper.find('[data-test="git-remote-confirm-dialog"]')
+    expect(confirmDialog.exists()).toBe(true)
+
+    // Click Clear local data
+    await wrapper.find('[data-test="git-clear-and-pull-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 15))
+    expect(saveRemoteMock).toHaveBeenCalledWith('Test-Collection', 'https://github.com/org/new-repo.git')
+    expect(gitClearAndPullMock).toHaveBeenCalledWith('Test-Collection')
+
+    // Change again and test Stash & merge with conflict
+    await input.setValue('https://github.com/org/another-repo.git')
+    await wrapper.find('[data-test="save-git-remote-btn"]').trigger('click')
+    expect(wrapper.find('[data-test="git-remote-confirm-dialog"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="git-stash-and-pull-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 15))
+    expect(gitStashAndPullMock).toHaveBeenCalledWith('Test-Collection')
+    expect(collectionStore.gitConflictError?.files).toEqual(['req-1.json'])
+    expect(wrapper.find('[data-test="git-conflict-alert"]').exists()).toBe(true)
+  })
+
+  it('loads local branches into select dropdown and pushes to selected branch', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        description: '',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true,
+        created_at: '',
+        updated_at: ''
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    gitPushToBranchMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'develop',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    const branchSelect = wrapper.find('[data-test="git-push-branch-select"]')
+    expect(branchSelect.exists()).toBe(true)
+    const options = branchSelect.findAll('option').map(o => o.text())
+    expect(options).toEqual(['main', 'develop', 'feature/auth'])
+
+    await branchSelect.setValue('develop')
+    await wrapper.find('[data-test="git-push-modal-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(gitPushToBranchMock).toHaveBeenCalledWith('Test-Collection', 'develop')
   })
 
   it('displays conflict alert and conflicted files when gitPull returns GIT_CONFLICT', async () => {

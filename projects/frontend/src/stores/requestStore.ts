@@ -61,6 +61,13 @@ interface RequestState {
   activeSavePromise: Promise<boolean> | null
 }
 
+import {
+  parseUrl,
+  updateUrlWithParams,
+  reconcileParamsFromUrl,
+  areParamsEqual
+} from '../utils/urlParams'
+
 // Helper for deep equality on objects using sorted keys
 function stringifySorted(obj: any): string {
   if (obj === null || obj === undefined) return String(obj)
@@ -76,6 +83,47 @@ function stringifySorted(obj: any): string {
     sortedObj[key] = stringifySorted(obj[key])
   }
   return JSON.stringify(sortedObj)
+}
+
+function normalizeLoadedRequest(req: Request): void {
+  if (!req.auth) {
+    req.auth = { type: 'inherit' }
+  }
+  if (!Array.isArray(req.headers)) {
+    req.headers = []
+  }
+  if (!Array.isArray(req.params)) {
+    req.params = []
+  }
+  const currentUrl = req.url || ''
+  const { params: parsedFromUrl } = parseUrl(currentUrl)
+  if (parsedFromUrl.length > 0) {
+    const reconciled = reconcileParamsFromUrl(currentUrl, req.params)
+    if (!areParamsEqual(req.params, reconciled)) {
+      req.params = reconciled
+    }
+  } else {
+    const enabledParams = req.params.filter(p => p && p.enabled && typeof p.key === 'string' && p.key.trim() !== '')
+    if (enabledParams.length > 0) {
+      const updatedUrl = updateUrlWithParams(currentUrl, req.params)
+      if (updatedUrl !== currentUrl) {
+        req.url = updatedUrl
+      }
+    }
+  }
+  const expectedAutoCt = req.body?.type
+    ? AUTO_CONTENT_TYPES[req.body.type]
+    : undefined
+  if (expectedAutoCt && req.headers) {
+    const h = req.headers.find(
+      item => item && typeof item.key === 'string' &&
+      item.key.trim().toLowerCase() === 'content-type' &&
+      item.value.trim().toLowerCase() === expectedAutoCt
+    )
+    if (h) {
+      h._isAuto = true
+    }
+  }
 }
 
 let loadReqSeq = 0
@@ -95,6 +143,7 @@ export const useRequestStore = defineStore('request', {
   getters: {
     isDirty(state): boolean {
       if (!state.original || !state.current) return false
+      if (state.original.id !== state.current.id) return false
       return stringifySorted(state.original) !== stringifySorted(state.current)
     }
   },
@@ -104,31 +153,17 @@ export const useRequestStore = defineStore('request', {
       const mySeq = ++loadReqSeq
       this.loading = true
       this.error = null
-      this.saveStatus = 'saved'
-      this.contentTypeAuto = false
       try {
         const result = await GetRequest(id)
         if (mySeq !== loadReqSeq) return
         if (result.success && result.data) {
-          this.original = result.data as Request
-          if (!this.original.auth) {
-            this.original.auth = { type: 'inherit' }
-          }
-          const expectedAutoCt = this.original?.body?.type
-            ? AUTO_CONTENT_TYPES[this.original.body.type]
-            : undefined
-          if (expectedAutoCt && this.original.headers) {
-            const h = this.original.headers.find(
-              item => item && typeof item.key === 'string' &&
-              item.key.trim().toLowerCase() === 'content-type' &&
-              item.value.trim().toLowerCase() === expectedAutoCt
-            )
-            if (h) {
-              h._isAuto = true
-              this.contentTypeAuto = true
-            }
-          }
+          const loaded = JSON.parse(JSON.stringify(result.data)) as Request
+          normalizeLoadedRequest(loaded)
+          this.contentTypeAuto = Boolean(loaded.headers?.some(h => h && h._isAuto))
+          this.current = null
+          this.original = loaded
           this.current = JSON.parse(JSON.stringify(this.original))
+          this.saveStatus = 'saved'
           const tabStore = useTabStore()
           tabStore._ensureRequestStoreSync()
           if (this.current) {
@@ -136,18 +171,28 @@ export const useRequestStore = defineStore('request', {
               name: this.current.name,
               method: this.current.method
             })
-            tabStore.setTabDirty('request', this.current.id, this.isDirty)
+            if (!this.isDirty) {
+              tabStore.setTabDirty('request', this.current.id, false)
+            } else {
+              tabStore.setTabDirty('request', this.current.id, this.isDirty)
+            }
           }
         } else {
           this.error = result.error?.message || 'Không thể tải request'
           this.original = null
           this.current = null
+          this.contentTypeAuto = false
+          this.saveStatus = 'saved'
+          useTabStore().setTabDirty('request', id, false)
         }
       } catch (err) {
         if (mySeq !== loadReqSeq) return
         this.error = String(err)
         this.original = null
         this.current = null
+        this.contentTypeAuto = false
+        this.saveStatus = 'saved'
+        useTabStore().setTabDirty('request', id, false)
       } finally {
         if (mySeq === loadReqSeq) {
           this.loading = false
@@ -236,6 +281,7 @@ export const useRequestStore = defineStore('request', {
 
       let savePromise: Promise<boolean> | null = null
       const exec = async (): Promise<boolean> => {
+        const saveSeq = loadReqSeq
         this.saving = true
         this.saveStatus = 'saving'
         this.error = null
@@ -250,7 +296,7 @@ export const useRequestStore = defineStore('request', {
           const result = await SaveRequest(toSave as any)
           if (result.success) {
             const tabStore = useTabStore()
-            if (this.current && this.current.id === toSave.id) {
+            if (saveSeq === loadReqSeq && this.current && this.current.id === toSave.id) {
               if (stringifySorted(this.current) === stringifySorted(toSave)) {
                 this.original = JSON.parse(JSON.stringify(this.current))
                 this.saveStatus = 'saved'
@@ -276,7 +322,7 @@ export const useRequestStore = defineStore('request', {
             return true
           } else {
             const errorMsg = result.error?.message || 'Không thể lưu request'
-            if (this.current && this.current.id === toSave?.id) {
+            if (saveSeq === loadReqSeq && this.current && this.current.id === toSave?.id) {
               this.error = errorMsg
               this.saveStatus = 'error'
             }
@@ -286,7 +332,7 @@ export const useRequestStore = defineStore('request', {
           }
         } catch (err) {
           const errorMsg = String(err)
-          if (this.current && this.current.id === toSave?.id) {
+          if (saveSeq === loadReqSeq && this.current && this.current.id === toSave?.id) {
             this.error = errorMsg
             this.saveStatus = 'error'
           }

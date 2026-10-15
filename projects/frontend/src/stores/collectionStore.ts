@@ -23,7 +23,11 @@ import {
   SaveCollectionGitRemote,
   GetCollectionGitStatus,
   GitPullCollection,
-  GitPushCollection
+  GitPushCollection,
+  GitClearAndPullCollection,
+  GitStashAndPullCollection,
+  GitListLocalBranches,
+  GitPushCollectionToBranch
 } from '../../wailsjs/go/main/App'
 import { useTabStore, type TabEntityType } from './tabStore'
 
@@ -64,6 +68,7 @@ interface CollectionState {
   gitSyncLoading: boolean
   gitSyncStatus: model.GitSyncStatus | null
   gitConflictError: { message: string; files: string[] } | null
+  gitBranches: string[]
 }
 
 export const useCollectionStore = defineStore('collection', {
@@ -81,7 +86,8 @@ export const useCollectionStore = defineStore('collection', {
     switching: false,
     gitSyncLoading: false,
     gitSyncStatus: null,
-    gitConflictError: null
+    gitConflictError: null,
+    gitBranches: []
   }),
   getters: {
     activeCollection(state): model.Collection | null {
@@ -1000,9 +1006,14 @@ export const useCollectionStore = defineStore('collection', {
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
           await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
-          if (this.activeRequestId && this.findNode(this.tree, this.activeRequestId)) {
+          if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
-            await useRequestStore().loadRequest(this.activeRequestId)
+            if (this.findNode(this.tree, this.activeRequestId)) {
+              await useRequestStore().loadRequest(this.activeRequestId)
+            } else {
+              this.activeRequestId = null
+              useRequestStore().clearRequest()
+            }
           }
           uiStore.showToast('Git Pull thành công')
           return true
@@ -1027,8 +1038,137 @@ export const useCollectionStore = defineStore('collection', {
         this.gitSyncLoading = false
       }
     },
-    async gitPush(collectionId?: string): Promise<boolean> {
+    async fetchLocalBranches(collectionId?: string): Promise<string[]> {
       const targetId = collectionId || this.activeCollectionId || 'default'
+      try {
+        if (typeof GitListLocalBranches === 'function') {
+          const res = await GitListLocalBranches(targetId)
+          if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+            this.gitBranches = res.data as string[]
+            return this.gitBranches
+          }
+        }
+      } catch {
+        // Ignore branch list fetch error
+      }
+      const fallback = this.gitSyncStatus?.branch || 'main'
+      this.gitBranches = [fallback]
+      return this.gitBranches
+    },
+    async gitClearAndPull(remoteUrl: string, collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      this.gitSyncLoading = true
+      this.gitConflictError = null
+      try {
+        const saveRes = await SaveCollectionGitRemote(targetId, remoteUrl.trim())
+        if (!saveRes.success) {
+          uiStore.showToast(saveRes.error?.message || 'Không thể lưu cấu hình Git Remote')
+          return false
+        }
+        const res = await GitClearAndPullCollection(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          if (this.activeRequestId) {
+            const { useRequestStore } = await import('./requestStore')
+            if (this.findNode(this.tree, this.activeRequestId)) {
+              await useRequestStore().loadRequest(this.activeRequestId)
+            } else {
+              this.activeRequestId = null
+              useRequestStore().clearRequest()
+            }
+          }
+          uiStore.showToast('Đã xóa dữ liệu local và đồng bộ từ Remote')
+          return true
+        } else {
+          if (res.data) {
+            this.gitSyncStatus = res.data as model.GitSyncStatus
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+            }
+            uiStore.gitSyncModalOpen = true
+          }
+          uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Clear & Pull')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitStashAndPull(remoteUrl: string, collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      this.gitSyncLoading = true
+      this.gitConflictError = null
+      try {
+        const saveRes = await SaveCollectionGitRemote(targetId, remoteUrl.trim())
+        if (!saveRes.success) {
+          uiStore.showToast(saveRes.error?.message || 'Không thể lưu cấu hình Git Remote')
+          return false
+        }
+        const res = await GitStashAndPullCollection(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          if (this.activeRequestId) {
+            const { useRequestStore } = await import('./requestStore')
+            if (this.findNode(this.tree, this.activeRequestId)) {
+              await useRequestStore().loadRequest(this.activeRequestId)
+            } else {
+              this.activeRequestId = null
+              useRequestStore().clearRequest()
+            }
+          }
+          uiStore.showToast('Đã stash, pull và gộp thay đổi thành công')
+          return true
+        } else {
+          if (res.data) {
+            this.gitSyncStatus = res.data as model.GitSyncStatus
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+            }
+            uiStore.gitSyncModalOpen = true
+          }
+          uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Stash & Pull')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitPush(branch?: string, collectionId?: string): Promise<boolean> {
+      let targetBranch = branch?.trim() || ''
+      let targetId = collectionId || this.activeCollectionId || 'default'
+      // Backward compatibility if single argument is a collection ID rather than a branch name
+      if (
+        !collectionId &&
+        branch &&
+        !this.gitBranches.includes(branch) &&
+        branch !== this.gitSyncStatus?.branch &&
+        this.collections.some(c => c.id === branch)
+      ) {
+        targetId = branch
+        targetBranch = ''
+      }
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
       const coll = this.collections.find(c => c.id === targetId) || this.activeCollection
@@ -1040,7 +1180,9 @@ export const useCollectionStore = defineStore('collection', {
 
       this.gitSyncLoading = true
       try {
-        const res = await GitPushCollection(targetId)
+        const res = targetBranch && typeof GitPushCollectionToBranch === 'function'
+          ? await GitPushCollectionToBranch(targetId, targetBranch)
+          : await GitPushCollection(targetId)
         if (res.success) {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           uiStore.showToast('Git Push thành công')

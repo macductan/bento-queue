@@ -36,11 +36,13 @@ test.describe('Story 6.2 - NFR Performance Benchmarking & Evidence', () => {
     expect(baselineSample.usedHeapBytes).toBeLessThanOrEqual(NFR_THRESHOLDS.MAX_RAM_BYTES)
 
     log.step('3. Execute folder and request CRUD workload while sampling RAM')
+    await page.getByLabel('Thêm mới').click()
     await page.getByLabel('Thư mục mới').click()
     const folderNode = page.locator('[data-tree-row]').filter({ hasText: 'Thư mục mới' }).first()
     await expect(folderNode).toBeVisible()
     samples.push(await collectMemorySample(page, '02-after-create-folder'))
 
+    await page.getByLabel('Thêm mới').click()
     await page.getByLabel('Request mới').click()
     const activeRequestNode = page.locator('[data-tree-row][data-active="true"]').first()
     await expect(activeRequestNode).toBeVisible()
@@ -114,7 +116,7 @@ test.describe('Story 6.2 - NFR Performance Benchmarking & Evidence', () => {
     page
   }) => {
     await page.goto('/')
-    await page.getByLabel('Request mới').waitFor({ state: 'visible' })
+    await page.getByLabel('Thêm mới').waitFor({ state: 'visible' })
 
     const beforeArtifact = readExistingMetricsArtifact()
     const beforeSampleCount = beforeArtifact ? beforeArtifact.samples.length : 0
