@@ -41,7 +41,7 @@ describe('variables utility', () => {
       
       expect(result).toEqual([
         { type: 'text', value: 'A ' },
-        { type: 'resolved', value: '1', original: '{{ b }}' },
+        { type: 'resolved', value: '1', original: '{{ b }}', key: 'b' },
         { type: 'text', value: ' C' }
       ]);
     });
@@ -51,7 +51,7 @@ describe('variables utility', () => {
       const result = parseVariables('{{missing}} text', vars);
       
       expect(result).toEqual([
-        { type: 'missing', value: '{{missing}}' },
+        { type: 'missing', value: '{{missing}}', key: 'missing' },
         { type: 'text', value: ' text' }
       ]);
     });

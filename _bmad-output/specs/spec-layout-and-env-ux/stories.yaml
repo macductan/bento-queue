@@ -1,0 +1,37 @@
+- id: "1"
+  title: "Active Environment Persistence & Folder Env Scope Auto-Detection"
+  description: >-
+    Bổ sung trường active_env_id vào model.Collection và lưu trữ bền vững trong collection.json mỗi khi người dùng đổi Environment trên EnvSelector, đồng thời tự động khôi phục khi khởi động lại ứng dụng hoặc chuyển đổi Collection (CAP-2).
+    Cập nhật FolderEditor.vue để tab Variables tự động nhận diện và chọn phạm vi theo đúng Environment tổng đang active, hoặc chuyển về Folder Global Env khi không dùng env (CAP-3).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Mở rộng struct model.Collection trong projects/model/types.go thêm 'ActiveEnvID string json:"active_env_id,omitempty"' và cập nhật CollectionService.UpdateCollection trong projects/service/collection.go để lưu giữ trường này (tương thích ngược với file collection.json cũ).
+    Đồng bộ environmentStore.ts, collectionStore.ts, EnvSelector.vue và App.vue để lưu/khôi phục active_env_id theo từng Collection (fallback về null nếu environment đã bị xóa).
+    Trong FolderEditor.vue, tự động đồng bộ selectedEnvScope theo envStore.activeEnvId khi mở thư mục, đổi thư mục hoặc đổi activeEnvId trên Header.
+    Tuân thủ tuyệt đối quy tắc chỉ test trên Test-Collection hoặc t.TempDir(); đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.
+
+- id: "2"
+  title: "Resizable Layout Panes (Sidebar, Request Editor & Response Viewer)"
+  description: >-
+    Xây dựng thanh kéo phân cách dọc giữa AppSidebar và ContentArea cùng thanh kéo phân cách ngang giữa RequestEditor và ResponseViewer với ngưỡng kích thước tối thiểu/tối đa an toàn (CAP-1).
+    Hỗ trợ thao tác double-click vào thanh phân cách để đưa kích thước về mặc định (260px cho Sidebar, 50% cho Request/Response) và tự động lưu/khôi phục bố cục qua uiStore và localStorage.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Quản lý sidebarWidth (mặc định 260px, min 180px, max min(520px, 50% viewport)) và requestPaneRatio (mặc định 50%, đảm bảo mỗi vùng trên/dưới tối thiểu 120px) trong uiStore.ts kèm lưu trữ localStorage ('hecto_sidebar_width', 'hecto_request_pane_ratio').
+    Cập nhật App.vue, AppSidebar.vue và ContentArea.vue để tích hợp thanh kéo splitter mượt mà, khóa user-select khi đang kéo và reset về mặc định khi double-click.
+    Viết unit tests Vitest cho uiStore và các component layout; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "3"
+  title: "Variable Hover Preview & Inline Edit Popover"
+  description: >-
+    Triển khai cơ chế phát hiện hover không chặn tương tác ô nhập liệu trên VariableHighlighter.vue và hiển thị VariableHoverPopover.vue khi người dùng di chuột vào biến {{variable}} (CAP-4).
+    Hỗ trợ xem giá trị hiện tại, chọn tầng phạm vi trong dropdown (gồm toàn bộ các Folder cha và cấp Global/Collection Env theo đúng Environment đang active) và chỉnh sửa/tạo mới giá trị biến lưu trực tiếp xuống đĩa.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên VariableHighlighter.vue, bắt tọa độ chuột trên các thẻ span biến trong overlay mà không làm ảnh hưởng đến click, đặt con trỏ, bôi đen hay gõ IME của input/textarea bên dưới.
+    Xây dựng VariableHoverPopover.vue (Teleport to body) hiển thị tên biến, ô input sửa giá trị, và dropdown chọn tầng lưu trữ bao gồm tất cả các Folder cha (all cha folder) và cấp Global/Collection Env — trong đó ở cấp Folder Env hay Global Env chỉ hiển thị duy nhất Environment đang active (không liệt kê các env không active).
+    Mặc định chọn sẵn tầng đang thắng ưu tiên (winning tier) hoặc Global Env đang active (hoặc Collection Env nếu không chọn env) khi biến chưa định nghĩa; khi lưu sẽ ghi xuống đúng _folder.json, environments/<id>.json hoặc collection.json và phản ánh tức thì lên UI.
+    Viết đầy đủ unit/component tests Vitest và đảm bảo 'bun run type-check', 'bun run test', 'go test ./...' pass 100%.

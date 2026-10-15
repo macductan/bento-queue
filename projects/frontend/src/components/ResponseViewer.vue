@@ -53,7 +53,7 @@ const copyBody = async () => {
     } else {
       uiStore.showToast('Không thể sao chép')
     }
-  } catch (err) {
+  } catch {
     uiStore.showToast('Không thể sao chép')
   }
 }
@@ -77,7 +77,7 @@ const handleBodyKeydown = async (e: KeyboardEvent) => {
         if (success) {
           uiStore.showToast('Đã sao chép')
         }
-      } catch (err) {
+      } catch {
         // ignore
       }
     }

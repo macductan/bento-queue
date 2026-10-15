@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { escapeShell, generateCurlCommand } from '../curl';
+import { escapeShell, generateCurlCommand, isCurlCommand, parseCurlCommand } from '../curl';
 import type { Request } from '../../stores/requestStore';
 import type { TreeNode } from '../../stores/collectionStore';
 
@@ -329,3 +329,135 @@ describe('generateCurlCommand', () => {
     expect(cmd).toContain("-H 'X-Root-Header: auto-inherited'");
   });
 });
+
+describe('isCurlCommand & parseCurlCommand', () => {
+  it('identifies valid cURL commands and rejects plain URLs', () => {
+    expect(isCurlCommand("curl 'https://api.example.com/v1/users'")).toBe(true);
+    expect(isCurlCommand("  curl -X POST https://api.example.com/v1/users")).toBe(true);
+    expect(isCurlCommand("curl \\\n  --url https://api.example.com")).toBe(true);
+    expect(isCurlCommand("https://api.example.com/curl")).toBe(false);
+    expect(isCurlCommand("")).toBe(false);
+  });
+
+  it('parses multiline cURL with -X, -H, --data-raw JSON, query params, and escaped single quotes', () => {
+    const raw = `curl -X PATCH \\
+  'https://api.example.com/v1/users?page=2&role=admin' \\
+  -H 'Authorization: Bearer my-token-123' \\
+  -H 'Content-Type: application/json' \\
+  --data-raw '{"name":"O'\\''Reilly","active":true}'`;
+
+    const parsed = parseCurlCommand(raw);
+    expect(parsed.method).toBe('PATCH');
+    expect(parsed.url).toBe('https://api.example.com/v1/users?page=2&role=admin');
+    expect(parsed.params).toEqual([
+      { key: 'page', value: '2', enabled: true },
+      { key: 'role', value: 'admin', enabled: true }
+    ]);
+    expect(parsed.headers).toEqual([
+      { key: 'Authorization', value: 'Bearer my-token-123', enabled: true },
+      { key: 'Content-Type', value: 'application/json', enabled: true }
+    ]);
+    expect(parsed.body).toEqual({
+      type: 'json',
+      content: '{"name":"O\'Reilly","active":true}'
+    });
+  });
+
+  it('infers POST method when -d is provided without -X and maps -u to Basic Auth', () => {
+    const raw = `curl -u "alice:s3cret" --url "https://api.example.com/login" -d '{"hello":"world"}'`;
+    const parsed = parseCurlCommand(raw);
+    expect(parsed.method).toBe('POST');
+    expect(parsed.url).toBe('https://api.example.com/login');
+    expect(parsed.body.type).toBe('json');
+    expect(parsed.body.content).toBe('{"hello":"world"}');
+    expect(parsed.auth).toEqual({
+      type: 'basic',
+      basic: { username: 'alice', password: 's3cret' }
+    });
+  });
+
+  it('keeps GET and appends -d parameters to URL when -G / --get is passed', () => {
+    const raw = `curl -G 'https://api.example.com/search' -d 'q=hecto' -d 'limit=10'`;
+    const parsed = parseCurlCommand(raw);
+    expect(parsed.method).toBe('GET');
+    expect(parsed.url).toBe('https://api.example.com/search?q=hecto&limit=10');
+    expect(parsed.params).toEqual([
+      { key: 'q', value: 'hecto', enabled: true },
+      { key: 'limit', value: '10', enabled: true }
+    ]);
+    expect(parsed.body).toEqual({ type: 'none', content: '' });
+  });
+
+  it('supports -I / --head and non-JSON text body', () => {
+    const headParsed = parseCurlCommand('curl -I https://api.example.com/health');
+    expect(headParsed.method).toBe('HEAD');
+    expect(headParsed.url).toBe('https://api.example.com/health');
+
+    const textParsed = parseCurlCommand(`curl -X PUT https://api.example.com/note -H 'Content-Type: text/plain' --data 'plain text note'`);
+    expect(textParsed.method).toBe('PUT');
+    expect(textParsed.body).toEqual({
+      type: 'text',
+      content: 'plain text note'
+    });
+  });
+
+  it('parses and generates cURL for xml, x-www-form-urlencoded, and multipart/form-data (-F)', () => {
+    const formParsed = parseCurlCommand(`curl -X POST https://api.example.com/upload -F 'username=alice' -F 'role=admin'`);
+    expect(formParsed.method).toBe('POST');
+    expect(formParsed.body.type).toBe('formdata');
+    expect(formParsed.body.form_data).toEqual([
+      { key: 'username', value: 'alice', enabled: true },
+      { key: 'role', value: 'admin', enabled: true }
+    ]);
+
+    const urlencodedParsed = parseCurlCommand(
+      `curl https://api.example.com/token -H 'Content-Type: application/x-www-form-urlencoded' --data-urlencode 'grant_type=password' --data-urlencode 'username=bob'`
+    );
+    expect(urlencodedParsed.method).toBe('POST');
+    expect(urlencodedParsed.body.type).toBe('urlencoded');
+    expect(urlencodedParsed.body.urlencoded).toEqual([
+      { key: 'grant_type', value: 'password', enabled: true },
+      { key: 'username', value: 'bob', enabled: true }
+    ]);
+
+    // Test explicit Content-Type: application/x-www-form-urlencoded with JSON-like body
+    const urlencodedWithJsonBody = parseCurlCommand(
+      `curl https://api.example.com/login -H 'Content-Type: application/x-www-form-urlencoded' -d 'data={"user":"alice"}'`
+    );
+    expect(urlencodedWithJsonBody.body.type).toBe('urlencoded');
+    expect(urlencodedWithJsonBody.body.urlencoded).toEqual([
+      { key: 'data', value: '{"user":"alice"}', enabled: true }
+    ]);
+
+    const xmlParsed = parseCurlCommand(
+      `curl -X POST https://api.example.com/soap -H 'Content-Type: application/xml' -d '<envelope><body/></envelope>'`
+    );
+    expect(xmlParsed.body.type).toBe('xml');
+    expect(xmlParsed.body.content).toBe('<envelope><body/></envelope>');
+
+    const formCurl = generateCurlCommand(
+      {
+        id: 'req-form',
+        name: 'Upload',
+        method: 'POST',
+        url: 'https://api.example.com/upload',
+        headers: [],
+        params: [],
+        body: {
+          type: 'formdata',
+          content: '',
+          form_data: [
+            { key: 'username', value: '{{user}}', enabled: true },
+            { key: 'role', value: 'admin', enabled: true }
+          ]
+        },
+        created_at: '',
+        updated_at: ''
+      },
+      { user: 'alice' }
+    );
+    expect(formCurl).toContain("-F 'username=alice'");
+    expect(formCurl).toContain("-F 'role=admin'");
+  });
+});
+

@@ -240,5 +240,198 @@ describe('AuthEditor.vue', () => {
     expect(addToSelect.classes()).toContain('appearance-none')
     expect(addToSelect.classes()).toContain('bg-surface-overlay')
   })
+
+  it('keeps visibility toggled on (type="text") while typing consecutive characters and only resets when switching active request or folder', async () => {
+    const { createPinia, setActivePinia } = await import('pinia')
+    const { useCollectionStore } = await import('@/stores/collectionStore')
+    const { nextTick } = await import('vue')
+
+    setActivePinia(createPinia())
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+
+    const wrapper = mount(AuthEditor, {
+      props: {
+        modelValue: {
+          type: 'bearer',
+          bearer: { token: 'm' }
+        }
+      }
+    })
+
+    const input = wrapper.find('input#bearer-token-input')
+    expect(input.attributes('type')).toBe('password')
+    expect(input.classes()).toContain('text-text-primary')
+
+    // Click eye button to show token
+    const toggleBtn = wrapper.find('button[aria-label="Toggle token visibility"]')
+    await toggleBtn.trigger('click')
+    expect(input.attributes('type')).toBe('text')
+
+    // Simulate typing character by character with parent v-model updates
+    for (const val of ['my', 'my-', 'my-secret', 'my-secret-123']) {
+      await input.setValue(val)
+      const emitted = wrapper.emitted('update:modelValue')!
+      await wrapper.setProps({ modelValue: emitted[emitted.length - 1][0] as AuthConfig })
+      await nextTick()
+      expect(input.attributes('type')).toBe('text')
+    }
+
+    // Switching to another folder resets visibility back to password
+    colStore.activeFolderId = 'folder-2'
+    await nextTick()
+    expect(input.attributes('type')).toBe('password')
+  })
+
+  it('highlights {{variable}} across Bearer Token, Basic Username/Password, and API Key Value without remounting input and opens VariableHoverPopover with 4-tier hierarchy', async () => {
+    const { createPinia, setActivePinia } = await import('pinia')
+    const { useCollectionStore } = await import('@/stores/collectionStore')
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const { computed, nextTick } = await import('vue')
+    const { vi } = await import('vitest')
+
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+
+    const colStore = useCollectionStore()
+    colStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        variables: [{ key: 'coll_token', value: 'from-coll', enabled: true }]
+      } as any
+    ]
+    colStore.activeCollectionId = 'Test-Collection'
+
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      {
+        id: 'env-dev',
+        name: 'Dev',
+        variables: [{ key: 'env_user', value: 'dev-alice', enabled: true }]
+      } as any
+    ]
+    envStore.activeEnvId = 'env-dev'
+
+    const hierarchyFolders = [
+      {
+        id: 'parent-f',
+        name: 'Parent Folder',
+        variables: [{ key: 'folder_pass', value: 'p-secret', enabled: true }]
+      },
+      {
+        id: 'current-f',
+        name: 'Current Folder',
+        variables: [{ key: 'bearer_token', value: 'jwt-123', enabled: true }]
+      }
+    ]
+
+    const effectiveVars = computed(() => new Map<string, string>([
+      ['coll_token', 'from-coll'],
+      ['env_user', 'dev-alice'],
+      ['folder_pass', 'p-secret'],
+      ['bearer_token', 'jwt-123']
+    ]))
+
+    const wrapper = mount(AuthEditor, {
+      props: {
+        modelValue: {
+          type: 'bearer',
+          bearer: { token: 'static-secret' }
+        }
+      },
+      global: {
+        provide: {
+          effectiveVariables: effectiveVars,
+          variableHierarchyFolders: computed(() => hierarchyFolders)
+        }
+      },
+      attachTo: document.body
+    })
+
+    try {
+      const bearerInput = wrapper.find('input#bearer-token-input')
+      const originalBearerEl = bearerInput.element
+      // Static secret with showBearerToken=null -> type="password" and overlay hidden
+      expect(bearerInput.attributes('type')).toBe('password')
+      expect(bearerInput.classes()).toContain('text-text-primary')
+
+      // Typing '{{' progressively switches to type="text" immediately without remounting input
+      await wrapper.setProps({
+        modelValue: {
+          type: 'bearer',
+          bearer: { token: '{{' }
+        }
+      })
+      await nextTick()
+      expect(wrapper.find('input#bearer-token-input').element).toBe(originalBearerEl)
+      expect(bearerInput.attributes('type')).toBe('text')
+
+      // Update to full variable syntax
+      await wrapper.setProps({
+        modelValue: {
+          type: 'bearer',
+          bearer: { token: '{{bearer_token}} {{missing_token}}' }
+        }
+      })
+      await nextTick()
+
+      expect(wrapper.find('input#bearer-token-input').element).toBe(originalBearerEl)
+      expect(bearerInput.attributes('type')).toBe('text')
+      expect(wrapper.find('span.text-variable-valid').text()).toBe('{{bearer_token}}')
+      expect(wrapper.find('span.italic.text-variable-missing').text()).toBe('{{missing_token}}')
+
+      // Clicking eye toggle button can hide and re-show a value containing {{...}}
+      const toggleBtn = wrapper.find('button[aria-label="Toggle token visibility"]')
+      expect(toggleBtn.attributes('title')).toBe('Hide token')
+      await toggleBtn.trigger('click')
+      expect(bearerInput.attributes('type')).toBe('password')
+      expect(toggleBtn.attributes('title')).toBe('Show token')
+      await toggleBtn.trigger('click')
+      expect(bearerInput.attributes('type')).toBe('text')
+      expect(toggleBtn.attributes('title')).toBe('Hide token')
+
+      // Hover over {{bearer_token}} to open VariableHoverPopover with 4-tier hierarchy
+      const validSpan = wrapper.find('span.text-variable-valid')
+      await validSpan.trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(200)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]')
+      expect(popover).not.toBeNull()
+      expect(popover?.textContent).toContain('Folder: Current Folder (Dùng chung)')
+      expect(popover?.textContent).toContain('Folder: Parent Folder (Dùng chung)')
+
+      // Switch to Basic Auth and verify Username & Password variable highlighting
+      await wrapper.setProps({
+        modelValue: {
+          type: 'basic',
+          basic: { username: '{{env_user}}', password: '{{folder_pass}}' }
+        }
+      })
+      await nextTick()
+      expect(wrapper.find('input#basic-password-input').attributes('type')).toBe('text')
+      const basicValidSpans = wrapper.findAll('span.text-variable-valid')
+      expect(basicValidSpans.map(s => s.text())).toEqual(['{{env_user}}', '{{folder_pass}}'])
+
+      // Switch to API Key and verify Key input stays plain text-text-primary while Value highlights variables
+      await wrapper.setProps({
+        modelValue: {
+          type: 'apiKey',
+          apiKey: { key: 'X-API-Key', value: '{{coll_token}}', addTo: 'header' }
+        }
+      })
+      await nextTick()
+      const apiKeyNameInput = wrapper.find('input#api-key-name-input')
+      expect(apiKeyNameInput.classes()).toContain('text-text-primary')
+      expect(apiKeyNameInput.classes()).not.toContain('text-transparent')
+      expect(wrapper.find('input#api-key-val-input').attributes('type')).toBe('text')
+      expect(wrapper.find('span.text-variable-valid').text()).toBe('{{coll_token}}')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
 })
+
 

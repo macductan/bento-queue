@@ -210,6 +210,25 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       expect(ListCollections).toHaveBeenCalled()
     })
 
+    it('refreshes mock server status on collection switch', async () => {
+      const store = useCollectionStore()
+      const { useMockServerStore } = await import('../mockServerStore')
+      const mockStore = useMockServerStore()
+      const loadStatusSpy = vi.spyOn(mockStore, 'loadStatus').mockResolvedValue()
+
+      store.activeCollectionId = 'default'
+      vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'default', name: 'Default', is_default: true, is_active: false },
+        { id: 'target-id', name: 'Target', is_default: false, is_active: true }
+      ]))
+
+      const result = await store.switchCollection('target-id')
+
+      expect(result).toBe(true)
+      expect(loadStatusSpy).toHaveBeenCalled()
+    })
+
     it('shows toast and keeps collection when backend SwitchCollection fails', async () => {
       const store = useCollectionStore()
       const uiStore = useUiStore()
@@ -663,6 +682,359 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       const ok = await store.updateCollectionVariables('col-1', [{ key: 'k', value: 'v', enabled: true }])
       expect(ok).toBe(false)
       expect(toastSpy).toHaveBeenCalledWith('Failed to write collection')
+    })
+
+    it('preserves active_env_id and is_active in UpdateCollection payload and store state when updating variables', async () => {
+      const store = useCollectionStore()
+      store.collections = [
+        {
+          id: 'col-1',
+          name: 'Col 1',
+          is_active: true,
+          active_env_id: 'env-local',
+          variables: [{ key: 'old', value: '1', enabled: true }]
+        } as any
+      ]
+      // Backend returns collection with omitted variables (empty) and is_active: false
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(
+        resSuccess({ id: 'col-1', name: 'Col 1', is_active: false, active_env_id: 'env-local' })
+      )
+
+      const ok = await store.updateCollectionVariables('col-1', [])
+      expect(ok).toBe(true)
+      expect(UpdateCollection).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'col-1',
+        active_env_id: 'env-local',
+        variables: []
+      }))
+      expect(store.collections[0].active_env_id).toBe('env-local')
+      expect(store.collections[0].is_active).toBe(true)
+      expect(store.collections[0].variables).toEqual([])
+    })
+  })
+
+  describe('Active Environment Persistence (CAP-2)', () => {
+    it('persists active_env_id via UpdateCollection when envStore.setActive is called with an environment ID or null', async () => {
+      const store = useCollectionStore()
+      const envStore = useEnvironmentStore()
+      store.collections = [
+        { id: 'col-1', name: 'Col 1', is_default: false, is_active: true } as any
+      ]
+      store.activeCollectionId = 'col-1'
+      envStore.environments = [
+        { id: 'env-local', name: 'Local', variables: [] } as any
+      ]
+
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(
+        resSuccess({ id: 'col-1', name: 'Col 1', active_env_id: 'env-local' })
+      )
+
+      const ok1 = await envStore.setActive('env-local')
+      expect(ok1).toBe(true)
+      expect(envStore.activeEnvId).toBe('env-local')
+      expect(UpdateCollection).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'col-1',
+        active_env_id: 'env-local'
+      }))
+      expect(store.activeCollection?.active_env_id).toBe('env-local')
+
+      // Selecting "Không dùng env" (null) persists empty string ""
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(
+        resSuccess({ id: 'col-1', name: 'Col 1', active_env_id: '' })
+      )
+      const ok2 = await envStore.setActive(null)
+      expect(ok2).toBe(true)
+      expect(envStore.activeEnvId).toBeNull()
+      expect(UpdateCollection).toHaveBeenLastCalledWith(expect.objectContaining({
+        id: 'col-1',
+        active_env_id: ''
+      }))
+      expect(store.activeCollection?.active_env_id).toBe('')
+    })
+
+    it('shows toast and restores previous coll.active_env_id when UpdateCollection fails during updateActiveCollectionEnv', async () => {
+      const store = useCollectionStore()
+      const envStore = useEnvironmentStore()
+      const uiStore = useUiStore()
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+
+      store.collections = [
+        { id: 'col-1', name: 'Col 1', is_default: false, is_active: true, active_env_id: 'env-prev' } as any
+      ]
+      store.activeCollectionId = 'col-1'
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(resError('Lỗi ghi đĩa', 'IO_ERROR'))
+
+      const ok = await envStore.setActive('env-local')
+      expect(ok).toBe(false)
+      expect(envStore.activeEnvId).toBe('env-local')
+      expect(store.activeCollection?.active_env_id).toBe('env-prev')
+      expect(toastSpy).toHaveBeenCalledWith('Lỗi ghi đĩa')
+    })
+
+    it('restores activeEnvId on startup and when switching between collections', async () => {
+      const store = useCollectionStore()
+      const envStore = useEnvironmentStore()
+
+      // Startup with Collection A having active_env_id: "env-local"
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'col-a', name: 'Collection A', is_active: true, active_env_id: 'env-local' },
+        { id: 'col-b', name: 'Collection B', is_active: false, active_env_id: 'env-staging' }
+      ]))
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([
+        { id: 'env-local', name: 'Local', variables: [] }
+      ]))
+
+      await Promise.all([store.loadCollections(), envStore.loadAll()])
+      envStore.syncActiveEnvFromCollection()
+
+      expect(store.activeCollectionId).toBe('col-a')
+      expect(envStore.activeEnvId).toBe('env-local')
+
+      // Switch to Collection B -> restores "env-staging"
+      vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'col-a', name: 'Collection A', is_active: false, active_env_id: 'env-local' },
+        { id: 'col-b', name: 'Collection B', is_active: true, active_env_id: 'env-staging' }
+      ]))
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([
+        { id: 'env-staging', name: 'Staging', variables: [] }
+      ]))
+
+      await store.switchCollection('col-b')
+      expect(store.activeCollectionId).toBe('col-b')
+      expect(envStore.activeEnvId).toBe('env-staging')
+    })
+
+    it('falls back safely to null and clears stale active_env_id when saved active_env_id does not exist in environments', async () => {
+      const store = useCollectionStore()
+      const envStore = useEnvironmentStore()
+
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'col-a', name: 'Collection A', is_active: true, active_env_id: 'env-deleted' }
+      ]))
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([
+        { id: 'env-other', name: 'Other', variables: [] }
+      ]))
+
+      await store.loadCollections()
+      await envStore.loadAll()
+
+      expect(envStore.activeEnvId).toBeNull()
+      expect(store.activeCollection?.active_env_id).toBe('')
+    })
+
+    it('resets activeEnvId to null and persists empty active_env_id when active environment is removed', async () => {
+      const { DeleteEnvironment } = await import('../../../wailsjs/go/main/App')
+      const store = useCollectionStore()
+      const envStore = useEnvironmentStore()
+
+      store.collections = [
+        { id: 'col-a', name: 'Collection A', is_active: true, active_env_id: 'env-local' } as any
+      ]
+      store.activeCollectionId = 'col-a'
+      envStore.environments = [
+        { id: 'env-local', name: 'Local', variables: [] } as any
+      ]
+      envStore.activeEnvId = 'env-local'
+
+      vi.mocked(DeleteEnvironment).mockResolvedValueOnce(resSuccess({}))
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(resSuccess({
+        id: 'col-a',
+        name: 'Collection A',
+        active_env_id: ''
+      }))
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+
+      const removed = await envStore.remove('env-local')
+      expect(removed).toBe(true)
+      expect(envStore.activeEnvId).toBeNull()
+      expect(UpdateCollection).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'col-a',
+        active_env_id: ''
+      }))
+      expect(store.activeCollection?.active_env_id).toBe('')
+    })
+  })
+
+  describe('deleteFolder with active request inside', () => {
+    it('cancels auto-save and clears requestStore when deleting folder containing active request', async () => {
+      const { DeleteFolder } = await import('../../../wailsjs/go/main/App')
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      store.tree = [
+        {
+          id: 'folder-parent',
+          name: 'Parent',
+          type: 'folder',
+          path: '/folder-parent',
+          created_at: '',
+          children: [
+            {
+              id: 'req-child',
+              name: 'Child Req',
+              type: 'request',
+              method: 'GET',
+              path: '/folder-parent/req-child',
+              created_at: ''
+            }
+          ]
+        }
+      ]
+      store.activeRequestId = 'req-child'
+      store.expandedFolders.add('folder-parent')
+      reqStore.original = createMockRequest({ id: 'req-child', url: 'https://api.example.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-child', url: 'https://api.example.com/2' })
+
+      const cancelSpy = vi.spyOn(reqStore, 'cancelAutoSave')
+      const clearSpy = vi.spyOn(reqStore, 'clearRequest')
+      vi.mocked(DeleteFolder).mockResolvedValueOnce(resSuccess(null))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+
+      await store.deleteFolder('folder-parent')
+
+      expect(cancelSpy).toHaveBeenCalled()
+      expect(clearSpy).toHaveBeenCalled()
+      expect(store.activeRequestId).toBeNull()
+      expect(reqStore.current).toBeNull()
+    })
+
+    it('cancels auto-save even when DeleteFolder returns an error and preserves activeRequestId', async () => {
+      const { DeleteFolder } = await import('../../../wailsjs/go/main/App')
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      store.tree = [
+        {
+          id: 'folder-parent',
+          name: 'Parent',
+          type: 'folder',
+          path: '/folder-parent',
+          created_at: '',
+          children: [
+            {
+              id: 'req-child',
+              name: 'Child Req',
+              type: 'request',
+              method: 'GET',
+              path: '/folder-parent/req-child',
+              created_at: ''
+            }
+          ]
+        }
+      ]
+      store.activeRequestId = 'req-child'
+      reqStore.original = createMockRequest({ id: 'req-child', url: 'https://api.example.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-child', url: 'https://api.example.com/2' })
+
+      const cancelSpy = vi.spyOn(reqStore, 'cancelAutoSave')
+      const clearSpy = vi.spyOn(reqStore, 'clearRequest')
+      vi.mocked(DeleteFolder).mockResolvedValueOnce(resError('Delete failed', 'IO_ERROR'))
+
+      await store.deleteFolder('folder-parent')
+
+      expect(cancelSpy).toHaveBeenCalledTimes(1)
+      expect(clearSpy).not.toHaveBeenCalled()
+      expect(store.activeRequestId).toBe('req-child')
+    })
+
+    it('clears requestStore before selecting sibling request in deleteFolder and deleteRequest', async () => {
+      const { DeleteFolder, DeleteRequest } = await import('../../../wailsjs/go/main/App')
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      store.tree = [
+        {
+          id: 'folder-parent',
+          name: 'Parent',
+          type: 'folder',
+          path: '/folder-parent',
+          created_at: '',
+          children: [
+            {
+              id: 'req-child',
+              name: 'Child Req',
+              type: 'request',
+              method: 'GET',
+              path: '/folder-parent/req-child',
+              created_at: ''
+            }
+          ]
+        },
+        {
+          id: 'req-sibling',
+          name: 'Sibling Req',
+          type: 'request',
+          method: 'GET',
+          path: '/req-sibling',
+          created_at: ''
+        },
+        {
+          id: 'req-sibling-2',
+          name: 'Sibling Req 2',
+          type: 'request',
+          method: 'GET',
+          path: '/req-sibling-2',
+          created_at: ''
+        }
+      ]
+      store.activeRequestId = 'req-child'
+      reqStore.original = createMockRequest({ id: 'req-child', url: 'https://api.example.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-child', url: 'https://api.example.com/2' })
+
+      const clearSpy = vi.spyOn(reqStore, 'clearRequest')
+      const selectSpy = vi.spyOn(store, 'selectRequest').mockResolvedValue()
+      vi.mocked(DeleteFolder).mockResolvedValueOnce(resSuccess(null))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess(store.tree.slice(1)))
+
+      await store.deleteFolder('folder-parent')
+
+      expect(clearSpy).toHaveBeenCalledTimes(1)
+      expect(selectSpy).toHaveBeenCalledWith('req-sibling', { force: true })
+
+      // Also verify deleteRequest when a sibling request exists
+      clearSpy.mockClear()
+      selectSpy.mockClear()
+      store.activeRequestId = 'req-sibling'
+      reqStore.original = createMockRequest({ id: 'req-sibling', url: 'https://api.example.com/1' })
+      reqStore.current = createMockRequest({ id: 'req-sibling', url: 'https://api.example.com/2' })
+      vi.mocked(DeleteRequest).mockResolvedValueOnce(resSuccess(null))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess(store.tree.slice(1)))
+
+      await store.deleteRequest('req-sibling')
+
+      expect(clearSpy).toHaveBeenCalledTimes(1)
+      expect(selectSpy).toHaveBeenCalledWith('req-sibling-2', { force: true })
+    })
+
+    it('renameRequest syncs reqStore.current.name and reqStore.original.name from reloaded tree node', async () => {
+      const { RenameRequest } = await import('../../../wailsjs/go/main/App')
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+
+      const truncatedName = 'N'.repeat(255)
+      const rawName = 'N'.repeat(300)
+
+      store.activeRequestId = 'req-1'
+      reqStore.original = createMockRequest({ id: 'req-1', name: 'Old Name' })
+      reqStore.current = createMockRequest({ id: 'req-1', name: 'Old Name' })
+
+      vi.mocked(RenameRequest).mockResolvedValueOnce(resSuccess({ id: 'req-1', name: truncatedName }))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([
+        {
+          id: 'req-1',
+          name: truncatedName,
+          type: 'request',
+          method: 'GET',
+          path: '/req-1',
+          created_at: ''
+        }
+      ]))
+
+      await store.renameRequest('req-1', rawName)
+
+      expect(reqStore.current.name).toBe(truncatedName)
+      expect(reqStore.original.name).toBe(truncatedName)
     })
   })
 })

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -54,12 +55,9 @@ func (s *ExecutorService) SetTimeout(d time.Duration) {
 func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 	s.logger.Info("SendRequest called", "method", req.Method, "url", req.URL)
 
-	// Validate method
-	method := strings.ToUpper(req.Method)
-	switch method {
-	case "GET", "POST", "PUT", "PATCH", "DELETE":
-		// valid
-	default:
+	// Validate method (support standard + custom HTTP token methods like HEAD, OPTIONS, PURGE, PROPFIND)
+	method := strings.TrimSpace(strings.ToUpper(req.Method))
+	if !isValidHTTPMethod(method) {
 		return model.NewError(model.ErrValidation, ErrMethodInvalid)
 	}
 
@@ -94,7 +92,24 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 
 	// Build request
 	var bodyReader io.Reader
-	if req.Body != "" {
+	var multipartContentType string
+	if strings.EqualFold(req.BodyType, "formdata") || len(req.FormData) > 0 {
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		for _, kv := range req.FormData {
+			if strings.TrimSpace(kv.Key) == "" || !kv.Enabled {
+				continue
+			}
+			if err := writer.WriteField(kv.Key, kv.Value); err != nil {
+				return model.NewError(model.ErrValidation, fmt.Sprintf(ErrRequestCreateFailed, err))
+			}
+		}
+		if err := writer.Close(); err != nil {
+			return model.NewError(model.ErrValidation, fmt.Sprintf(ErrRequestCreateFailed, err))
+		}
+		bodyReader = bytes.NewReader(buf.Bytes())
+		multipartContentType = writer.FormDataContentType()
+	} else if req.Body != "" {
 		bodyReader = bytes.NewReader([]byte(req.Body))
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, method, req.URL, bodyReader)
@@ -108,6 +123,12 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 			httpReq.Host = kv.Value
 		} else {
 			httpReq.Header.Add(kv.Key, kv.Value)
+		}
+	}
+	if multipartContentType != "" {
+		existingCT := strings.ToLower(strings.TrimSpace(httpReq.Header.Get("Content-Type")))
+		if existingCT == "" || (strings.HasPrefix(existingCT, "multipart/form-data") && !strings.Contains(existingCT, "boundary=")) {
+			httpReq.Header.Set("Content-Type", multipartContentType)
 		}
 	}
 
@@ -219,3 +240,19 @@ func isTLSError(err error) bool {
 		errors.As(err, &targetRecordHeader) ||
 		errors.As(err, &targetAlert)
 }
+
+func isValidHTTPMethod(method string) bool {
+	if method == "" || len(method) > 32 {
+		return false
+	}
+	for i := 0; i < len(method); i++ {
+		c := method[i]
+		isAlpha := c >= 'A' && c <= 'Z'
+		isDigit := c >= '0' && c <= '9'
+		if !isAlpha && !isDigit && c != '-' && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+

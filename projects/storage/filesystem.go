@@ -248,14 +248,16 @@ func (f *FileSystem) FindByUUID(uuid string) (string, error) {
 // For each valid file, it unmarshals only the "id" field and calls fn(path, id, err).
 func (f *FileSystem) walkJSONEntities(root string, fn func(path, id string, err error) error) error {
 	envsDir := filepath.Join(root, "environments")
+	gitDir := filepath.Join(root, ".git")
+	historyDir := filepath.Join(root, ".history")
 
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
 		}
 
-		// Skip environments directory
-		if d.IsDir() && path == envsDir {
+		// Skip environments, .git, and .history directories
+		if d.IsDir() && (path == envsDir || path == gitDir || path == historyDir) {
 			return filepath.SkipDir
 		}
 
@@ -268,7 +270,7 @@ func (f *FileSystem) walkJSONEntities(root string, fn func(path, id string, err 
 		if filepath.Ext(name) != ".json" {
 			return nil
 		}
-		if name == "collection.json" {
+		if name == "collection.json" || name == "mock-server.json" {
 			return nil
 		}
 

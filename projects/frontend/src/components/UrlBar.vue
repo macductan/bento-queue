@@ -5,7 +5,7 @@ import { useResponseStore } from '@/stores/responseStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
-import { generateCurlCommand } from '@/utils/curl'
+import { generateCurlCommand, isCurlCommand, parseCurlCommand } from '@/utils/curl'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
@@ -32,7 +32,8 @@ watch(() => uiStore.focusUrlRequested, () => {
   }
 })
 
-const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+const customMethodInput = ref('')
 
 const isFocused = ref(false)
 const onFocus = () => {
@@ -68,6 +69,14 @@ const selectMethod = (method: string) => {
   closeDropdown()
 }
 
+const applyCustomMethod = () => {
+  const normalized = customMethodInput.value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '')
+  if (!normalized || !req.value) return
+  req.value.method = normalized
+  customMethodInput.value = ''
+  closeDropdown()
+}
+
 const onButtonKeyDown = (e: KeyboardEvent) => {
   if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
     e.preventDefault()
@@ -76,9 +85,17 @@ const onButtonKeyDown = (e: KeyboardEvent) => {
 }
 
 const onListboxKeyDown = (e: KeyboardEvent) => {
+  const activeEl = document.activeElement as HTMLElement | null
+  const isCustomInput = activeEl?.getAttribute('data-test') === 'custom-method-input'
   if (e.key === 'Escape') {
     e.preventDefault()
     closeDropdown()
+  } else if (isCustomInput) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      applyCustomMethod()
+    }
+    return
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
     const focusable = getFocusableOptions()
@@ -93,7 +110,6 @@ const onListboxKeyDown = (e: KeyboardEvent) => {
     focusable[nextIndex]?.focus()
   } else if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
-    const activeEl = document.activeElement as HTMLElement
     const method = activeEl?.dataset?.method
     if (method) {
       selectMethod(method)
@@ -125,7 +141,9 @@ const methodColors: Record<string, string> = {
   post: 'text-method-post',
   put: 'text-method-put',
   patch: 'text-method-patch',
-  delete: 'text-method-delete'
+  delete: 'text-method-delete',
+  head: 'text-cyan-400',
+  options: 'text-purple-400'
 }
 
 const currentMethodColorClass = computed(() => {
@@ -200,7 +218,9 @@ const copyAsCurl = async () => {
 
   const curlCmd = generateCurlCommand(req.value, {
     vars,
-    pathNodes
+    pathNodes,
+    activeEnvId: envStore.activeEnvId,
+    collection: collectionStore.activeCollection as any
   })
 
   const success = await copyToClipboard(curlCmd)
@@ -209,6 +229,38 @@ const copyAsCurl = async () => {
   } else {
     uiStore.showToast('Không thể sao chép vào clipboard')
   }
+}
+
+const onUrlPaste = (e: ClipboardEvent) => {
+  if (!req.value) return
+  const pasted = e.clipboardData?.getData('text/plain') || e.clipboardData?.getData('text') || ''
+  if (!isCurlCommand(pasted)) return
+
+  const parsed = parseCurlCommand(pasted)
+  if (!parsed.url) return
+
+  e.preventDefault()
+  req.value.method = parsed.method || 'GET'
+  req.value.url = parsed.url
+  req.value.params = parsed.params
+  req.value.headers = parsed.headers
+  req.value.body = {
+    type: parsed.body.type,
+    content: parsed.body.content,
+    ...(parsed.body.form_data ? { form_data: parsed.body.form_data } : {}),
+    ...(parsed.body.urlencoded ? { urlencoded: parsed.body.urlencoded } : {})
+  }
+  requestStore.setBodyType(parsed.body.type)
+  req.value.auth = parsed.auth ? parsed.auth : { type: 'inherit' }
+
+  nextTick(() => {
+    if (urlInputRef.value) {
+      urlInputRef.value.style.height = 'auto'
+      urlInputRef.value.style.height = urlInputRef.value.scrollHeight + 'px'
+    }
+  })
+
+  uiStore.showToast('Đã phân tích lệnh cURL')
 }
 </script>
 
@@ -239,7 +291,7 @@ const copyAsCurl = async () => {
       v-show="isOpen"
       ref="listboxRef"
       role="listbox"
-      class="absolute top-full left-0 mt-1 bg-surface-overlay border border-border-default rounded-md shadow-lg z-10 min-w-32 py-1 outline-none"
+      class="absolute top-full left-0 mt-1 bg-surface-overlay border border-border-default rounded-md shadow-lg z-10 min-w-44 py-1 outline-none"
       tabindex="-1"
       @keydown="onListboxKeyDown"
     >
@@ -255,6 +307,25 @@ const copyAsCurl = async () => {
         @click="selectMethod(method)"
       >
         {{ method }}
+      </div>
+      <div class="border-t border-border-default mt-1 pt-1.5 px-2 pb-1 flex items-center gap-1" @click.stop>
+        <input
+          v-model="customMethodInput"
+          type="text"
+          data-test="custom-method-input"
+          placeholder="Custom (VD: PURGE)"
+          aria-label="Custom HTTP Method"
+          class="w-full min-w-0 px-2 py-1 bg-surface-input border border-border-default rounded font-mono text-xs text-text-primary uppercase placeholder:normal-case placeholder:text-text-muted focus:border-brand-primary outline-none"
+          @keydown.enter.prevent="applyCustomMethod"
+        />
+        <button
+          type="button"
+          data-test="custom-method-apply"
+          class="px-2 py-1 bg-brand-primary text-white rounded text-xs font-semibold hover:opacity-90 shrink-0 cursor-pointer outline-none"
+          @click="applyCustomMethod"
+        >
+          OK
+        </button>
       </div>
     </div>
 
@@ -285,6 +356,7 @@ const copyAsCurl = async () => {
           aria-label="URL"
           @scroll="e => highlighterRef?.syncScroll(e)"
           @input="autoResize"
+          @paste="onUrlPaste"
           @focus="onFocus"
           @blur="onBlur"
         ></textarea>

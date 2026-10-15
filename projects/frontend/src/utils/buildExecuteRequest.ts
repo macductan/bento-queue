@@ -2,7 +2,7 @@ import type { Request, KVPair } from '../stores/requestStore';
 import type { TreeNode } from '../stores/collectionStore';
 import { resolveVariables } from './variables';
 import { mergeHeaders } from './headers';
-import { resolveEffectiveAuth, getAuthArtifacts } from './auth';
+import { resolveEffectiveAuth, getAuthArtifacts, type ResolveEffectiveAuthOptions } from './auth';
 import { parseUrl, encodeQueryComponent, splitPreservingVars } from './urlParams';
 
 export interface ExecuteRequest {
@@ -10,18 +10,30 @@ export interface ExecuteRequest {
   url: string;
   headers: KVPair[];
   body: string;
+  body_type?: string;
+  form_data?: KVPair[];
 }
+
+const AUTO_EXEC_CONTENT_TYPES: Record<string, string> = {
+  json: 'application/json',
+  xml: 'application/xml',
+  urlencoded: 'application/x-www-form-urlencoded'
+};
 
 export function buildExecuteRequest(
   req: Request,
   vars: Map<string, string> = new Map(),
   inheritedHeaders: KVPair[] = [],
-  pathNodes: TreeNode[] = []
+  pathNodes: TreeNode[] = [],
+  authOptions?: ResolveEffectiveAuthOptions
 ): ExecuteRequest {
   const method = req.method || 'GET';
   
   // 1. Resolve Auth and get auth headers and query params
-  const { auth: effectiveAuth } = resolveEffectiveAuth(req.auth, pathNodes);
+  const { auth: effectiveAuth } = resolveEffectiveAuth(req.auth, pathNodes, {
+    ...authOptions,
+    requestAuthEnvs: authOptions?.requestAuthEnvs ?? req.auth_envs
+  });
   const { headers: rawAuthHeaders, params: rawAuthParams } = getAuthArtifacts(effectiveAuth, vars);
   // Mark auth artifacts as resolved to avoid double variable expansion
   const authHeaders = rawAuthHeaders.map(h => ({ ...h, _authResolved: true }));
@@ -32,14 +44,15 @@ export function buildExecuteRequest(
   const baseHeaders = mergeHeaders(authHeaders, inheritedHeaders);
   const merged = mergeHeaders(req.headers || [], baseHeaders);
 
-  // If body is json, automatically add Content-Type: application/json if not already present or explicitly disabled
+  // Automatically add Content-Type for json, xml, or urlencoded if not already present or explicitly disabled
   const hasContentType = merged.some(h => h.key.trim().toLowerCase() === 'content-type');
   const userExplicitlyDisabled = req.headers?.some(h => typeof h?.key === 'string' && h.key.trim().toLowerCase() === 'content-type' && !h.enabled);
+  const autoCt = req.body?.type ? AUTO_EXEC_CONTENT_TYPES[req.body.type] : undefined;
 
-  if (req.body?.type === 'json' && !hasContentType && !userExplicitlyDisabled) {
+  if (autoCt && !hasContentType && !userExplicitlyDisabled) {
     merged.unshift({
       key: 'Content-Type',
-      value: 'application/json',
+      value: autoCt,
       enabled: true
     });
   }
@@ -130,8 +143,38 @@ export function buildExecuteRequest(
 
   // Body
   let bodyContent = '';
-  if (req.body?.type === 'json' || req.body?.type === 'text') {
-    bodyContent = resolveVariables(req.body.content || '', vars);
+  const bodyType = req.body?.type || 'none';
+  if (bodyType === 'json' || bodyType === 'text' || bodyType === 'xml') {
+    bodyContent = resolveVariables(req.body?.content || '', vars);
+  } else if (bodyType === 'urlencoded') {
+    if (Array.isArray(req.body?.urlencoded) && req.body.urlencoded.length > 0) {
+      bodyContent = req.body.urlencoded
+        .filter(item => item && item.enabled && typeof item.key === 'string' && item.key.trim() !== '')
+        .map(item => {
+          const k = encodeURIComponent(resolveVariables(item.key.trim(), vars));
+          const v = encodeURIComponent(resolveVariables(item.value || '', vars));
+          return `${k}=${v}`;
+        })
+        .join('&');
+    } else if (req.body?.content) {
+      bodyContent = resolveVariables(req.body.content, vars);
+    }
+  } else if (bodyType === 'formdata') {
+    const formData = (req.body?.form_data || [])
+      .filter(item => item && item.enabled && typeof item.key === 'string' && item.key.trim() !== '')
+      .map(item => ({
+        key: resolveVariables(item.key.trim(), vars),
+        value: resolveVariables(item.value || '', vars),
+        enabled: true
+      }));
+    return {
+      method,
+      url,
+      headers,
+      body: '',
+      body_type: 'formdata',
+      form_data: formData
+    };
   }
 
   return {

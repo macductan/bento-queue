@@ -19,8 +19,13 @@ import {
   RenameCollection,
   UpdateCollection,
   DeleteCollection,
-  DuplicateCollection
+  DuplicateCollection,
+  SaveCollectionGitRemote,
+  GetCollectionGitStatus,
+  GitPullCollection,
+  GitPushCollection
 } from '../../wailsjs/go/main/App'
+import { useTabStore, type TabEntityType } from './tabStore'
 
 export interface AuthConfig {
   type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey'
@@ -40,6 +45,7 @@ export interface TreeNode {
   folder_envs?: Record<string, { key: string; value: string; enabled: boolean }[]>
   headers?: { key: string; value: string; enabled: boolean }[]
   auth?: AuthConfig
+  auth_envs?: Record<string, AuthConfig>
   created_at: string
 }
 
@@ -55,6 +61,9 @@ interface CollectionState {
   activeCollectionId: string | null
   collectionsLoading: boolean
   switching: boolean
+  gitSyncLoading: boolean
+  gitSyncStatus: model.GitSyncStatus | null
+  gitConflictError: { message: string; files: string[] } | null
 }
 
 export const useCollectionStore = defineStore('collection', {
@@ -69,7 +78,10 @@ export const useCollectionStore = defineStore('collection', {
     collections: [],
     activeCollectionId: null,
     collectionsLoading: false,
-    switching: false
+    switching: false,
+    gitSyncLoading: false,
+    gitSyncStatus: null,
+    gitConflictError: null
   }),
   getters: {
     activeCollection(state): model.Collection | null {
@@ -88,6 +100,9 @@ export const useCollectionStore = defineStore('collection', {
       this.activeFolderId = null
       const { useRequestStore } = await import('./requestStore')
       useRequestStore().clearRequest()
+      const { useResponseStore } = await import('./responseStore')
+      useResponseStore().clear()
+      useTabStore().clearAllTabs()
       this.expandedFolders.clear()
       await this.loadTree()
     },
@@ -120,6 +135,11 @@ export const useCollectionStore = defineStore('collection', {
           } else if (!this.activeCollectionId || !list.some(c => c.id === this.activeCollectionId)) {
             this.activeCollectionId = 'default'
           }
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          if (envStore.loaded) {
+            envStore.syncActiveEnvFromCollection()
+          }
         } else {
           this.collections = []
           const { useUiStore } = await import('./uiStore')
@@ -143,6 +163,7 @@ export const useCollectionStore = defineStore('collection', {
         const reqStore = useRequestStore()
         const { useUiStore } = await import('./uiStore')
         const uiStore = useUiStore()
+        const tabStore = useTabStore()
 
         if (!opts?.force && reqStore.isDirty) {
           const choice = await uiStore.requestUnsavedPrompt(
@@ -156,6 +177,11 @@ export const useCollectionStore = defineStore('collection', {
           // if choice === 'discard', continue
         }
 
+        if (!opts?.force && (this.activeFolderId || tabStore.activeTab?.type === 'folder')) {
+          const folderSaved = await tabStore.flushActiveFolderIfNeeded()
+          if (!folderSaved) return false
+        }
+
         const result = await SwitchCollection(targetId)
         if (result.success) {
           this.activeCollectionId = targetId
@@ -163,13 +189,17 @@ export const useCollectionStore = defineStore('collection', {
           const { useResponseStore } = await import('./responseStore')
           const resStore = useResponseStore()
           resStore.clear()
+          tabStore.clearAllTabs()
           this.activeRequestId = null
           this.activeFolderId = null
           this.expandedFolders.clear()
           uiStore.closeContextMenu()
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          const { useMockServerStore } = await import('./mockServerStore')
+          const mockStore = useMockServerStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), mockStore.loadStatus()])
+          envStore.syncActiveEnvFromCollection()
           return true
         } else {
           uiStore.showToast(result.error?.message || 'Không thể chuyển collection')
@@ -254,12 +284,14 @@ export const useCollectionStore = defineStore('collection', {
             this.activeCollectionId = 'default'
             const { useRequestStore } = await import('./requestStore')
             useRequestStore().clearRequest()
+            useTabStore().clearAllTabs()
             this.activeRequestId = null
             this.activeFolderId = null
             this.expandedFolders.clear()
             const { useEnvironmentStore } = await import('./environmentStore')
             const envStore = useEnvironmentStore()
             await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+            envStore.syncActiveEnvFromCollection()
           } else {
             await this.loadCollections()
           }
@@ -299,7 +331,20 @@ export const useCollectionStore = defineStore('collection', {
       }
     },
     async selectRequest(id: string, opts?: { force?: boolean }) {
-      if (this.activeRequestId === id) return
+      const tabStore = useTabStore()
+      if (this.activeRequestId === id && !this.activeFolderId) {
+        const node = this.findNode(this.tree, id)
+        const { useRequestStore } = await import('./requestStore')
+        const reqStore = useRequestStore()
+        tabStore.openTab({
+          entityId: id,
+          type: 'request',
+          name: reqStore.current?.id === id ? (reqStore.current.name || node?.name || id) : (node?.name || id),
+          method: reqStore.current?.id === id ? (reqStore.current.method || node?.method || 'GET') : (node?.method || 'GET'),
+          isDirty: reqStore.current?.id === id ? reqStore.isDirty : undefined
+        })
+        return
+      }
       
       const { useRequestStore } = await import('./requestStore')
       const reqStore = useRequestStore()
@@ -310,6 +355,34 @@ export const useCollectionStore = defineStore('collection', {
         const saved = await reqStore.flush()
         if (!saved) return // abort switch if save failed
       }
+
+      if (!opts?.force && (this.activeFolderId || tabStore.activeTab?.type === 'folder')) {
+        const folderSaved = await tabStore.flushActiveFolderIfNeeded()
+        if (!folderSaved) return
+      }
+
+      const prevActiveRequestId = this.activeRequestId
+      const prevActiveFolderId = this.activeFolderId
+      const prevRequestId = this.activeRequestId || (tabStore.activeTab?.type === 'request' ? tabStore.activeTab.entityId : null)
+      if (prevRequestId && prevRequestId !== id) {
+        tabStore.saveResponseToCache(prevRequestId)
+      }
+      const prevOriginal = reqStore.original ? JSON.parse(JSON.stringify(reqStore.original)) : null
+      const prevCurrent = reqStore.current ? JSON.parse(JSON.stringify(reqStore.current)) : null
+      const prevSaveStatus = reqStore.saveStatus
+      const prevContentTypeAuto = reqStore.contentTypeAuto
+
+      const hadTabBefore = tabStore.tabs.some(t => t.type === 'request' && t.entityId === id)
+      const prevActiveTabId = tabStore.activeTabId
+      const node = this.findNode(this.tree, id)
+
+      tabStore.openTab({
+        entityId: id,
+        type: 'request',
+        name: node?.name || id,
+        method: node?.method || 'GET'
+      })
+      tabStore.restoreResponseFromCache(id)
       
       this.activeRequestId = id
       this.activeFolderId = null
@@ -320,43 +393,132 @@ export const useCollectionStore = defineStore('collection', {
       if (this.activeRequestId !== id) return
       
       if (reqStore.error) {
-        this.activeRequestId = null
-        uiStore.showToast(reqStore.error)
+        const errMsg = reqStore.error
+        if (!hadTabBefore) {
+          tabStore.tabs = tabStore.tabs.filter(t => !(t.type === 'request' && t.entityId === id))
+          delete tabStore.responseCache[id]
+          tabStore.activeTabId = prevActiveTabId && tabStore.tabs.some(t => t.id === prevActiveTabId)
+            ? prevActiveTabId
+            : (tabStore.tabs[tabStore.tabs.length - 1]?.id ?? null)
+        }
+        if (prevActiveRequestId && prevActiveRequestId !== id) {
+          this.activeRequestId = prevActiveRequestId
+          this.activeFolderId = null
+          tabStore.restoreResponseFromCache(prevActiveRequestId)
+          if (prevOriginal && prevCurrent && prevCurrent.id === prevActiveRequestId) {
+            reqStore.original = prevOriginal
+            reqStore.current = prevCurrent
+            reqStore.saveStatus = prevSaveStatus
+            reqStore.contentTypeAuto = prevContentTypeAuto
+          }
+        } else if (prevActiveFolderId) {
+          this.activeRequestId = null
+          this.activeFolderId = prevActiveFolderId
+          const { useResponseStore } = await import('./responseStore')
+          useResponseStore().resetDisplay()
+        } else {
+          this.activeRequestId = null
+        }
+        uiStore.showToast(errMsg)
+        return
+      }
+
+      if (reqStore.current && reqStore.current.id === id) {
+        tabStore.updateTabMeta('request', id, {
+          name: reqStore.current.name || node?.name || id,
+          method: reqStore.current.method || node?.method || 'GET'
+        })
+        tabStore.setTabDirty('request', id, reqStore.isDirty)
       }
     },
-    async setActiveFolderId(id: string) {
-      if (this.activeFolderId === id) return
+    async setActiveFolderId(id: string, opts?: { force?: boolean }) {
+      const tabStore = useTabStore()
+      if (this.activeFolderId === id && !this.activeRequestId) {
+        const node = this.findNode(this.tree, id)
+        tabStore.openTab({
+          entityId: id,
+          type: 'folder',
+          name: node?.name || id
+        })
+        return
+      }
       const { useRequestStore } = await import('./requestStore')
       const reqStore = useRequestStore()
-      if (reqStore.isDirty) {
+      if (!opts?.force && reqStore.isDirty) {
         const saved = await reqStore.flush()
         if (!saved) return // abort if save failed
       }
+      if (!opts?.force && ((this.activeFolderId && this.activeFolderId !== id) || (tabStore.activeTab?.type === 'folder' && tabStore.activeTab.entityId !== id))) {
+        const folderSaved = await tabStore.flushActiveFolderIfNeeded()
+        if (!folderSaved) return
+      }
+
+      const prevRequestId = this.activeRequestId || (tabStore.activeTab?.type === 'request' ? tabStore.activeTab.entityId : null)
+      if (prevRequestId) {
+        tabStore.saveResponseToCache(prevRequestId)
+      }
+      const { useResponseStore } = await import('./responseStore')
+      useResponseStore().resetDisplay()
+
       this.activeFolderId = id
       this.activeRequestId = null
       reqStore.clearRequest()
+
+      const node = this.findNode(this.tree, id)
+      tabStore.openTab({
+        entityId: id,
+        type: 'folder',
+        name: node?.name || id
+      })
     },
     async selectFolder(id: string) {
       await this.setActiveFolderId(id)
     },
-    async updateCollectionVariables(id: string, variables: { key: string; value: string; enabled: boolean }[]): Promise<boolean> {
+    async updateCollectionVariables(
+      id: string,
+      variables: { key: string; value: string; enabled: boolean }[],
+      auth?: AuthConfig,
+      authEnvs?: Record<string, AuthConfig>
+    ): Promise<boolean> {
       const coll = this.collections.find(c => c.id === id)
       if (!coll) return false
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
       try {
         const cleanVars = (variables || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
+        const preservedActiveEnvId = coll.active_env_id || ''
+        const prevIsActive = coll.is_active
         const payload: any = {
           ...coll,
           id,
-          variables: cleanVars
+          variables: cleanVars,
+          ...(auth !== undefined ? { auth } : {}),
+          ...(authEnvs !== undefined ? { auth_envs: authEnvs } : {}),
+          active_env_id: preservedActiveEnvId
         }
         const result = await UpdateCollection(payload)
         if (result.success) {
-          if (result.data) {
+          if (result.data && Object.keys(result.data).length > 0) {
             Object.assign(coll, result.data)
+            coll.is_active = prevIsActive
+            coll.variables = result.data.variables ?? cleanVars
+            if (auth !== undefined) {
+              ;(coll as any).auth = (result.data as any).auth ?? auth
+            }
+            if (authEnvs !== undefined) {
+              ;(coll as any).auth_envs = (result.data as any).auth_envs ?? authEnvs
+            }
+            if (result.data.active_env_id === undefined && preservedActiveEnvId) {
+              coll.active_env_id = preservedActiveEnvId
+            }
           } else {
             coll.variables = cleanVars
+            if (auth !== undefined) {
+              ;(coll as any).auth = auth
+            }
+            if (authEnvs !== undefined) {
+              ;(coll as any).auth_envs = authEnvs
+            }
           }
           return true
         } else {
@@ -368,12 +530,66 @@ export const useCollectionStore = defineStore('collection', {
         return false
       }
     },
+    async updateActiveCollectionEnv(activeEnvId: string | null): Promise<boolean> {
+      const coll = this.activeCollection
+      if (!coll) return false
+      const normalizedEnvId = activeEnvId ? activeEnvId.trim() : ''
+      const prevActiveEnvId = coll.active_env_id
+      const prevIsActive = coll.is_active
+      const prevVariables = coll.variables
+      coll.active_env_id = normalizedEnvId
+
+      let updateFn: typeof UpdateCollection | undefined
+      try {
+        updateFn = UpdateCollection
+      } catch {
+        return true
+      }
+      if (typeof updateFn !== 'function') {
+        return true
+      }
+
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      try {
+        const payload: any = {
+          ...coll,
+          id: coll.id || this.activeCollectionId,
+          active_env_id: normalizedEnvId
+        }
+        const result = await updateFn(payload)
+        if (result.success) {
+          if (result.data && Object.keys(result.data).length > 0) {
+            Object.assign(coll, result.data)
+            coll.is_active = prevIsActive
+            if (result.data.variables === undefined && prevVariables !== undefined) {
+              coll.variables = prevVariables
+            }
+          }
+          coll.active_env_id = normalizedEnvId
+          return true
+        } else {
+          coll.active_env_id = prevActiveEnvId
+          uiStore.showToast(result.error?.message || 'Không thể lưu môi trường đang chọn')
+          return false
+        }
+      } catch (err: any) {
+        coll.active_env_id = prevActiveEnvId
+        uiStore.showToast(String(err))
+        return false
+      }
+    },
     async createRequest(parentId: string = "") {
       const { useRequestStore } = await import('./requestStore')
       const reqStore = useRequestStore()
       if (reqStore.isDirty) {
         const saved = await reqStore.flush()
         if (!saved) return // abort if save failed
+      }
+      const tabStore = useTabStore()
+      if (this.activeFolderId || tabStore.activeTab?.type === 'folder') {
+        const folderSaved = await tabStore.flushActiveFolderIfNeeded()
+        if (!folderSaved) return
       }
       try {
         const result = await CreateRequest(parentId)
@@ -421,12 +637,15 @@ export const useCollectionStore = defineStore('collection', {
         const result = await RenameRequest(id, name)
         if (result.success) {
           await this.loadTree()
+          const updatedNode = this.findNode(this.tree, id)
+          const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || name)
+          useTabStore().updateTabMeta('request', id, { name: resolvedName })
           if (this.activeRequestId === id) {
             const { useRequestStore } = await import('./requestStore')
             const reqStore = useRequestStore()
-            if (reqStore.current && reqStore.original) {
-              reqStore.current.name = name
-              reqStore.original.name = name
+            if (reqStore.current?.id === id && reqStore.original?.id === id) {
+              reqStore.current.name = resolvedName
+              reqStore.original.name = resolvedName
             }
           }
         } else {
@@ -443,6 +662,9 @@ export const useCollectionStore = defineStore('collection', {
         const result = await RenameFolder(id, name)
         if (result.success) {
           await this.loadTree()
+          const updatedNode = this.findNode(this.tree, id)
+          const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || name)
+          useTabStore().updateTabMeta('folder', id, { name: resolvedName })
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể đổi tên thư mục')
@@ -463,8 +685,18 @@ export const useCollectionStore = defineStore('collection', {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast('Đã xóa')
           
-          // Must run against the pre-delete tree so sibling lookup still sees the deleted node
+          const tabStore = useTabStore()
+          const hadRequestTab = tabStore.tabs.some(t => t.type === 'request' && t.entityId === id)
+
           if (this.activeRequestId === id) {
+            const { useRequestStore } = await import('./requestStore')
+            useRequestStore().clearRequest()
+          }
+
+          if (hadRequestTab) {
+            await tabStore.closeTabByEntity('request', id, { skipFlush: true })
+          } else if (this.activeRequestId === id) {
+            // Must run against the pre-delete tree so sibling lookup still sees the deleted node
             this.selectNextRequestOrClear(id)
           }
           await this.loadTree()
@@ -482,11 +714,35 @@ export const useCollectionStore = defineStore('collection', {
     async deleteFolder(id: string) {
       // Capture before the call: is the active request inside the folder being deleted?
       const folderNode = this.findNode(this.tree, id)
+      const entitiesToClose: Array<{ type: TabEntityType; entityId: string }> = [
+        { type: 'folder', entityId: id }
+      ]
+      const collectSubtree = (nodes?: TreeNode[]) => {
+        if (!nodes) return
+        for (const child of nodes) {
+          entitiesToClose.push({
+            type: child.type === 'folder' ? 'folder' : 'request',
+            entityId: child.id
+          })
+          if (child.children) {
+            collectSubtree(child.children)
+          }
+        }
+      }
+      if (folderNode?.children) {
+        collectSubtree(folderNode.children)
+      }
+
       const activeInside = !!this.activeRequestId &&
         !!folderNode?.children &&
         !!this.findNode(folderNode.children, this.activeRequestId)
       const activeFolderInside = !!this.activeFolderId && 
         (this.activeFolderId === id || !!this.findNode(folderNode?.children || [], this.activeFolderId))
+
+      if (activeInside) {
+        const { useRequestStore } = await import('./requestStore')
+        useRequestStore().cancelAutoSave()
+      }
 
       try {
         const result = await DeleteFolder(id)
@@ -494,16 +750,40 @@ export const useCollectionStore = defineStore('collection', {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast('Đã xóa')
           
-          this.expandedFolders.delete(id)
-          
-          // Pre-delete tree is still in place: pick next/previous request at the folder's level
-          if (activeInside) {
-            this.selectNextRequestOrClear(id)
+          for (const ent of entitiesToClose) {
+            if (ent.type === 'folder') {
+              this.expandedFolders.delete(ent.entityId)
+            }
           }
+          
+          const tabStore = useTabStore()
+          const hadMatchingTabs = tabStore.tabs.some(t =>
+            entitiesToClose.some(e => e.type === t.type && e.entityId === t.entityId)
+          )
+
+          // Pre-delete tree is still in place: pick next/previous request at the folder's level
+          const stillActiveInside = !!this.activeRequestId &&
+            !!folderNode?.children &&
+            !!this.findNode(folderNode.children, this.activeRequestId)
+          if (stillActiveInside) {
+            const { useRequestStore } = await import('./requestStore')
+            useRequestStore().clearRequest()
+          }
+
           if (activeFolderInside) {
+            tabStore.registerFolderFlush(null)
             this.activeFolderId = null
           }
-          await this.loadTree()
+
+          if (!hadMatchingTabs) {
+            if (stillActiveInside) {
+              this.selectNextRequestOrClear(id)
+            }
+            await this.loadTree()
+          } else {
+            await this.loadTree()
+            await tabStore.closeTabsByEntities(entitiesToClose)
+          }
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể xóa thư mục')
@@ -659,6 +939,132 @@ export const useCollectionStore = defineStore('collection', {
         }
       }
       return null
+    },
+    async fetchGitStatus(collectionId?: string): Promise<model.GitSyncStatus | null> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      try {
+        const res = await GetCollectionGitStatus(targetId)
+        if (res.success && res.data) {
+          this.gitSyncStatus = res.data as model.GitSyncStatus
+          if (!this.gitSyncStatus.has_conflicts) {
+            this.gitConflictError = null
+          }
+          return this.gitSyncStatus
+        }
+      } catch {
+        // Ignore status fetch error
+      }
+      return null
+    },
+    async saveGitRemote(remoteUrl: string, collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      this.gitSyncLoading = true
+      try {
+        const res = await SaveCollectionGitRemote(targetId, remoteUrl.trim())
+        const { useUiStore } = await import('./uiStore')
+        const uiStore = useUiStore()
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          await this.loadCollections()
+          uiStore.showToast('Đã lưu cấu hình Git Remote')
+          return true
+        } else {
+          uiStore.showToast(res.error?.message || 'Không thể lưu cấu hình Git Remote')
+          return false
+        }
+      } catch (err) {
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitPull(collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const coll = this.collections.find(c => c.id === targetId) || this.activeCollection
+      if (!coll?.git_remote_url && !this.gitSyncStatus?.remote_url) {
+        uiStore.gitSyncModalOpen = true
+        uiStore.showToast('Vui lòng cấu hình Git Remote URL trước khi Pull')
+        return false
+      }
+
+      this.gitSyncLoading = true
+      this.gitConflictError = null
+      try {
+        const res = await GitPullCollection(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          if (this.activeRequestId && this.findNode(this.tree, this.activeRequestId)) {
+            const { useRequestStore } = await import('./requestStore')
+            await useRequestStore().loadRequest(this.activeRequestId)
+          }
+          uiStore.showToast('Git Pull thành công')
+          return true
+        } else {
+          if (res.data) {
+            this.gitSyncStatus = res.data as model.GitSyncStatus
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+            }
+            uiStore.gitSyncModalOpen = true
+          }
+          uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Pull')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitPush(collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const coll = this.collections.find(c => c.id === targetId) || this.activeCollection
+      if (!coll?.git_remote_url && !this.gitSyncStatus?.remote_url) {
+        uiStore.gitSyncModalOpen = true
+        uiStore.showToast('Vui lòng cấu hình Git Remote URL trước khi Push')
+        return false
+      }
+
+      this.gitSyncLoading = true
+      try {
+        const res = await GitPushCollection(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          uiStore.showToast('Git Push thành công')
+          return true
+        } else {
+          if (res.data) {
+            this.gitSyncStatus = res.data as model.GitSyncStatus
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+            }
+            uiStore.gitSyncModalOpen = true
+          }
+          uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Push')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
     }
   }
 })

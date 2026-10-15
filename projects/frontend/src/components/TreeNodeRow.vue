@@ -24,7 +24,7 @@ const isFolder = computed(() => props.node.type === 'folder')
 const isExpanded = computed(() => store.expandedFolders.has(props.node.id))
 const isActive = computed(() => {
   if (isFolder.value) {
-    return store.activeFolderId === props.node.id
+    return store.activeFolderId === props.node.id && !store.activeRequestId
   }
   return store.activeRequestId === props.node.id
 })
@@ -33,7 +33,6 @@ const toggle = () => {
   if (isEditing.value) return
   if (isFolder.value) {
     store.toggleFolder(props.node.id)
-    void store.selectFolder(props.node.id)
   } else {
     store.selectRequest(props.node.id)
   }
@@ -61,7 +60,7 @@ const cancelEdit = () => {
 const saveEdit = async () => {
   if (!isEditing.value) return
   
-  const newName = editName.value.trim()
+  const newName = Array.from(editName.value.trim()).slice(0, 255).join('')
   if (!newName) {
     cancelEdit()
     return
@@ -144,12 +143,21 @@ const methodColors: Record<string, string> = {
   post: 'text-method-post',
   put: 'text-method-put',
   patch: 'text-method-patch',
-  delete: 'text-method-delete'
+  delete: 'text-method-delete',
+  head: 'text-cyan-400',
+  options: 'text-purple-400'
 }
 
+const effectiveMethod = computed(() => {
+  if (!isFolder.value && requestStore.current?.id === props.node.id && requestStore.current?.method) {
+    return requestStore.current.method
+  }
+  return props.node.method
+})
+
 const methodColorClass = computed(() => {
-  if (!props.node.method) return ''
-  return methodColors[props.node.method.toLowerCase()] || ''
+  if (!effectiveMethod.value) return ''
+  return methodColors[effectiveMethod.value.toLowerCase()] || 'text-text-secondary'
 })
 
 const paddingLeft = computed(() => {
@@ -208,20 +216,26 @@ const paddingLeft = computed(() => {
 
       <!-- Request Method Badge -->
       <span 
-        v-if="!isFolder && node.method"
-        class="text-[10px] font-bold mr-2 w-9 shrink-0 text-left"
+        v-if="!isFolder && effectiveMethod"
+        class="text-[10px] font-bold mr-2 min-w-9 shrink-0 text-left"
         :class="methodColorClass"
       >
-        {{ node.method }}
+        {{ effectiveMethod }}
       </span>
 
       <!-- Name -->
       <span v-if="!isEditing" class="truncate ui-sm min-w-0 flex items-center gap-2 flex-1" :class="{ 'italic text-text-tertiary': isUnnamed }">
-        {{ displayName }}
+        <span data-test="tree-row-name" class="truncate">{{ displayName }}</span>
         <span v-if="isFolder" class="shrink-0 text-[10px] leading-none bg-surface-overlay text-text-muted px-1 py-0.5 rounded border border-border-default font-mono opacity-50" title="Cấp độ thư mục">
           {{ depth }}
         </span>
-        <span v-if="isActive && requestStore.isDirty" class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu"></span>
+        <span
+          v-if="!isFolder && isActive && requestStore.current?.id === props.node.id && requestStore.isDirty"
+          data-test="tree-row-unsaved-dot"
+          aria-label="Chưa lưu"
+          class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"
+          title="Chưa lưu"
+        ></span>
       </span>
       <input
         v-else

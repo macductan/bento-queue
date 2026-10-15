@@ -3,10 +3,12 @@ import { ref, computed } from 'vue'
 import { ListEnvironments, SaveEnvironment, DeleteEnvironment } from '../../wailsjs/go/main/App'
 import { model } from '../../wailsjs/go/models'
 import { useUiStore } from './uiStore'
+import { useCollectionStore } from './collectionStore'
 
 export const useEnvironmentStore = defineStore('environment', () => {
   const environments = ref<model.Environment[]>([])
   const activeEnvId = ref<string | null>(null)
+  const loaded = ref<boolean>(false)
   const uiStore = useUiStore()
 
   const variablesMap = computed(() => {
@@ -24,14 +26,36 @@ export const useEnvironmentStore = defineStore('environment', () => {
     return map
   })
 
+  function syncActiveEnvFromCollection() {
+    const collectionStore = useCollectionStore()
+    const activeColl = collectionStore.activeCollection
+    const savedEnvId = activeColl?.active_env_id || null
+    if (savedEnvId && environments.value.some(e => e.id === savedEnvId)) {
+      activeEnvId.value = savedEnvId
+    } else {
+      activeEnvId.value = null
+      if (loaded.value && activeColl && activeColl.active_env_id) {
+        activeColl.active_env_id = ''
+      }
+    }
+  }
+
   async function loadAll() {
     try {
       const result = await ListEnvironments()
       if (result.success) {
         environments.value = result.data as model.Environment[] || []
-        
-        // If activeEnvId points to a deleted environment, clear it
-        if (activeEnvId.value && !environments.value.find(e => e.id === activeEnvId.value)) {
+        loaded.value = true
+
+        if (activeEnvId.value && environments.value.some(e => e.id === activeEnvId.value)) {
+          return
+        }
+
+        const collectionStore = useCollectionStore()
+        if (collectionStore.activeCollection) {
+          syncActiveEnvFromCollection()
+        } else if (activeEnvId.value && !environments.value.find(e => e.id === activeEnvId.value)) {
+          // If activeEnvId points to a deleted environment, clear it
           activeEnvId.value = null
         }
       } else {
@@ -66,12 +90,15 @@ export const useEnvironmentStore = defineStore('environment', () => {
 
   async function remove(id: string) {
     try {
+      const collectionStore = useCollectionStore()
+      const wasActive = activeEnvId.value === id || collectionStore.activeCollection?.active_env_id === id
       const result = await DeleteEnvironment(id)
       if (result.success) {
-        await loadAll()
-        if (activeEnvId.value === id) {
+        if (wasActive) {
           activeEnvId.value = null
+          await collectionStore.updateActiveCollectionEnv(null)
         }
+        await loadAll()
         return true
       } else {
         uiStore.showToast(`Error deleting environment: ${result.error?.message}`)
@@ -84,14 +111,73 @@ export const useEnvironmentStore = defineStore('environment', () => {
   }
 
   async function refresh() {
+    loaded.value = false
     environments.value = []
     activeEnvId.value = null
     await loadAll()
   }
 
-  function setActive(id: string | null) {
+  async function setActive(id: string | null): Promise<boolean> {
     activeEnvId.value = id
+    const collectionStore = useCollectionStore()
+    return await collectionStore.updateActiveCollectionEnv(id)
   }
 
-  return { environments, activeEnvId, variablesMap, loadAll, refresh, save, remove, setActive }
+  async function applyVariableUpdates(updates: Record<string, string>): Promise<void> {
+    const entries = Object.entries(updates)
+    if (entries.length === 0) return
+
+    if (activeEnvId.value) {
+      const env = environments.value.find(e => e.id === activeEnvId.value)
+      if (env) {
+        if (!env.variables) env.variables = []
+        for (const [key, val] of entries) {
+          const existing = env.variables.find(v => v.key === key)
+          if (existing) {
+            existing.value = val
+            existing.enabled = true
+          } else {
+            env.variables.push({ key, value: val, enabled: true } as any)
+          }
+        }
+        await SaveEnvironment(env)
+        return
+      }
+    }
+
+    const collectionStore = useCollectionStore()
+    const activeColl = collectionStore.activeCollection
+    if (activeColl) {
+      const nextVars = Array.isArray(activeColl.variables)
+        ? activeColl.variables.map(v => ({ ...v }))
+        : []
+      for (const [key, val] of entries) {
+        const existing = nextVars.find(v => v.key === key)
+        if (existing) {
+          existing.value = val
+          existing.enabled = true
+        } else {
+          nextVars.push({ key, value: val, enabled: true })
+        }
+      }
+      activeColl.variables = nextVars
+      if (activeColl.id) {
+        await collectionStore.updateCollectionVariables(activeColl.id, nextVars)
+      }
+    }
+  }
+
+  return {
+    environments,
+    activeEnvId,
+    loaded,
+    variablesMap,
+    syncActiveEnvFromCollection,
+    loadAll,
+    refresh,
+    save,
+    remove,
+    setActive,
+    applyVariableUpdates
+  }
 })

@@ -93,6 +93,7 @@ export function mergeHeaders(requestHeaders: KVPair[] = [], inheritedHeaders: KV
 export interface DefaultHeaderItem {
   key: string
   value: string
+  rawValue?: string
   source: 'folder' | 'auto' | 'auth'
   authSource?: 'folder' | 'request'
   folderLevel?: number
@@ -107,7 +108,7 @@ export interface DefaultHeaderItem {
  */
 export function getDefaultHeaders(
   req: { headers?: KVPair[]; body?: { type?: string } } | null | undefined,
-  inheritedHeaders: (KVPair & { folderLevel?: number; folderName?: string })[] = [],
+  inheritedHeaders: (KVPair & { rawValue?: string; folderLevel?: number; folderName?: string })[] = [],
   authHeaders: (KVPair & { authSource?: 'folder' | 'request'; folderLevel?: number; folderName?: string })[] = []
 ): DefaultHeaderItem[] {
   const items: DefaultHeaderItem[] = []
@@ -165,6 +166,7 @@ export function getDefaultHeaders(
     items.push({
       key: trimmedKey,
       value: h.value || '',
+      ...((h as any).rawValue !== undefined ? { rawValue: (h as any).rawValue } : {}),
       source: 'folder',
       folderLevel: h.folderLevel ?? 1,
       folderName: h.folderName,
@@ -193,14 +195,21 @@ export function getDefaultHeaders(
     })
   }
 
-  // 3. Auto-generated Content-Type when body type is json
-  if (req?.body?.type === 'json') {
+  // 3. Auto-generated Content-Type when body type is json, xml, urlencoded, or formdata
+  const autoContentTypeMap: Record<string, string> = {
+    json: 'application/json',
+    xml: 'application/xml',
+    urlencoded: 'application/x-www-form-urlencoded',
+    formdata: 'multipart/form-data'
+  }
+  const autoCt = req?.body?.type ? autoContentTypeMap[req.body.type] : undefined
+  if (autoCt) {
     const hasInheritedContentType = items.some(item => item.key.toLowerCase() === 'content-type')
     if (!hasInheritedContentType) {
       const { overridden, disabled } = checkStatus('content-type')
       items.push({
         key: 'Content-Type',
-        value: 'application/json',
+        value: autoCt,
         source: 'auto',
         overridden,
         disabled

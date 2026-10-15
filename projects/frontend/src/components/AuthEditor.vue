@@ -1,62 +1,141 @@
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue'
-import type { AuthConfig, TreeNode } from '@/stores/collectionStore'
+import { getActivePinia } from 'pinia'
+import { useCollectionStore, type AuthConfig, type TreeNode } from '@/stores/collectionStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
 import { resolveEffectiveAuth } from '@/utils/auth'
+import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
-const showBearerToken = ref(false)
-const showBasicPassword = ref(false)
-const showApiKeyValue = ref(false)
+const pinia = getActivePinia()
+const collectionStore = pinia ? useCollectionStore(pinia) : null
+const envStore = pinia ? useEnvironmentStore(pinia) : null
+
+const showBearerToken = ref<boolean | null>(null)
+const showBasicPassword = ref<boolean | null>(null)
+const showApiKeyValue = ref<boolean | null>(null)
+const internalEnvScope = ref<string>('__global__')
+
+const bearerHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
+const basicUserHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
+const basicPassHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
+const apiKeyValHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 
 const props = withDefaults(
   defineProps<{
     modelValue?: AuthConfig
+    authEnvs?: Record<string, AuthConfig>
+    envScope?: string
     pathNodes?: TreeNode[]
     isFolder?: boolean
+    isCollection?: boolean
   }>(),
   {
     modelValue: () => ({ type: 'inherit' }),
+    authEnvs: () => ({}),
+    envScope: undefined,
     pathNodes: () => [],
-    isFolder: false
+    isFolder: false,
+    isCollection: false
   }
 )
 
-watch(() => props.modelValue, () => {
-  showBearerToken.value = false
-  showBasicPassword.value = false
-  showApiKeyValue.value = false
-})
+watch(
+  () => [collectionStore?.activeRequestId, collectionStore?.activeFolderId],
+  () => {
+    showBearerToken.value = null
+    showBasicPassword.value = null
+    showApiKeyValue.value = null
+  }
+)
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: AuthConfig): void
+  (e: 'update:authEnvs', val: Record<string, AuthConfig>): void
+  (e: 'update:envScope', val: string): void
 }>()
 
+const selectedEnvScope = computed({
+  get: () => props.envScope ?? internalEnvScope.value,
+  set: (val: string) => {
+    internalEnvScope.value = val
+    emit('update:envScope', val)
+  }
+})
+
+const availableEnvironments = computed(() => envStore?.environments || [])
+
+const hasEnvAuthOverride = (envId: string): boolean => {
+  const cfg = props.authEnvs?.[envId]
+  return Boolean(cfg && cfg.type && cfg.type !== 'inherit')
+}
+
+const defaultAuthType = computed<AuthConfig['type']>(() =>
+  props.isCollection && selectedEnvScope.value === '__global__' ? 'none' : 'inherit'
+)
+
+const currentAuth = computed<AuthConfig>(() => {
+  if (selectedEnvScope.value === '__global__') {
+    return props.modelValue || { type: defaultAuthType.value }
+  }
+  return props.authEnvs?.[selectedEnvScope.value] || { type: 'inherit' }
+})
+
+const updateCurrentAuth = (updated: AuthConfig) => {
+  if (selectedEnvScope.value === '__global__') {
+    emit('update:modelValue', updated)
+  } else {
+    const nextEnvs: Record<string, AuthConfig> = { ...(props.authEnvs || {}) }
+    nextEnvs[selectedEnvScope.value] = updated
+    emit('update:authEnvs', nextEnvs)
+  }
+}
+
 const authType = computed({
-  get: () => props.modelValue?.type || 'inherit',
+  get: () => currentAuth.value?.type || defaultAuthType.value,
   set: (newType: AuthConfig['type']) => {
-    let updated: AuthConfig = { type: newType }
+    const updated: AuthConfig = { type: newType }
     if (newType === 'bearer') {
-      updated.bearer = { token: props.modelValue?.bearer?.token || '' }
+      updated.bearer = { token: currentAuth.value?.bearer?.token || '' }
     } else if (newType === 'basic') {
       updated.basic = {
-        username: props.modelValue?.basic?.username || '',
-        password: props.modelValue?.basic?.password || ''
+        username: currentAuth.value?.basic?.username || '',
+        password: currentAuth.value?.basic?.password || ''
       }
     } else if (newType === 'apiKey') {
       updated.apiKey = {
-        key: props.modelValue?.apiKey?.key || '',
-        value: props.modelValue?.apiKey?.value || '',
-        addTo: props.modelValue?.apiKey?.addTo || 'header'
+        key: currentAuth.value?.apiKey?.key || '',
+        value: currentAuth.value?.apiKey?.value || '',
+        addTo: currentAuth.value?.apiKey?.addTo || 'header'
       }
     }
-    emit('update:modelValue', updated)
+    updateCurrentAuth(updated)
   }
 })
 
 // Inherited auth preview when type is 'inherit'
-const inheritedPreview = computed(() => {
+const inheritedPreview = computed<{
+  auth: AuthConfig
+  sourceNode?: TreeNode
+  sourceCollection?: { id?: string; name?: string }
+  fromGlobalSelf?: boolean
+} | null>(() => {
   if (authType.value !== 'inherit') return null
-  const result = resolveEffectiveAuth({ type: 'inherit' }, props.pathNodes)
-  return result
+  if (
+    selectedEnvScope.value !== '__global__' &&
+    props.modelValue?.type &&
+    props.modelValue.type !== 'inherit'
+  ) {
+    return {
+      auth: props.modelValue,
+      fromGlobalSelf: true
+    }
+  }
+  const effectiveEnvId =
+    selectedEnvScope.value !== '__global__' ? selectedEnvScope.value : envStore?.activeEnvId
+  return resolveEffectiveAuth({ type: 'inherit' }, props.pathNodes, {
+    activeEnvId: effectiveEnvId,
+    collection: !props.isCollection ? (collectionStore?.activeCollection as any) : null
+  })
 })
 
 const inheritedFolderLevel = computed(() => {
@@ -67,10 +146,10 @@ const inheritedFolderLevel = computed(() => {
 })
 
 const bearerToken = computed({
-  get: () => props.modelValue?.bearer?.token || '',
+  get: () => currentAuth.value?.bearer?.token || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'bearer',
       bearer: { token: val }
     })
@@ -78,27 +157,27 @@ const bearerToken = computed({
 })
 
 const basicUsername = computed({
-  get: () => props.modelValue?.basic?.username || '',
+  get: () => currentAuth.value?.basic?.username || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'basic',
       basic: {
         username: val,
-        password: props.modelValue?.basic?.password || ''
+        password: currentAuth.value?.basic?.password || ''
       }
     })
   }
 })
 
 const basicPassword = computed({
-  get: () => props.modelValue?.basic?.password || '',
+  get: () => currentAuth.value?.basic?.password || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'basic',
       basic: {
-        username: props.modelValue?.basic?.username || '',
+        username: currentAuth.value?.basic?.username || '',
         password: val
       }
     })
@@ -106,44 +185,56 @@ const basicPassword = computed({
 })
 
 const apiKeyName = computed({
-  get: () => props.modelValue?.apiKey?.key || '',
+  get: () => currentAuth.value?.apiKey?.key || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'apiKey',
       apiKey: {
         key: val,
-        value: props.modelValue?.apiKey?.value || '',
-        addTo: props.modelValue?.apiKey?.addTo || 'header'
+        value: currentAuth.value?.apiKey?.value || '',
+        addTo: currentAuth.value?.apiKey?.addTo || 'header'
       }
     })
   }
 })
 
 const apiKeyValue = computed({
-  get: () => props.modelValue?.apiKey?.value || '',
+  get: () => currentAuth.value?.apiKey?.value || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'apiKey',
       apiKey: {
-        key: props.modelValue?.apiKey?.key || '',
+        key: currentAuth.value?.apiKey?.key || '',
         value: val,
-        addTo: props.modelValue?.apiKey?.addTo || 'header'
+        addTo: currentAuth.value?.apiKey?.addTo || 'header'
       }
     })
   }
 })
 
+const hasVariableSyntax = (val: string): boolean => /\{\{/.test(val || '')
+
+const isBearerVisible = computed(() =>
+  showBearerToken.value !== null ? showBearerToken.value : hasVariableSyntax(bearerToken.value)
+)
+const isBasicPasswordVisible = computed(() =>
+  showBasicPassword.value !== null ? showBasicPassword.value : hasVariableSyntax(basicPassword.value)
+)
+const isApiKeyValueVisible = computed(() =>
+  showApiKeyValue.value !== null ? showApiKeyValue.value : hasVariableSyntax(apiKeyValue.value)
+)
+
 const apiKeyAddTo = computed({
-  get: () => props.modelValue?.apiKey?.addTo || 'header',
+  get: () => currentAuth.value?.apiKey?.addTo || 'header',
   set: (val: 'header' | 'query') => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'apiKey',
       apiKey: {
-        key: props.modelValue?.apiKey?.key || '',
-        value: props.modelValue?.apiKey?.value || '',
+        key: currentAuth.value?.apiKey?.key || '',
+        value: currentAuth.value?.apiKey?.value || '',
         addTo: val
       }
     })
@@ -153,6 +244,44 @@ const apiKeyAddTo = computed({
 
 <template>
   <div class="flex flex-col gap-4 max-w-2xl py-2">
+    <!-- Environment Scope Selector -->
+    <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
+      <div class="flex items-center gap-2">
+        <label for="auth-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
+          Phạm vi môi trường:
+        </label>
+        <div class="relative flex items-center">
+          <select
+            id="auth-env-scope-select"
+            v-model="selectedEnvScope"
+            :data-scope="selectedEnvScope"
+            data-test="auth-env-scope-select"
+            class="peer appearance-none bg-surface-overlay border border-border-default rounded-md h-[32px] pl-2.5 pr-7 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
+          >
+            <option value="__global__" class="bg-surface-overlay text-text-primary">
+              Global Auth (Dùng chung)
+            </option>
+            <option
+              v-for="env in availableEnvironments"
+              :key="env.id"
+              :value="env.id"
+              class="bg-surface-overlay text-text-primary"
+            >
+              {{ env.name }} {{ hasEnvAuthOverride(env.id) ? '(Custom)' : '' }}
+            </option>
+          </select>
+          <div class="absolute right-2 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
+            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <span class="text-xs text-text-muted">
+        {{ selectedEnvScope === '__global__' ? 'Áp dụng cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}
+      </span>
+    </div>
+
     <!-- Type Selector -->
     <div class="flex items-center gap-4">
       <label for="auth-type-select" class="text-xs font-semibold uppercase text-text-muted w-24 shrink-0">
@@ -162,6 +291,8 @@ const apiKeyAddTo = computed({
         <select
           id="auth-type-select"
           v-model="authType"
+          :data-scope="selectedEnvScope"
+          :data-auth-type="authType"
           class="peer appearance-none bg-surface-overlay border border-border-default rounded px-3 py-1.5 pr-8 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
         >
           <option value="inherit" class="bg-surface-overlay text-text-primary">Inherit from parent</option>
@@ -180,9 +311,21 @@ const apiKeyAddTo = computed({
 
     <!-- Inherit Mode Details -->
     <div v-if="authType === 'inherit'" class="p-3 bg-surface-raised/40 border border-border-subtle rounded text-xs text-text-secondary">
-      <div v-if="inheritedPreview?.sourceNode && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
+      <div v-if="inheritedPreview?.fromGlobalSelf && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
+        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-blue-400 font-medium">Global Auth</span>
+        <span class="text-text-muted ml-2">Type:</span>
+        <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
+      </div>
+      <div v-else-if="inheritedPreview?.sourceNode && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
         <span class="text-text-muted">Inherited from:</span>
         <span class="text-blue-400 font-medium">{{ inheritedPreview.sourceNode.name }} (Folder {{ inheritedFolderLevel }})</span>
+        <span class="text-text-muted ml-2">Type:</span>
+        <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
+      </div>
+      <div v-else-if="inheritedPreview?.sourceCollection && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
+        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-blue-400 font-medium">{{ inheritedPreview.sourceCollection.name || 'Collection' }} (Collection)</span>
         <span class="text-text-muted ml-2">Type:</span>
         <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
       </div>
@@ -193,29 +336,41 @@ const apiKeyAddTo = computed({
 
     <!-- None Mode Details -->
     <div v-else-if="authType === 'none'" class="p-3 bg-surface-raised/40 border border-border-subtle rounded text-xs text-text-muted italic">
-      No authentication for this {{ isFolder ? 'folder' : 'request' }}.
+      No authentication for this {{ isCollection ? 'collection' : isFolder ? 'folder' : 'request' }}.
     </div>
 
     <!-- Bearer Token Inputs -->
     <div v-else-if="authType === 'bearer'" class="flex flex-col gap-3">
       <div class="flex flex-col gap-1">
         <label for="bearer-token-input" class="text-xs font-medium text-text-muted">Token</label>
-        <div class="relative flex items-center">
-          <input
-            id="bearer-token-input"
-            v-model="bearerToken"
-            :type="showBearerToken ? 'text' : 'password'"
-            placeholder="Token or {{token}}"
-            class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 pr-10 text-sm text-text-primary font-mono focus:border-brand-primary outline-none"
-          />
+        <div class="relative flex items-center bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="bearerHighlighterRef"
+            :value="bearerToken"
+            :single-line="true"
+            :wrap="false"
+            :overlay-class="isBearerVisible ? 'px-3 py-2 pr-10 text-sm font-mono min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden' : 'hidden'"
+          >
+            <input
+              id="bearer-token-input"
+              v-model="bearerToken"
+              :type="isBearerVisible ? 'text' : 'password'"
+              placeholder="Token or {{token}}"
+              class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm font-mono focus:border-brand-primary outline-none"
+              :class="isBearerVisible ? 'transparent-selection text-transparent caret-text-primary placeholder:text-text-muted' : 'text-text-primary'"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => bearerHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
           <button
             type="button"
-            @click="showBearerToken = !showBearerToken"
-            class="absolute right-2 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="showBearerToken ? 'Hide token' : 'Show token'"
+            @click="showBearerToken = !isBearerVisible"
+            class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            :title="isBearerVisible ? 'Hide token' : 'Show token'"
             aria-label="Toggle token visibility"
           >
-            <svg v-if="showBearerToken" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+            <svg v-if="isBearerVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
             </svg>
             <svg v-else class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
@@ -230,35 +385,60 @@ const apiKeyAddTo = computed({
     <div v-else-if="authType === 'basic'" class="flex flex-col gap-3">
       <div class="flex flex-col gap-1">
         <label for="basic-username-input" class="text-xs font-medium text-text-muted">Username</label>
-        <input
-          id="basic-username-input"
-          v-model="basicUsername"
-          type="text"
-          placeholder="Username or {{username}}"
-          class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 text-sm text-text-primary focus:border-brand-primary outline-none"
-        />
+        <div class="relative bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="basicUserHighlighterRef"
+            :value="basicUsername"
+            :single-line="true"
+            :wrap="false"
+            overlay-class="px-3 py-2 text-sm min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden"
+          >
+            <input
+              id="basic-username-input"
+              v-model="basicUsername"
+              type="text"
+              placeholder="Username or {{username}}"
+              class="transparent-selection w-full bg-transparent border border-border-default rounded px-3 py-2 text-sm text-transparent caret-text-primary placeholder:text-text-muted focus:border-brand-primary outline-none"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => basicUserHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
+        </div>
         <span v-if="basicUsername.includes(':')" class="text-[11px] text-amber-400">
           Warning (RFC 7617): Username should not contain a colon (":").
         </span>
       </div>
       <div class="flex flex-col gap-1">
         <label for="basic-password-input" class="text-xs font-medium text-text-muted">Password</label>
-        <div class="relative flex items-center">
-          <input
-            id="basic-password-input"
-            v-model="basicPassword"
-            :type="showBasicPassword ? 'text' : 'password'"
-            placeholder="Password or {{password}}"
-            class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 pr-10 text-sm text-text-primary focus:border-brand-primary outline-none"
-          />
+        <div class="relative flex items-center bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="basicPassHighlighterRef"
+            :value="basicPassword"
+            :single-line="true"
+            :wrap="false"
+            :overlay-class="isBasicPasswordVisible ? 'px-3 py-2 pr-10 text-sm min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden' : 'hidden'"
+          >
+            <input
+              id="basic-password-input"
+              v-model="basicPassword"
+              :type="isBasicPasswordVisible ? 'text' : 'password'"
+              placeholder="Password or {{password}}"
+              class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm focus:border-brand-primary outline-none"
+              :class="isBasicPasswordVisible ? 'transparent-selection text-transparent caret-text-primary placeholder:text-text-muted' : 'text-text-primary'"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => basicPassHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
           <button
             type="button"
-            @click="showBasicPassword = !showBasicPassword"
-            class="absolute right-2 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="showBasicPassword ? 'Hide password' : 'Show password'"
+            @click="showBasicPassword = !isBasicPasswordVisible"
+            class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            :title="isBasicPasswordVisible ? 'Hide password' : 'Show password'"
             aria-label="Toggle password visibility"
           >
-            <svg v-if="showBasicPassword" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+            <svg v-if="isBasicPasswordVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
             </svg>
             <svg v-else class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
@@ -283,22 +463,34 @@ const apiKeyAddTo = computed({
       </div>
       <div class="flex flex-col gap-1">
         <label for="api-key-val-input" class="text-xs font-medium text-text-muted">Value</label>
-        <div class="relative flex items-center">
-          <input
-            id="api-key-val-input"
-            v-model="apiKeyValue"
-            :type="showApiKeyValue ? 'text' : 'password'"
-            placeholder="Value or {{apiKey}}"
-            class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 pr-10 text-sm text-text-primary font-mono focus:border-brand-primary outline-none"
-          />
+        <div class="relative flex items-center bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="apiKeyValHighlighterRef"
+            :value="apiKeyValue"
+            :single-line="true"
+            :wrap="false"
+            :overlay-class="isApiKeyValueVisible ? 'px-3 py-2 pr-10 text-sm font-mono min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden' : 'hidden'"
+          >
+            <input
+              id="api-key-val-input"
+              v-model="apiKeyValue"
+              :type="isApiKeyValueVisible ? 'text' : 'password'"
+              placeholder="Value or {{apiKey}}"
+              class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm font-mono focus:border-brand-primary outline-none"
+              :class="isApiKeyValueVisible ? 'transparent-selection text-transparent caret-text-primary placeholder:text-text-muted' : 'text-text-primary'"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => apiKeyValHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
           <button
             type="button"
-            @click="showApiKeyValue = !showApiKeyValue"
-            class="absolute right-2 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="showApiKeyValue ? 'Hide value' : 'Show value'"
+            @click="showApiKeyValue = !isApiKeyValueVisible"
+            class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            :title="isApiKeyValueVisible ? 'Hide value' : 'Show value'"
             aria-label="Toggle API key value visibility"
           >
-            <svg v-if="showApiKeyValue" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+            <svg v-if="isApiKeyValueVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
             </svg>
             <svg v-else class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">

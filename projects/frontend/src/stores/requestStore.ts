@@ -9,10 +9,27 @@ export interface KVPair {
 }
 
 import type { AuthConfig } from './collectionStore'
+import { useTabStore } from './tabStore'
+
+export type BodyType = 'none' | 'json' | 'text' | 'xml' | 'urlencoded' | 'formdata'
+
+export const AUTO_CONTENT_TYPES: Record<string, string> = {
+  json: 'application/json',
+  xml: 'application/xml',
+  urlencoded: 'application/x-www-form-urlencoded',
+  formdata: 'multipart/form-data'
+}
 
 export interface Body {
   type: string
   content: string
+  form_data?: KVPair[]
+  urlencoded?: KVPair[]
+}
+
+export interface Scripts {
+  pre_request?: string
+  post_response?: string
 }
 
 export interface Request {
@@ -24,6 +41,8 @@ export interface Request {
   params: KVPair[]
   body: Body
   auth?: AuthConfig
+  auth_envs?: Record<string, AuthConfig>
+  scripts?: Scripts
   created_at: string
   updated_at: string
 }
@@ -59,6 +78,8 @@ function stringifySorted(obj: any): string {
   return JSON.stringify(sortedObj)
 }
 
+let loadReqSeq = 0
+
 export const useRequestStore = defineStore('request', {
   state: (): RequestState => ({
     original: null,
@@ -80,22 +101,27 @@ export const useRequestStore = defineStore('request', {
   actions: {
     async loadRequest(id: string) {
       this.cancelAutoSave()
+      const mySeq = ++loadReqSeq
       this.loading = true
       this.error = null
       this.saveStatus = 'saved'
       this.contentTypeAuto = false
       try {
         const result = await GetRequest(id)
+        if (mySeq !== loadReqSeq) return
         if (result.success && result.data) {
           this.original = result.data as Request
           if (!this.original.auth) {
             this.original.auth = { type: 'inherit' }
           }
-          if (this.original?.body?.type === 'json' && this.original.headers) {
+          const expectedAutoCt = this.original?.body?.type
+            ? AUTO_CONTENT_TYPES[this.original.body.type]
+            : undefined
+          if (expectedAutoCt && this.original.headers) {
             const h = this.original.headers.find(
               item => item && typeof item.key === 'string' &&
               item.key.trim().toLowerCase() === 'content-type' &&
-              item.value.trim().toLowerCase() === 'application/json'
+              item.value.trim().toLowerCase() === expectedAutoCt
             )
             if (h) {
               h._isAuto = true
@@ -103,20 +129,33 @@ export const useRequestStore = defineStore('request', {
             }
           }
           this.current = JSON.parse(JSON.stringify(this.original))
+          const tabStore = useTabStore()
+          tabStore._ensureRequestStoreSync()
+          if (this.current) {
+            tabStore.updateTabMeta('request', this.current.id, {
+              name: this.current.name,
+              method: this.current.method
+            })
+            tabStore.setTabDirty('request', this.current.id, this.isDirty)
+          }
         } else {
           this.error = result.error?.message || 'Không thể tải request'
           this.original = null
           this.current = null
         }
       } catch (err) {
+        if (mySeq !== loadReqSeq) return
         this.error = String(err)
         this.original = null
         this.current = null
       } finally {
-        this.loading = false
+        if (mySeq === loadReqSeq) {
+          this.loading = false
+        }
       }
     },
     clearRequest() {
+      ++loadReqSeq
       this.cancelAutoSave()
       this.original = null
       this.current = null
@@ -128,6 +167,11 @@ export const useRequestStore = defineStore('request', {
     },
     scheduleAutoSave(delay: number = 800) {
       this.cancelAutoSave()
+      const tabStore = useTabStore()
+      tabStore._ensureRequestStoreSync()
+      if (this.current) {
+        tabStore.setTabDirty('request', this.current.id, this.isDirty)
+      }
       if (!this.current || !this.isDirty) {
         if (!this.isDirty && this.saveStatus !== 'saving') {
           this.saveStatus = 'saved'
@@ -205,6 +249,7 @@ export const useRequestStore = defineStore('request', {
           }
           const result = await SaveRequest(toSave as any)
           if (result.success) {
+            const tabStore = useTabStore()
             if (this.current && this.current.id === toSave.id) {
               if (stringifySorted(this.current) === stringifySorted(toSave)) {
                 this.original = JSON.parse(JSON.stringify(this.current))
@@ -213,6 +258,13 @@ export const useRequestStore = defineStore('request', {
                 this.original = JSON.parse(JSON.stringify(toSave))
                 this.saveStatus = 'unsaved'
               }
+              tabStore.updateTabMeta('request', this.current.id, {
+                name: this.current.name,
+                method: this.current.method
+              })
+              tabStore.setTabDirty('request', this.current.id, this.isDirty)
+            } else if (toSave?.id) {
+              tabStore.setTabDirty('request', toSave.id, false)
             }
             if (!options?.silent) {
               const { useUiStore } = await import('./uiStore')
@@ -253,36 +305,44 @@ export const useRequestStore = defineStore('request', {
       this.activeSavePromise = savePromise
       return await savePromise
     },
-    setBodyType(type: 'none' | 'json' | 'text') {
+    setBodyType(type: BodyType) {
       if (!this.current) return
       if (!this.current.body) {
         this.current.body = { type: 'none', content: '' }
       }
+      if (type === 'urlencoded' && !Array.isArray(this.current.body.urlencoded)) {
+        this.current.body.urlencoded = []
+      }
+      if (type === 'formdata' && !Array.isArray(this.current.body.form_data)) {
+        this.current.body.form_data = []
+      }
       
       const hs = this.current.headers || []
       if (!this.current.headers) this.current.headers = hs
-    
-      if (type !== 'json' && this.contentTypeAuto) {
+
+      const targetCt = AUTO_CONTENT_TYPES[type]
+
+      if (this.contentTypeAuto || hs.some(h => h._isAuto)) {
         const autoIndex = hs.findIndex(h => h._isAuto)
         if (autoIndex >= 0) {
           hs.splice(autoIndex, 1)
         }
         this.contentTypeAuto = false
       }
-    
-      if (type === 'json' && !this.contentTypeAuto) {
+
+      if (targetCt) {
         const hasContentType = hs.some(h => h.key.trim().toLowerCase() === 'content-type')
         if (!hasContentType) {
           hs.unshift({
             key: 'Content-Type',
-            value: 'application/json',
+            value: targetCt,
             enabled: true,
             _isAuto: true
           })
           this.contentTypeAuto = true
         }
       }
-    
+
       this.current.body.type = type
     }
   }

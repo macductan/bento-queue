@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUiStore } from '@/stores/uiStore'
 
@@ -7,6 +7,13 @@ const envStore = useEnvironmentStore()
 const uiStore = useUiStore()
 
 const selectRef = ref<HTMLSelectElement | null>(null)
+
+const selectedEnvId = computed<string | null>({
+  get: () => envStore.activeEnvId,
+  set: (val) => {
+    void envStore.setActive(val || null)
+  }
+})
 
 watch(() => uiStore.focusEnvRequested, () => {
   if (selectRef.value) {
@@ -19,7 +26,7 @@ watch(() => uiStore.focusEnvRequested, () => {
   <div class="relative flex items-center">
     <select
       ref="selectRef"
-      v-model="envStore.activeEnvId"
+      v-model="selectedEnvId"
       class="peer appearance-none bg-surface-overlay border border-border-default rounded-md h-[32px] pl-2 pr-6 ui-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary"
       aria-label="Select environment"
       title="Select environment (Ctrl+E)"

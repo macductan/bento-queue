@@ -26,9 +26,13 @@ describe('KvpEditor', () => {
     ...overrides
   })
 
-  it('should render VariableHighlighter for both Key and Value columns', async () => {
+  it('should render Key input with text-text-primary without VariableHighlighter while Value column highlights resolved and missing variables', async () => {
     const reqStore = useRequestStore()
-    reqStore.current = createMockRequest()
+    reqStore.current = createMockRequest({
+      params: [
+        { key: 'Authorization', value: 'Bearer {{my_key}} {{my_val}}', enabled: true }
+      ]
+    })
 
     const envStore = useEnvironmentStore()
     envStore.environments = [
@@ -49,12 +53,18 @@ describe('KvpEditor', () => {
     })
     await nextTick()
 
-    // VariableHighlighter in Key column should highlight {{my_key}} as resolved (green/sky)
+    const keyInput = wrapper.find('input[placeholder="Key"]')
+    expect(keyInput.exists()).toBe(true)
+    expect(keyInput.classes()).toContain('text-text-primary')
+    expect(keyInput.classes()).not.toContain('text-transparent')
+    expect(keyInput.classes()).not.toContain('transparent-selection')
+    expect((keyInput.element as HTMLInputElement).value).toBe('Authorization')
+
+    // VariableHighlighter in Value column should highlight {{my_key}} as resolved and {{my_val}} as missing
     const validSpan = wrapper.find('span.text-variable-valid')
     expect(validSpan.exists()).toBe(true)
     expect(validSpan.text()).toBe('{{my_key}}')
 
-    // VariableHighlighter in Value column should highlight {{my_val}} as missing (italic red)
     const missingSpan = wrapper.find('span.italic.text-variable-missing')
     expect(missingSpan.exists()).toBe(true)
     expect(missingSpan.text()).toBe('{{my_val}}')

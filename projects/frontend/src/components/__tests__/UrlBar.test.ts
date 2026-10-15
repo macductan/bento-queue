@@ -317,5 +317,103 @@ describe('UrlBar.vue', () => {
     const copiedCommand = writeTextMock.mock.calls[0][0]
     expect(copiedCommand).toContain("'http://localhost:9001/v1/login'")
   })
+
+  it('supports selecting HEAD and OPTIONS or entering a Custom HTTP Method (e.g., PURGE, PROPFIND)', async () => {
+    const requestStore = useRequestStore()
+    requestStore.current = {
+      id: 'req-custom-method',
+      name: 'Cache Purge',
+      method: 'GET',
+      url: 'https://api.example.com/cache',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      created_at: '2026-10-14',
+      updated_at: '2026-10-14'
+    }
+
+    const wrapper = mount(UrlBar)
+
+    // Open dropdown
+    const methodBtn = wrapper.find('button[aria-haspopup="listbox"]')
+    await methodBtn.trigger('click')
+
+    const options = wrapper.findAll('[role="option"]').map(o => o.text())
+    expect(options).toContain('HEAD')
+    expect(options).toContain('OPTIONS')
+
+    // Select HEAD
+    const headOpt = wrapper.find('[data-method="HEAD"]')
+    await headOpt.trigger('click')
+    expect(requestStore.current.method).toBe('HEAD')
+    expect(methodBtn.text()).toContain('HEAD')
+
+    // Re-open dropdown and type custom method 'purge'
+    await methodBtn.trigger('click')
+    const customInput = wrapper.find('[data-test="custom-method-input"]')
+    expect(customInput.exists()).toBe(true)
+    await customInput.setValue('  purge ')
+    await customInput.trigger('keydown.enter')
+
+    expect(requestStore.current.method).toBe('PURGE')
+    expect(methodBtn.text()).toContain('PURGE')
+
+    // Empty / invalid custom method does not overwrite existing method
+    await methodBtn.trigger('click')
+    await customInput.setValue('   $$$  ')
+    const applyBtn = wrapper.find('[data-test="custom-method-apply"]')
+    await applyBtn.trigger('click')
+    expect(requestStore.current.method).toBe('PURGE')
+  })
+
+  it('automatically parses a pasted cURL command in #url-input into method, url, params, headers, auth, and body', async () => {
+    const requestStore = useRequestStore()
+    const uiStore = useUiStore()
+    requestStore.current = {
+      id: 'req-curl-paste',
+      name: 'Paste cURL',
+      method: 'GET',
+      url: '',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      created_at: '2026-10-14',
+      updated_at: '2026-10-14'
+    }
+
+    const wrapper = mount(UrlBar)
+    const textarea = wrapper.find('#url-input')
+
+    const curlText = `curl -X POST 'https://api.example.com/v1/items?env=prod' -u 'admin:pw123' -H 'X-Custom: abc' --data-raw '{"title":"Book"}'`
+    const preventDefaultSpy = vi.fn()
+
+    await textarea.trigger('paste', {
+      clipboardData: {
+        getData: (type: string) => (type === 'text/plain' ? curlText : '')
+      },
+      preventDefault: preventDefaultSpy
+    })
+
+    expect(preventDefaultSpy).toHaveBeenCalled()
+    expect(requestStore.current.method).toBe('POST')
+    expect(requestStore.current.url).toBe('https://api.example.com/v1/items?env=prod')
+    expect(requestStore.current.params).toEqual([
+      { key: 'env', value: 'prod', enabled: true }
+    ])
+    expect(requestStore.current.headers).toEqual([
+      { key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true },
+      { key: 'X-Custom', value: 'abc', enabled: true }
+    ])
+    expect(requestStore.current.body).toEqual({
+      type: 'json',
+      content: '{"title":"Book"}'
+    })
+    expect(requestStore.current.auth).toEqual({
+      type: 'basic',
+      basic: { username: 'admin', password: 'pw123' }
+    })
+    expect(uiStore.toast?.text).toBe('Đã phân tích lệnh cURL')
+  })
 })
+
 

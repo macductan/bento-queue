@@ -63,7 +63,7 @@ func (s *CollectionService) buildTree(dirPath string) ([]model.TreeNode, error) 
 		name := entry.Name()
 		fullPath := filepath.Join(dirPath, name)
 
-		if entry.IsDir() && name == "environments" {
+		if entry.IsDir() && (name == "environments" || name == ".git" || name == ".history") {
 			continue
 		}
 
@@ -72,7 +72,7 @@ func (s *CollectionService) buildTree(dirPath string) ([]model.TreeNode, error) 
 			if ok {
 				nodes = append(nodes, node)
 			}
-		} else if strings.HasSuffix(name, ".json") && name != folderMetaFile && name != "collection.json" {
+		} else if strings.HasSuffix(name, ".json") && name != folderMetaFile && name != "collection.json" && name != "mock-server.json" {
 			node, ok := s.buildRequestNode(fullPath)
 			if ok {
 				nodes = append(nodes, node)
@@ -129,6 +129,7 @@ func (s *CollectionService) buildFolderNode(fullPath string) (model.TreeNode, bo
 		FolderEnvs: folder.FolderEnvs,
 		Headers:    folder.Headers,
 		Auth:       folder.Auth,
+		AuthEnvs:   folder.AuthEnvs,
 		CreatedAt:  folder.CreatedAt,
 	}, true
 }
@@ -156,6 +157,7 @@ func (s *CollectionService) buildRequestNode(fullPath string) (model.TreeNode, b
 		Method:    req.Method,
 		Path:      fullPath,
 		Auth:      req.Auth,
+		AuthEnvs:  req.AuthEnvs,
 		CreatedAt: req.CreatedAt,
 	}, true
 }
@@ -488,13 +490,14 @@ func (s *CollectionService) UpdateFolder(folder model.Folder) model.Result {
 		return model.NewError(model.ErrIO, ErrFolderReadFailed)
 	}
 
-	// Variables, folder_envs, headers, and auth are updated via this method (name is via RenameFolder)
+	// Variables, folder_envs, headers, auth, and auth_envs are updated via this method (name is via RenameFolder)
 	existingFolder.Variables = folder.Variables
 	existingFolder.FolderEnvs = folder.FolderEnvs
 	existingFolder.Headers = folder.Headers
 	if folder.Auth != nil {
 		existingFolder.Auth = folder.Auth
 	}
+	existingFolder.AuthEnvs = folder.AuthEnvs
 	existingFolder.UpdatedAt = time.Now()
 
 	if err := s.fs.WriteJSON(folderMetaPath, existingFolder); err != nil {
@@ -669,7 +672,7 @@ func (s *CollectionService) RenameCollection(collectionsRoot, id, newName string
 	return model.NewSuccess(coll)
 }
 
-// UpdateCollection updates a collection's details (name, description, variables).
+// UpdateCollection updates a collection's details (name, description, variables, auth, auth_envs).
 func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.Collection) model.Result {
 	s.logger.Info("UpdateCollection called", "collectionsRoot", collectionsRoot, "id", coll.ID)
 
@@ -708,6 +711,16 @@ func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.
 	existingColl.Name = name
 	existingColl.Description = coll.Description
 	existingColl.Variables = coll.Variables
+	if coll.Auth != nil {
+		existingColl.Auth = coll.Auth
+	}
+	if coll.AuthEnvs != nil {
+		existingColl.AuthEnvs = coll.AuthEnvs
+	}
+	existingColl.ActiveEnvID = strings.TrimSpace(coll.ActiveEnvID)
+	if strings.TrimSpace(coll.GitRemoteURL) != "" {
+		existingColl.GitRemoteURL = strings.TrimSpace(coll.GitRemoteURL)
+	}
 	existingColl.ID = id
 	existingColl.IsDefault = (id == "default")
 	existingColl.UpdatedAt = time.Now()
@@ -807,6 +820,9 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) mode
 		Name:        newName,
 		Description: srcColl.Description,
 		Variables:   srcColl.Variables,
+		Auth:        srcColl.Auth,
+		AuthEnvs:    srcColl.AuthEnvs,
+		ActiveEnvID: srcColl.ActiveEnvID,
 		IsDefault:   false,
 		IsActive:    false,
 		CreatedAt:   now,
@@ -858,6 +874,9 @@ func copyDirectory(fsys *storage.FileSystem, src, dest string) error {
 	}
 
 	for _, entry := range entries {
+		if entry.Name() == ".git" || entry.Name() == ".history" {
+			continue
+		}
 		srcPath := filepath.Join(src, entry.Name())
 		destPath := filepath.Join(dest, entry.Name())
 

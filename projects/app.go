@@ -28,6 +28,9 @@ type App struct {
 	envSvc           *service.EnvironmentService
 	execSvc          *service.ExecutorService
 	impSvc           *service.ImporterService
+	gitSyncSvc       *service.GitSyncService
+	historySvc       *service.HistoryService
+	mockServerSvc    *service.MockServerService
 	logger           *slog.Logger
 	collRoot         string
 	collectionsRoot  string
@@ -40,14 +43,17 @@ func NewApp() *App {
 	fs := storage.NewFileSystem()
 
 	return &App{
-		fs:      fs,
-		cfgSvc:  service.NewConfigService(fs, logger),
-		reqSvc:  service.NewRequestService(fs, logger),
-		collSvc: service.NewCollectionService(fs, logger),
-		envSvc:  service.NewEnvironmentService(fs, logger),
-		execSvc: service.NewExecutorService(logger),
-		impSvc:  service.NewImporterService(fs, logger),
-		logger:  logger,
+		fs:            fs,
+		cfgSvc:        service.NewConfigService(fs, logger),
+		reqSvc:        service.NewRequestService(fs, logger),
+		collSvc:       service.NewCollectionService(fs, logger),
+		envSvc:        service.NewEnvironmentService(fs, logger),
+		execSvc:       service.NewExecutorService(logger),
+		impSvc:        service.NewImporterService(fs, logger),
+		gitSyncSvc:    service.NewGitSyncService(fs, logger),
+		historySvc:    service.NewHistoryService(fs, logger),
+		mockServerSvc: service.NewMockServerService(fs, logger),
+		logger:        logger,
 	}
 }
 
@@ -98,12 +104,20 @@ func (a *App) GetRequest(id string) model.Result {
 
 // SaveRequest persists a request to disk.
 func (a *App) SaveRequest(req model.Request) model.Result {
-	return a.reqSvc.Save(req)
+	res := a.reqSvc.Save(req)
+	if res.Success {
+		a.recordChangelog("request", req.ID, req.Name, "update", "Cập nhật request "+req.Name+" ("+req.Method+")")
+	}
+	return res
 }
 
 // DeleteRequest removes a request from disk.
 func (a *App) DeleteRequest(id string) model.Result {
-	return a.reqSvc.Delete(id)
+	res := a.reqSvc.Delete(id)
+	if res.Success {
+		a.recordChangelog("request", id, id, "delete", "Xóa request "+id)
+	}
+	return res
 }
 
 // CreateFolder creates a new folder.
@@ -111,7 +125,13 @@ func (a *App) CreateFolder(parentFolderId string) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.collSvc.CreateFolder(root, parentFolderId)
+	res := a.collSvc.CreateFolder(root, parentFolderId)
+	if res.Success {
+		if node, ok := res.Data.(model.TreeNode); ok {
+			a.recordChangelog("folder", node.ID, node.Name, "create", "Tạo thư mục "+node.Name)
+		}
+	}
+	return res
 }
 
 // CreateRequest creates a new request.
@@ -119,17 +139,31 @@ func (a *App) CreateRequest(parentFolderId string) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.collSvc.CreateRequest(root, parentFolderId)
+	res := a.collSvc.CreateRequest(root, parentFolderId)
+	if res.Success {
+		if node, ok := res.Data.(model.TreeNode); ok {
+			a.recordChangelog("request", node.ID, node.Name, "create", "Tạo request "+node.Name)
+		}
+	}
+	return res
 }
 
 // RenameFolder renames a folder.
 func (a *App) RenameFolder(id, newName string) model.Result {
-	return a.collSvc.RenameFolder(id, newName)
+	res := a.collSvc.RenameFolder(id, newName)
+	if res.Success {
+		a.recordChangelog("folder", id, newName, "rename", "Đổi tên thư mục thành "+newName)
+	}
+	return res
 }
 
 // RenameRequest renames a request.
 func (a *App) RenameRequest(id, newName string) model.Result {
-	return a.reqSvc.Rename(id, newName)
+	res := a.reqSvc.Rename(id, newName)
+	if res.Success {
+		a.recordChangelog("request", id, newName, "rename", "Đổi tên request thành "+newName)
+	}
+	return res
 }
 
 // DeleteFolder removes a folder and all its contents.
@@ -137,12 +171,20 @@ func (a *App) DeleteFolder(id string) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.collSvc.DeleteFolder(root, id)
+	res := a.collSvc.DeleteFolder(root, id)
+	if res.Success {
+		a.recordChangelog("folder", id, id, "delete", "Xóa thư mục "+id)
+	}
+	return res
 }
 
 // DuplicateRequest duplicates a request by UUID.
 func (a *App) DuplicateRequest(id string) model.Result {
-	return a.reqSvc.Duplicate(id)
+	res := a.reqSvc.Duplicate(id)
+	if res.Success {
+		a.recordChangelog("request", id, id, "duplicate", "Nhân bản request "+id)
+	}
+	return res
 }
 
 // MoveRequest moves a request to a new folder.
@@ -150,7 +192,11 @@ func (a *App) MoveRequest(id, targetFolderID string) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.collSvc.MoveRequest(root, id, targetFolderID)
+	res := a.collSvc.MoveRequest(root, id, targetFolderID)
+	if res.Success {
+		a.recordChangelog("request", id, id, "move", "Di chuyển request sang thư mục khác")
+	}
+	return res
 }
 
 // ListEnvironments returns all environments.
@@ -174,7 +220,11 @@ func (a *App) SaveEnvironment(env model.Environment) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.envSvc.Save(root, env)
+	res := a.envSvc.Save(root, env)
+	if res.Success {
+		a.recordChangelog("environment", env.ID, env.Name, "update", "Lưu môi trường "+env.Name)
+	}
+	return res
 }
 
 // DeleteEnvironment removes an environment from disk.
@@ -182,7 +232,11 @@ func (a *App) DeleteEnvironment(id string) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.envSvc.Delete(root, id)
+	res := a.envSvc.Delete(root, id)
+	if res.Success {
+		a.recordChangelog("environment", id, id, "delete", "Xóa môi trường "+id)
+	}
+	return res
 }
 
 // SendRequest executes an HTTP request.
@@ -293,7 +347,11 @@ func (a *App) UpdateCollection(collection model.Collection) model.Result {
 	a.mu.RLock()
 	cRoot := a.collectionsRoot
 	a.mu.RUnlock()
-	return a.collSvc.UpdateCollection(cRoot, collection)
+	res := a.collSvc.UpdateCollection(cRoot, collection)
+	if res.Success {
+		a.recordChangelog("collection", collection.ID, collection.Name, "update", "Cập nhật cấu hình collection "+collection.Name)
+	}
+	return res
 }
 
 // DeleteCollection deletes a collection from disk, ensuring active collection falls back to default.
@@ -401,5 +459,157 @@ func (a *App) LoadFolder(id string) model.Result {
 
 // UpdateFolder updates a folder's details (variables).
 func (a *App) UpdateFolder(folder model.Folder) model.Result {
-	return a.collSvc.UpdateFolder(folder)
+	res := a.collSvc.UpdateFolder(folder)
+	if res.Success {
+		a.recordChangelog("folder", folder.ID, folder.Name, "update", "Cập nhật cấu hình thư mục "+folder.Name)
+	}
+	return res
 }
+
+func (a *App) recordChangelog(entityType, entityID, entityName, action, summary string) {
+	if a.historySvc == nil {
+		return
+	}
+	a.mu.RLock()
+	root := a.collRoot
+	collID := a.activeCollection
+	a.mu.RUnlock()
+	if strings.TrimSpace(root) == "" {
+		return
+	}
+	_ = a.historySvc.RecordChangelog(root, model.ChangelogEntry{
+		CollectionID: collID,
+		EntityType:   entityType,
+		EntityID:     entityID,
+		EntityName:   entityName,
+		Action:       action,
+		Summary:      summary,
+	})
+}
+
+func (a *App) resolveCollectionID(collectionID string) (string, string) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	id := strings.TrimSpace(collectionID)
+	if id == "" {
+		id = a.activeCollection
+	}
+	return a.collectionsRoot, id
+}
+
+// SaveCollectionGitRemote saves the Git remote URL for a collection and configures git remote origin.
+func (a *App) SaveCollectionGitRemote(collectionID, remoteURL string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	return a.gitSyncSvc.SaveRemoteURL(cRoot, id, remoteURL)
+}
+
+// GetCollectionGitStatus returns the Git sync status for a collection.
+func (a *App) GetCollectionGitStatus(collectionID string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	return a.gitSyncSvc.GetStatus(cRoot, id)
+}
+
+// GitPullCollection executes git pull in the collection directory and rebuilds index on success.
+func (a *App) GitPullCollection(collectionID string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	res := a.gitSyncSvc.Pull(cRoot, id)
+	if res.Success {
+		a.mu.RLock()
+		root := a.collRoot
+		a.mu.RUnlock()
+		if root != "" {
+			_ = a.fs.IndexRebuild(root)
+		}
+	}
+	return res
+}
+
+// GitPushCollection stages, commits, and pushes the collection directory to its configured git remote.
+func (a *App) GitPushCollection(collectionID string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	return a.gitSyncSvc.Push(cRoot, id)
+}
+
+// ListExecutionHistory returns execution history entries for the active collection.
+func (a *App) ListExecutionHistory() model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.historySvc.ListExecutions(root)
+}
+
+// RecordExecutionHistory records a new execution history entry for the active collection.
+func (a *App) RecordExecutionHistory(entry model.ExecutionHistoryEntry) model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	collID := a.activeCollection
+	a.mu.RUnlock()
+	if strings.TrimSpace(entry.CollectionID) == "" {
+		entry.CollectionID = collID
+	}
+	return a.historySvc.RecordExecution(root, entry)
+}
+
+// ClearExecutionHistory clears all execution history entries for the active collection.
+func (a *App) ClearExecutionHistory() model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.historySvc.ClearExecutions(root)
+}
+
+// ListChangelog returns all changelog entries for the active collection.
+func (a *App) ListChangelog() model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.historySvc.ListChangelog(root)
+}
+
+// ClearChangelog clears all changelog entries for the active collection.
+func (a *App) ClearChangelog() model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.historySvc.ClearChangelog(root)
+}
+
+// GetMockServerStatus returns the current status and configured routes of the local Mock HTTP Server.
+func (a *App) GetMockServerStatus() model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.mockServerSvc.GetStatus(root)
+}
+
+// SaveMockServerConfig saves the port and routes for the active collection's Mock HTTP Server.
+func (a *App) SaveMockServerConfig(cfg model.MockServerConfig) model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.mockServerSvc.SaveConfig(root, cfg)
+}
+
+// StartMockServer starts the local Mock HTTP Server for the active collection on the given port.
+func (a *App) StartMockServer(port int) model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.mockServerSvc.Start(root, port)
+}
+
+// StopMockServer stops the running local Mock HTTP Server.
+func (a *App) StopMockServer() model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.mockServerSvc.Stop(root)
+}
+
+// ExportGitSyncStatus ensures model.GitSyncStatus is exported to Wails TypeScript bindings (Rule 4).
+func (a *App) ExportGitSyncStatus(status model.GitSyncStatus) model.GitSyncStatus {
+	return status
+}
+
+
+

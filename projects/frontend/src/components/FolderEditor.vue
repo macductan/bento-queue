@@ -3,23 +3,38 @@ import { ref, watch, onMounted, computed, onBeforeUnmount, provide } from 'vue'
 import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useTabStore } from '@/stores/tabStore'
 import KvpEditor from '@/components/KvpEditor.vue'
 import AuthEditor from '@/components/AuthEditor.vue'
+import DefaultHeadersTable from '@/components/DefaultHeadersTable.vue'
 import { LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
+import { getInheritedHeaders, getDefaultHeaders, type DefaultHeaderItem } from '@/utils/headers'
+import { resolveEffectiveAuth, getAuthArtifacts } from '@/utils/auth'
+import { resolveVariables } from '@/utils/variables'
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
 const envStore = useEnvironmentStore()
+const tabStore = useTabStore()
 
 const loading = ref(false)
 const saving = ref(false)
 const folder = ref<any>(null)
 const variables = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const folder_envs = ref<Record<string, { key: string, value: string, enabled: boolean }[]>>({})
-const selectedEnvScope = ref<string>('__folder_global__')
+const resolveDefaultEnvScope = (): string => {
+  const activeId = envStore.activeEnvId
+  if (activeId && envStore.environments.some(e => e.id === activeId)) {
+    return activeId
+  }
+  return '__folder_global__'
+}
+
+const selectedEnvScope = ref<string>(resolveDefaultEnvScope())
 const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
+const auth_envs = ref<Record<string, AuthConfig>>({})
 const activeTab = ref<'headers' | 'variables' | 'auth'>('headers')
 
 watch(selectedEnvScope, (scope) => {
@@ -28,18 +43,38 @@ watch(selectedEnvScope, (scope) => {
   }
 })
 
+watch(() => envStore.activeEnvId, () => {
+  selectedEnvScope.value = resolveDefaultEnvScope()
+})
+
+watch(
+  () => envStore.environments.map(e => e.id).join(','),
+  () => {
+    const envs = envStore.environments
+    if (selectedEnvScope.value !== '__folder_global__' && !envs.some(e => e.id === selectedEnvScope.value)) {
+      selectedEnvScope.value = resolveDefaultEnvScope()
+    } else if (
+      selectedEnvScope.value === '__folder_global__' &&
+      envStore.activeEnvId &&
+      envs.some(e => e.id === envStore.activeEnvId)
+    ) {
+      selectedEnvScope.value = resolveDefaultEnvScope()
+    }
+  }
+)
+
 const currentScopeVariables = computed<{ key: string, value: string, enabled: boolean }[]>({
   get() {
     if (selectedEnvScope.value === '__folder_global__') {
       return variables.value
     }
-    return folder_envs.value[selectedEnvScope.value] || []
+    return folder_envs.value[selectedEnvScope.value] ?? []
   },
   set(newVal) {
     if (selectedEnvScope.value === '__folder_global__') {
-      variables.value = [...newVal]
+      variables.value = Array.isArray(newVal) ? newVal : []
     } else {
-      folder_envs.value = { ...folder_envs.value, [selectedEnvScope.value]: [...newVal] }
+      folder_envs.value[selectedEnvScope.value] = Array.isArray(newVal) ? newVal : []
     }
   }
 })
@@ -56,16 +91,81 @@ const parentNodes = computed(() => {
   return fullPath.slice(0, -1)
 })
 
+const folderHierarchyNodes = computed(() => {
+  if (!folder.value) return []
+  return [
+    ...parentNodes.value,
+    {
+      id: folder.value.id,
+      name: folderName.value || folder.value.name,
+      variables: variables.value,
+      folder_envs: folder_envs.value
+    }
+  ]
+})
+
 const effectiveVariables = computed(() => {
   return resolveHierarchyVariables({
     collectionVariables: collectionStore.activeCollection?.variables,
     activeEnvVariables: envStore.variablesMap,
-    pathFolders: parentNodes.value,
+    pathFolders: folderHierarchyNodes.value,
     activeEnvId: envStore.activeEnvId
   })
 })
 
 provide('effectiveVariables', effectiveVariables)
+provide('variableHierarchyFolders', folderHierarchyNodes)
+
+const defaultHeaders = computed(() => {
+  if (!folder.value) return []
+  const inherited = getInheritedHeaders(parentNodes.value).map(h => ({
+    ...h,
+    rawValue: h.value || '',
+    value: resolveVariables(h.value || '', effectiveVariables.value)
+  }))
+  const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(auth.value, parentNodes.value, {
+    activeEnvId: envStore.activeEnvId,
+    requestAuthEnvs: auth_envs.value,
+    collection: collectionStore.activeCollection as any
+  })
+  const { headers: authHeaders } = getAuthArtifacts(effectiveAuth, effectiveVariables.value)
+
+  const isInherited = !!sourceNode
+  const folderIdx = sourceNode ? parentNodes.value.findIndex(f => f.id === sourceNode.id) : -1
+  const authFolderLevel = folderIdx !== -1 ? folderIdx + 1 : parentNodes.value.length + 1
+
+  const taggedAuthHeaders = authHeaders.map(h => ({
+    ...h,
+    authSource: 'folder' as const,
+    folderLevel: isInherited && sourceNode ? authFolderLevel : parentNodes.value.length + 1,
+    folderName: isInherited && sourceNode ? sourceNode.name : (folderName.value || folder.value?.name)
+  }))
+
+  return getDefaultHeaders({ headers: headers.value }, inherited, taggedAuthHeaders)
+})
+
+const toggleDefaultHeader = (item: DefaultHeaderItem) => {
+  if (!folder.value || item.overridden) return
+
+  const lower = item.key.toLowerCase().trim()
+  const idx = headers.value.findIndex(
+    h => h && typeof h.key === 'string' && h.key.trim().toLowerCase() === lower
+  )
+
+  if (idx !== -1) {
+    if (!headers.value[idx].enabled) {
+      headers.value.splice(idx, 1)
+    } else {
+      headers.value[idx].enabled = false
+    }
+  } else {
+    headers.value.push({
+      key: item.key,
+      value: item.source === 'auth' ? '' : (item.rawValue ?? item.value ?? ''),
+      enabled: false
+    })
+  }
+}
 
 const headersCount = computed(() => {
   return headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '').length
@@ -91,13 +191,20 @@ const totalVariablesCount = computed(() => {
   return count
 })
 
+const isConfiguredFolderAuth = (a: AuthConfig | undefined): boolean => {
+  if (!a || a.type === 'none' || a.type === 'inherit') return false
+  if (a.type === 'bearer') return !!a.bearer?.token?.trim()
+  if (a.type === 'basic') return !!(a.basic?.username?.trim() || a.basic?.password?.trim())
+  if (a.type === 'apiKey') return !!a.apiKey?.key?.trim()
+  return false
+}
+
 const authCount = computed(() => {
-  const a = auth.value
-  if (!a || a.type === 'none' || a.type === 'inherit') return 0
-  if (a.type === 'bearer') return a.bearer?.token?.trim() ? 1 : 0
-  if (a.type === 'basic') return (a.basic?.username?.trim() || a.basic?.password?.trim()) ? 1 : 0
-  if (a.type === 'apiKey') return a.apiKey?.key?.trim() ? 1 : 0
-  return 0
+  let count = isConfiguredFolderAuth(auth.value) ? 1 : 0
+  for (const envAuth of Object.values(auth_envs.value || {})) {
+    if (isConfiguredFolderAuth(envAuth)) count++
+  }
+  return count
 })
 
 const initialData = ref<string>('')
@@ -113,11 +220,18 @@ const getCleanSnapshot = () => {
       cleanFolderEnvs[envId] = clean
     }
   }
+  const cleanAuthEnvs: Record<string, AuthConfig> = {}
+  for (const [envId, envAuth] of Object.entries(auth_envs.value || {})) {
+    if (envAuth && envAuth.type && envAuth.type !== 'inherit') {
+      cleanAuthEnvs[envId] = envAuth
+    }
+  }
   return JSON.stringify({
     variables: variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== ''),
     folder_envs: cleanFolderEnvs,
     headers: headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== ''),
-    auth: auth.value
+    auth: auth.value,
+    auth_envs: cleanAuthEnvs
   })
 }
 
@@ -125,6 +239,18 @@ const isDirty = computed(() => {
   if (!initialData.value) return false
   return getCleanSnapshot() !== initialData.value
 })
+
+watch(
+  isDirty,
+  (dirty) => {
+    if (loading.value) return
+    const targetFolderId = folder.value?.id || collectionStore.activeFolderId
+    if (targetFolderId) {
+      tabStore.setTabDirty('folder', targetFolderId, dirty)
+    }
+  },
+  { flush: 'sync' }
+)
 
 const cancelAutoSave = () => {
   if (autoSaveTimer) {
@@ -150,7 +276,7 @@ const scheduleAutoSave = (delay = 800) => {
   }
 }
 
-watch([variables, folder_envs, headers, auth], () => {
+watch([variables, folder_envs, headers, auth, auth_envs], () => {
   if (loading.value) return
   if (isDirty.value) {
     scheduleAutoSave()
@@ -164,16 +290,29 @@ const loadFolderData = async () => {
   if (!collectionStore.activeFolderId) return
   cancelAutoSave()
   loading.value = true
+  initialData.value = ''
   try {
     const result = await LoadFolder(collectionStore.activeFolderId)
     if (result.success && result.data) {
       folder.value = result.data
       variables.value = result.data.variables || []
       folder_envs.value = result.data.folder_envs || {}
+      const defaultScope = resolveDefaultEnvScope()
+      if (defaultScope !== '__folder_global__' && !folder_envs.value[defaultScope]) {
+        folder_envs.value[defaultScope] = []
+      }
+      selectedEnvScope.value = defaultScope
       headers.value = result.data.headers || []
       auth.value = result.data.auth || { type: 'inherit' }
+      auth_envs.value = result.data.auth_envs || {}
       initialData.value = getCleanSnapshot()
       saveStatus.value = 'saved'
+      if (folder.value?.id) {
+        tabStore.updateTabMeta('folder', folder.value.id, {
+          name: folderName.value || folder.value.name
+        })
+        tabStore.setTabDirty('folder', folder.value.id, false)
+      }
     } else {
       uiStore.showToast(result.error?.message || 'Không thể tải thông tin thư mục')
     }
@@ -215,18 +354,28 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
           cleanFolderEnvs[envId] = clean
         }
       }
+      const cleanAuthEnvs: Record<string, AuthConfig> = {}
+      for (const [envId, envAuth] of Object.entries(auth_envs.value || {})) {
+        if (envAuth && envAuth.type && envAuth.type !== 'inherit') {
+          cleanAuthEnvs[envId] = envAuth
+        }
+      }
 
       const dataToSave = { 
         ...folder.value, 
         variables: cleanVariables,
         folder_envs: cleanFolderEnvs,
         headers: cleanHeaders,
-        auth: auth.value
+        auth: auth.value,
+        auth_envs: cleanAuthEnvs
       }
       const result = await UpdateFolder(dataToSave)
       if (result.success) {
         initialData.value = getCleanSnapshot()
         saveStatus.value = 'saved'
+        if (folder.value?.id) {
+          tabStore.setTabDirty('folder', folder.value.id, false)
+        }
         if (!options?.silent) {
           uiStore.showToast('Đã lưu cấu hình thư mục')
         }
@@ -254,6 +403,14 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
   return await savePromise
 }
 
+const flushFolder = async (): Promise<boolean> => {
+  cancelAutoSave()
+  if (!folder.value || !isDirty.value) return true
+  return await saveFolderData({ silent: true })
+}
+
+tabStore.registerFolderFlush(flushFolder)
+
 const handleKeydown = (e: KeyboardEvent) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
@@ -275,7 +432,8 @@ watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
     isReverting = false
     return
   }
-  if (oldId && isDirty.value) {
+  const oldStillExists = Boolean(oldId && collectionStore.findNode(collectionStore.tree, oldId))
+  if (oldId && oldStillExists && isDirty.value) {
     const saved = await saveFolderData({ silent: true })
     if (!saved) {
       isReverting = true
@@ -284,21 +442,61 @@ watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
     }
   }
   cancelAutoSave()
+  if (!newId) return
   await loadFolderData()
 })
 
+const syncExternalFolderVariables = (updatedData: any) => {
+  if (!folder.value || loading.value || saving.value || isDirty.value || !updatedData || updatedData.id !== folder.value.id) return
+  const nextVars = Array.isArray(updatedData.variables)
+    ? updatedData.variables.map((v: any) => ({ ...v }))
+    : []
+  const nextFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+  if (updatedData.folder_envs && typeof updatedData.folder_envs === 'object') {
+    for (const [envId, list] of Object.entries(updatedData.folder_envs)) {
+      if (Array.isArray(list)) {
+        nextFolderEnvs[envId] = list.map((v: any) => ({ ...v }))
+      }
+    }
+  }
+  if (selectedEnvScope.value !== '__folder_global__' && !nextFolderEnvs[selectedEnvScope.value]) {
+    nextFolderEnvs[selectedEnvScope.value] = []
+  }
+  folder.value = {
+    ...folder.value,
+    variables: nextVars,
+    folder_envs: nextFolderEnvs
+  }
+  variables.value = nextVars
+  folder_envs.value = nextFolderEnvs
+  cancelAutoSave()
+  initialData.value = getCleanSnapshot()
+  saveStatus.value = 'saved'
+}
+
+const handleExternalFolderUpdated = (e: Event) => {
+  const ce = e as CustomEvent
+  if (ce?.detail) {
+    syncExternalFolderVariables(ce.detail)
+  }
+}
+
 onMounted(() => {
+  tabStore.registerFolderFlush(flushFolder)
   loadFolderData()
   window.addEventListener('keydown', handleKeydown)
   if (typeof window !== 'undefined') {
     window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('hecto:folder-updated', handleExternalFolderUpdated)
   }
 })
 
 onBeforeUnmount(async () => {
+  tabStore.registerFolderFlush(null)
   window.removeEventListener('keydown', handleKeydown)
   if (typeof window !== 'undefined') {
     window.removeEventListener('beforeunload', handleBeforeUnload)
+    window.removeEventListener('hecto:folder-updated', handleExternalFolderUpdated)
   }
   cancelAutoSave()
   const stillExists = folder.value && collectionStore.findNode(collectionStore.tree, folder.value.id)
@@ -419,10 +617,11 @@ onBeforeUnmount(async () => {
       <!-- Tab Content -->
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         <div v-show="activeTab === 'headers'">
+          <DefaultHeadersTable :items="defaultHeaders" @toggle="toggleDefaultHeader" />
           <KvpEditor v-model="headers" />
         </div>
         <div v-show="activeTab === 'auth'">
-          <AuthEditor v-model="auth" :path-nodes="parentNodes" :is-folder="true" />
+          <AuthEditor v-model="auth" v-model:authEnvs="auth_envs" :path-nodes="parentNodes" :is-folder="true" />
         </div>
         <div v-show="activeTab === 'variables'" class="flex flex-col gap-3">
           <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">

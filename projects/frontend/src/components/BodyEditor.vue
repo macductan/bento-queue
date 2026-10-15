@@ -1,9 +1,14 @@
 <script lang="ts" setup>
-import { computed, nextTick, ref } from 'vue'
-import { useRequestStore } from '@/stores/requestStore'
+import { computed, ref } from 'vue'
+import { useRequestStore, type KVPair } from '@/stores/requestStore'
+import { useUiStore } from '@/stores/uiStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
+import KvpEditor from '@/components/KvpEditor.vue'
+import { recordInputSnapshot } from '@/utils/inputUndo'
+import { validateJsonWithPlaceholders, prettifyJsonWithPlaceholders } from '@/utils/jsonEditor'
 
 const requestStore = useRequestStore()
+const uiStore = useUiStore()
 
 const bodyType = computed(() => requestStore.current?.body?.type || 'none')
 const bodyContent = computed({
@@ -15,8 +20,57 @@ const bodyContent = computed({
   }
 })
 
-const setType = (type: 'none' | 'json' | 'text') => {
-  requestStore.setBodyType(type)
+const urlencodedRows = computed<KVPair[]>({
+  get: () => {
+    if (!requestStore.current?.body) return []
+    return Array.isArray(requestStore.current.body.urlencoded) ? requestStore.current.body.urlencoded : []
+  },
+  set: (val) => {
+    if (requestStore.current?.body) {
+      requestStore.current.body.urlencoded = val
+    }
+  }
+})
+
+const formDataRows = computed<KVPair[]>({
+  get: () => {
+    if (!requestStore.current?.body) return []
+    return Array.isArray(requestStore.current.body.form_data) ? requestStore.current.body.form_data : []
+  },
+  set: (val) => {
+    if (requestStore.current?.body) {
+      requestStore.current.body.form_data = val
+    }
+  }
+})
+
+const jsonValidation = computed(() => {
+  if (bodyType.value !== 'json') {
+    return { valid: true }
+  }
+  return validateJsonWithPlaceholders(bodyContent.value)
+})
+
+const formatJson = () => {
+  if (bodyType.value !== 'json' || !bodyContent.value.trim()) return
+  const check = validateJsonWithPlaceholders(bodyContent.value)
+  if (!check.valid) {
+    uiStore.showToast(check.error || 'JSON không hợp lệ, không thể format')
+    return
+  }
+  try {
+    if (textareaRef.value) {
+      recordInputSnapshot(textareaRef.value)
+    }
+    const formatted = prettifyJsonWithPlaceholders(bodyContent.value)
+    bodyContent.value = formatted
+    if (textareaRef.value) {
+      textareaRef.value.value = formatted
+      recordInputSnapshot(textareaRef.value)
+    }
+  } catch (err: any) {
+    uiStore.showToast(err instanceof Error ? err.message : String(err))
+  }
 }
 
 const lineNumbers = computed(() => {
@@ -41,6 +95,7 @@ const handleTab = (e: KeyboardEvent) => {
   
   if (!textareaRef.value) return
   const el = textareaRef.value
+  recordInputSnapshot(el)
   const start = el.selectionStart
   const end = el.selectionEnd
   const val = el.value
@@ -48,43 +103,66 @@ const handleTab = (e: KeyboardEvent) => {
   el.value = val.substring(0, start) + '  ' + val.substring(end)
   el.selectionStart = el.selectionEnd = start + 2
   bodyContent.value = el.value
+  recordInputSnapshot(el)
 }
 </script>
 
 <template>
   <div class="flex flex-col h-full">
-    <!-- Header: Type selector -->
-    <div class="px-3 py-2 flex gap-2" role="radiogroup" aria-label="Body type">
-      <button 
-        role="radio" 
-        :aria-checked="bodyType === 'none'"
-        @click="setType('none')"
-        class="ui-xs rounded-full border border-default px-[10px] py-[4px] min-h-[32px]"
-        :class="bodyType === 'none' ? 'bg-surface-overlay text-text-primary' : 'text-text-secondary hover:text-text-primary'"
-      >None</button>
-      <button 
-        role="radio" 
-        :aria-checked="bodyType === 'json'"
-        @click="setType('json')"
-        class="ui-xs rounded-full border border-default px-[10px] py-[4px] min-h-[32px]"
-        :class="bodyType === 'json' ? 'bg-surface-overlay text-text-primary' : 'text-text-secondary hover:text-text-primary'"
-      >JSON</button>
-      <button 
-        role="radio" 
-        :aria-checked="bodyType === 'text'"
-        @click="setType('text')"
-        class="ui-xs rounded-full border border-default px-[10px] py-[4px] min-h-[32px]"
-        :class="bodyType === 'text' ? 'bg-surface-overlay text-text-primary' : 'text-text-secondary hover:text-text-primary'"
-      >Text</button>
-    </div>
-
     <!-- Body content -->
-    <div v-if="bodyType === 'none' || !['none', 'json', 'text'].includes(bodyType)" class="flex-1 p-3 text-text-secondary ui-sm">
+    <div v-if="bodyType === 'none' || !['none', 'json', 'text', 'xml', 'urlencoded', 'formdata'].includes(bodyType)" class="flex-1 p-3 text-text-secondary ui-sm">
       Request này không có body.
     </div>
+
+    <div v-else-if="bodyType === 'urlencoded'" data-test="body-urlencoded-editor" class="flex-1 p-3 pt-0">
+      <KvpEditor v-model="urlencodedRows" />
+    </div>
+
+    <div v-else-if="bodyType === 'formdata'" data-test="body-formdata-editor" class="flex-1 p-3 pt-0">
+      <KvpEditor v-model="formDataRows" />
+    </div>
     
-    <div v-else class="flex-1 p-3 pt-0 flex flex-col min-h-0">
-      <div class="flex-1 flex flex-row bg-surface-input border border-default rounded-md overflow-hidden min-h-0">
+    <div v-else class="flex-1 p-3 pt-0 flex flex-col min-h-0 gap-2">
+      <!-- Smart JSON Toolbar -->
+      <div v-if="bodyType === 'json'" class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 text-xs">
+          <span
+            v-if="jsonValidation.valid"
+            data-test="json-valid-badge"
+            class="inline-flex items-center gap-1 text-emerald-400 font-medium"
+          >
+            ✓ JSON hợp lệ
+          </span>
+          <span
+            v-else
+            class="inline-flex items-center gap-1 text-red-400 font-medium"
+          >
+            ⚠ JSON lỗi cú pháp (dòng {{ jsonValidation.line }}, cột {{ jsonValidation.column }})
+          </span>
+        </div>
+        <button
+          type="button"
+          data-test="prettify-json-btn"
+          title="Format / Prettify JSON"
+          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors"
+          @click="formatJson"
+        >
+          Format JSON
+        </button>
+      </div>
+
+      <!-- JSON Syntax Error Banner -->
+      <div
+        v-if="bodyType === 'json' && !jsonValidation.valid"
+        data-test="json-error-banner"
+        role="alert"
+        class="px-3 py-1.5 rounded bg-red-950/50 border border-red-500/50 text-red-300 text-xs font-mono"
+      >
+        {{ jsonValidation.error }}
+      </div>
+
+      <div class="flex-1 flex flex-row bg-surface-input border rounded-md overflow-hidden min-h-0"
+           :class="bodyType === 'json' && !jsonValidation.valid ? 'border-red-500/60' : 'border-default'">
         <!-- Line numbers -->
         <div 
           ref="lineNumbersRef"
@@ -97,6 +175,7 @@ const handleTab = (e: KeyboardEvent) => {
           ref="highlighterRef"
           :value="bodyContent"
           :wrap="false"
+          :syntax="bodyType === 'json' ? 'json' : bodyType === 'xml' ? 'xml' : 'plain'"
           overlay-class="p-2 pb-32 mono-base w-full h-full" style="line-height: 21px; font-size: 13px;"
           class="flex-1 w-full h-full min-w-0"
         >

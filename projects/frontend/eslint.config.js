@@ -3,7 +3,7 @@ import tseslint from 'typescript-eslint';
 
 export default [
   {
-    ignores: ['wailsjs/**', 'dist/**']
+    ignores: ['wailsjs/**', 'dist/**', 'playwright-report/**', 'test-results/**']
   },
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/essential'],

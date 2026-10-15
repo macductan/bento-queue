@@ -8,6 +8,77 @@ export interface ToastMessage {
 
 let nextToastId = 0
 
+export const SIDEBAR_WIDTH_STORAGE_KEY = 'hecto_sidebar_width'
+export const REQUEST_PANE_RATIO_STORAGE_KEY = 'hecto_request_pane_ratio'
+
+export const SIDEBAR_DEFAULT_WIDTH = 260
+export const SIDEBAR_MIN_WIDTH = 180
+export const SIDEBAR_MAX_WIDTH = 520
+
+export const REQUEST_PANE_DEFAULT_RATIO = 50
+export const REQUEST_PANE_MIN_RATIO = 15
+export const REQUEST_PANE_MAX_RATIO = 85
+export const PANE_MIN_HEIGHT_PX = 120
+
+function clampSidebarWidth(width: number, viewportWidth?: number): number {
+  if (!Number.isFinite(width)) {
+    return SIDEBAR_DEFAULT_WIDTH
+  }
+  const hasValidViewport = typeof viewportWidth === 'number' && Number.isFinite(viewportWidth) && viewportWidth > 0
+  const maxByViewport = hasValidViewport
+    ? Math.min(SIDEBAR_MAX_WIDTH, Math.floor(viewportWidth * 0.5))
+    : SIDEBAR_MAX_WIDTH
+  const effectiveMax = Math.max(SIDEBAR_MIN_WIDTH, maxByViewport)
+  return Math.min(effectiveMax, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
+}
+
+function clampRequestPaneRatio(ratio: number, containerHeight?: number): number {
+  if (!Number.isFinite(ratio)) {
+    return REQUEST_PANE_DEFAULT_RATIO
+  }
+  let minRatio = REQUEST_PANE_MIN_RATIO
+  let maxRatio = REQUEST_PANE_MAX_RATIO
+
+  if (typeof containerHeight === 'number' && Number.isFinite(containerHeight) && containerHeight > 0) {
+    const minByHeight = Math.ceil((PANE_MIN_HEIGHT_PX / containerHeight) * 100)
+    const maxByHeight = Math.floor(100 - (PANE_MIN_HEIGHT_PX / containerHeight) * 100)
+    minRatio = Math.max(REQUEST_PANE_MIN_RATIO, minByHeight)
+    maxRatio = Math.min(REQUEST_PANE_MAX_RATIO, maxByHeight)
+    if (minRatio > maxRatio) {
+      return REQUEST_PANE_DEFAULT_RATIO
+    }
+  }
+
+  return Math.min(maxRatio, Math.max(minRatio, Math.round(ratio)))
+}
+
+function readStoredNumber(key: string): number | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw === null || raw.trim() === '') {
+      return null
+    }
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredValue(key: string, value: string): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export const useUiStore = defineStore('ui', () => {
   const toast = ref<ToastMessage | null>(null)
   let dismissTimer: ReturnType<typeof setTimeout> | null = null
@@ -108,13 +179,34 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   // Active tab in request editor
-  const activeRequestTab = ref<'params' | 'headers' | 'body' | 'auth'>('params')
+  const activeRequestTab = ref<'params' | 'headers' | 'body' | 'auth' | 'scripts' | 'curl'>('params')
 
   // Environment modal state
   const envModalOpen = ref(false)
 
   // Settings modal state
   const settingsModalOpen = ref(false)
+
+  // Git Sync modal state
+  const gitSyncModalOpen = ref(false)
+
+  // History & Changelog modal state
+  const historyModalOpen = ref(false)
+  function openHistoryModal() {
+    historyModalOpen.value = true
+  }
+  function closeHistoryModal() {
+    historyModalOpen.value = false
+  }
+
+  // Local Mock Server modal state
+  const mockServerModalOpen = ref(false)
+  function openMockServerModal() {
+    mockServerModalOpen.value = true
+  }
+  function closeMockServerModal() {
+    mockServerModalOpen.value = false
+  }
 
   // Import Error modal state
   const importError = ref<string | null>(null)
@@ -141,5 +233,84 @@ export const useUiStore = defineStore('ui', () => {
     }
   }
 
-  return { toast, showToast, clearToast, confirm, requestConfirm, resolveConfirm, contextMenu, openContextMenu, closeContextMenu, unsavedPrompt, requestUnsavedPrompt, resolveUnsavedPrompt, renameTrigger, triggerRename, focusUrlRequested, triggerFocusUrl, focusEnvRequested, triggerFocusEnv, activeRequestTab, envModalOpen, settingsModalOpen, importError, showImportError, clearImportError, autoSaveEnabled, setAutoSaveEnabled }
+  // Resizable layout pane state (persisted in localStorage)
+  const storedSidebarWidth = readStoredNumber(SIDEBAR_WIDTH_STORAGE_KEY)
+  const sidebarWidth = ref<number>(
+    storedSidebarWidth !== null ? clampSidebarWidth(storedSidebarWidth) : SIDEBAR_DEFAULT_WIDTH
+  )
+
+  function setSidebarWidth(width: number, viewportWidth?: number) {
+    if (!Number.isFinite(width)) {
+      return
+    }
+    const clamped = clampSidebarWidth(width, viewportWidth)
+    sidebarWidth.value = clamped
+    writeStoredValue(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped))
+  }
+
+  function resetSidebarWidth() {
+    sidebarWidth.value = SIDEBAR_DEFAULT_WIDTH
+    writeStoredValue(SIDEBAR_WIDTH_STORAGE_KEY, String(SIDEBAR_DEFAULT_WIDTH))
+  }
+
+  const storedRequestPaneRatio = readStoredNumber(REQUEST_PANE_RATIO_STORAGE_KEY)
+  const requestPaneRatio = ref<number>(
+    storedRequestPaneRatio !== null ? clampRequestPaneRatio(storedRequestPaneRatio) : REQUEST_PANE_DEFAULT_RATIO
+  )
+
+  function setRequestPaneRatio(ratio: number, containerHeight?: number) {
+    if (!Number.isFinite(ratio)) {
+      return
+    }
+    const clamped = clampRequestPaneRatio(ratio, containerHeight)
+    requestPaneRatio.value = clamped
+    writeStoredValue(REQUEST_PANE_RATIO_STORAGE_KEY, String(clamped))
+  }
+
+  function resetRequestPaneRatio() {
+    requestPaneRatio.value = REQUEST_PANE_DEFAULT_RATIO
+    writeStoredValue(REQUEST_PANE_RATIO_STORAGE_KEY, String(REQUEST_PANE_DEFAULT_RATIO))
+  }
+
+  return {
+    toast,
+    showToast,
+    clearToast,
+    confirm,
+    requestConfirm,
+    resolveConfirm,
+    contextMenu,
+    openContextMenu,
+    closeContextMenu,
+    unsavedPrompt,
+    requestUnsavedPrompt,
+    resolveUnsavedPrompt,
+    renameTrigger,
+    triggerRename,
+    focusUrlRequested,
+    triggerFocusUrl,
+    focusEnvRequested,
+    triggerFocusEnv,
+    activeRequestTab,
+    envModalOpen,
+    settingsModalOpen,
+    gitSyncModalOpen,
+    historyModalOpen,
+    openHistoryModal,
+    closeHistoryModal,
+    mockServerModalOpen,
+    openMockServerModal,
+    closeMockServerModal,
+    importError,
+    showImportError,
+    clearImportError,
+    autoSaveEnabled,
+    setAutoSaveEnabled,
+    sidebarWidth,
+    setSidebarWidth,
+    resetSidebarWidth,
+    requestPaneRatio,
+    setRequestPaneRatio,
+    resetRequestPaneRatio
+  }
 })

@@ -2,10 +2,22 @@
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useRequestStore } from '@/stores/requestStore'
 import type { TreeNode } from '@/stores/collectionStore'
 
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
+const requestStore = useRequestStore()
+
+const isTargetRequestDirty = computed(() => {
+  return (
+    uiStore.contextMenu?.nodeType === 'request' &&
+    uiStore.contextMenu.nodeId !== '' &&
+    collectionStore.activeRequestId === uiStore.contextMenu.nodeId &&
+    requestStore.current?.id === uiStore.contextMenu.nodeId &&
+    requestStore.isDirty
+  )
+})
 
 interface FlatFolder {
   id: string
@@ -212,6 +224,14 @@ onUnmounted(() => {
     </template>
     
     <template v-if="uiStore.contextMenu.nodeType === 'request'">
+      <div
+        v-if="isTargetRequestDirty"
+        data-test="context-menu-unsaved-indicator"
+        class="px-3 py-1.5 flex items-center gap-2 text-xs text-amber-400 border-b border-border-default mb-1 select-none"
+      >
+        <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
+        <span>Chưa lưu</span>
+      </div>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleRename"

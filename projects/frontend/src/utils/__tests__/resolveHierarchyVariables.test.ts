@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { resolveHierarchyVariables } from '../resolveHierarchyVariables'
+import {
+  resolveHierarchyVariables,
+  buildVariableScopeOptions,
+  inspectVariableHierarchy
+} from '../resolveHierarchyVariables'
 
 describe('resolveHierarchyVariables', () => {
   it('Scenario 1: Only Collection Env (Level 1)', () => {
@@ -203,3 +207,148 @@ describe('resolveHierarchyVariables', () => {
     expect(result.get('validKey')).toBe('realValue')
   })
 })
+
+describe('buildVariableScopeOptions & inspectVariableHierarchy', () => {
+  const folderA = {
+    id: 'folder-a',
+    name: 'Folder A',
+    variables: [{ key: 'sharedKey', value: 'folder-a-global', enabled: true }],
+    folder_envs: {
+      'env-local': [{ key: 'sharedKey', value: 'folder-a-local', enabled: true }],
+      'env-staging': [{ key: 'sharedKey', value: 'folder-a-staging', enabled: true }]
+    }
+  }
+
+  const folderB = {
+    id: 'folder-b',
+    name: 'Folder B',
+    variables: [{ key: 'sharedKey', value: 'folder-b-global', enabled: true }],
+    folder_envs: {
+      'env-local': [{ key: 'baseUrl', value: 'http://folder-b-local', enabled: true }],
+      'env-staging': [{ key: 'baseUrl', value: 'http://folder-b-staging', enabled: true }]
+    }
+  }
+
+  const environments = [
+    {
+      id: 'env-local',
+      name: 'Local',
+      variables: [{ key: 'globalKey', value: 'local-val', enabled: true }]
+    },
+    {
+      id: 'env-staging',
+      name: 'Staging',
+      variables: [{ key: 'globalKey', value: 'staging-val', enabled: true }]
+    }
+  ]
+
+  it('lists all ancestor folders and Global/Collection Env filtered strictly to activeEnvId', () => {
+    const options = buildVariableScopeOptions({
+      pathFolders: [folderA, folderB],
+      activeEnvId: 'env-local',
+      environments
+    })
+
+    expect(options.map(o => o.label)).toEqual([
+      'Folder: Folder B (Local)',
+      'Folder: Folder B (Dùng chung)',
+      'Folder: Folder A (Local)',
+      'Folder: Folder A (Dùng chung)',
+      'Global Env (Local)',
+      'Collection Env (Dùng chung)'
+    ])
+    expect(options.some(o => o.label.includes('Staging'))).toBe(false)
+  })
+
+  it('lists only Folder Global (Dùng chung) and Collection Env when activeEnvId is null', () => {
+    const options = buildVariableScopeOptions({
+      pathFolders: [folderA],
+      activeEnvId: null,
+      environments
+    })
+
+    expect(options.map(o => o.label)).toEqual([
+      'Folder: Folder A (Dùng chung)',
+      'Collection Env (Dùng chung)'
+    ])
+    expect(options.some(o => o.kind === 'global-env' || o.kind === 'folder-env')).toBe(false)
+  })
+
+  it('selects Winning Tier for resolved variable and provides values across all scopes', () => {
+    const result = inspectVariableHierarchy('baseUrl', {
+      collectionVariables: [{ key: 'baseUrl', value: 'http://coll', enabled: true }],
+      pathFolders: [folderA, folderB],
+      activeEnvId: 'env-local',
+      environments
+    })
+
+    expect(result.isResolved).toBe(true)
+    expect(result.effectiveValue).toBe('http://folder-b-local')
+    expect(result.winningScopeId).toBe('folder-env:folder-b:env-local')
+    expect(result.defaultScopeId).toBe('folder-env:folder-b:env-local')
+    expect(result.winningOption?.label).toBe('Folder: Folder B (Local)')
+    expect(result.valuesByScopeId['collection']).toBe('http://coll')
+    expect(result.valuesByScopeId['folder-env:folder-b:env-local']).toBe('http://folder-b-local')
+    expect(result.valuesByScopeId['folder-global:folder-a']).toBeUndefined()
+  })
+
+  it('respects 4-tier precedence where parent Folder-Env (Level 4) beats child Folder Global (Level 3)', () => {
+    const result = inspectVariableHierarchy('sharedKey', {
+      collectionVariables: [{ key: 'sharedKey', value: 'coll-val', enabled: true }],
+      pathFolders: [folderA, folderB],
+      activeEnvId: 'env-local',
+      environments
+    })
+
+    // Folder A has folder_envs['env-local'] (Level 4), Folder B only has variables (Level 3)
+    expect(result.isResolved).toBe(true)
+    expect(result.effectiveValue).toBe('folder-a-local')
+    expect(result.winningScopeId).toBe('folder-env:folder-a:env-local')
+    expect(result.winningOption?.label).toBe('Folder: Folder A (Local)')
+  })
+
+  it('defaults to Global Env (<Active Env>) when variable is missing and activeEnvId is set', () => {
+    const result = inspectVariableHierarchy('newKey', {
+      collectionVariables: [],
+      pathFolders: [folderA, folderB],
+      activeEnvId: 'env-local',
+      environments
+    })
+
+    expect(result.isResolved).toBe(false)
+    expect(result.winningScopeId).toBeNull()
+    expect(result.defaultScopeId).toBe('global-env:env-local')
+    expect(result.defaultOption.label).toBe('Global Env (Local)')
+    expect(result.valuesByScopeId).toEqual({})
+  })
+
+  it('defaults to Collection Env (Dùng chung) when variable is missing and activeEnvId is null', () => {
+    const result = inspectVariableHierarchy('newKey', {
+      collectionVariables: [],
+      pathFolders: [folderA],
+      activeEnvId: null,
+      environments
+    })
+
+    expect(result.isResolved).toBe(false)
+    expect(result.winningScopeId).toBeNull()
+    expect(result.defaultScopeId).toBe('collection')
+    expect(result.defaultOption.label).toBe('Collection Env (Dùng chung)')
+  })
+
+  it('treats stale activeEnvId as inactive when environments is an empty array []', () => {
+    const result = inspectVariableHierarchy('newKey', {
+      collectionVariables: [],
+      pathFolders: [folderA],
+      activeEnvId: 'env-deleted',
+      environments: []
+    })
+
+    expect(result.options.map(o => o.label)).toEqual([
+      'Folder: Folder A (Dùng chung)',
+      'Collection Env (Dùng chung)'
+    ])
+    expect(result.defaultScopeId).toBe('collection')
+  })
+})
+

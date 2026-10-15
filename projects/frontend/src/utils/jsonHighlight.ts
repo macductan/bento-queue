@@ -25,7 +25,7 @@ export function tryParseJson(body: string): boolean {
   try {
     JSON.parse(body)
     return true
-  } catch (e) {
+  } catch {
     return false
   }
 }

@@ -87,7 +87,8 @@ func TestExecutorService_Send_Validation(t *testing.T) {
 		name string
 		req  model.ExecuteRequest
 	}{
-		{"Invalid Method", model.ExecuteRequest{Method: "FOO", URL: "http://example.com"}},
+		{"Empty Method", model.ExecuteRequest{Method: "", URL: "http://example.com"}},
+		{"Invalid Method Token", model.ExecuteRequest{Method: "BAD METHOD!", URL: "http://example.com"}},
 		{"Empty URL", model.ExecuteRequest{Method: "GET", URL: ""}},
 		{"No Scheme", model.ExecuteRequest{Method: "GET", URL: "example.com"}},
 		{"Invalid URL", model.ExecuteRequest{Method: "GET", URL: "http://\x00"}},
@@ -103,6 +104,26 @@ func TestExecutorService_Send_Validation(t *testing.T) {
 				t.Errorf("Expected VALIDATION for %s, got %s", tt.name, res.Error.Code)
 			}
 		})
+	}
+}
+
+func TestExecutorService_Send_CustomMethods(t *testing.T) {
+	var receivedMethods []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethods = append(receivedMethods, r.Method)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	exec := newTestExecutor()
+	for _, m := range []string{"HEAD", "OPTIONS", "PURGE", "PROPFIND"} {
+		res := exec.Send(model.ExecuteRequest{Method: m, URL: ts.URL})
+		if !res.Success {
+			t.Fatalf("Expected success for method %s, got error: %v", m, res.Error)
+		}
+	}
+	if len(receivedMethods) != 4 || receivedMethods[2] != "PURGE" {
+		t.Errorf("Expected received methods [HEAD OPTIONS PURGE PROPFIND], got %v", receivedMethods)
 	}
 }
 
@@ -435,3 +456,82 @@ func TestExecutorService_AbortAfterSuccess(t *testing.T) {
 		t.Errorf("Abort failed")
 	}
 }
+
+func TestExecutorService_MultipartFormData(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ct := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "multipart/form-data; boundary=") {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("missing multipart boundary: " + ct))
+			return
+		}
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("parse multipart error: " + err.Error()))
+			return
+		}
+		user := r.FormValue("username")
+		role := r.FormValue("role")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(user + ":" + role))
+	}))
+	defer srv.Close()
+
+	exec := newTestExecutor()
+	res := exec.Send(model.ExecuteRequest{
+		Method:   "POST",
+		URL:      srv.URL,
+		BodyType: "formdata",
+		FormData: []model.KVPair{
+			{Key: "username", Value: "alice", Enabled: true},
+			{Key: "role", Value: "admin", Enabled: true},
+			{Key: "ignored", Value: "no", Enabled: false},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("Expected success, got error: %+v", res.Error)
+	}
+	resp := res.Data.(model.ExecuteResponse)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d (%s)", resp.StatusCode, resp.Body)
+	}
+	if resp.Body != "alice:admin" {
+		t.Fatalf("Expected body 'alice:admin', got %q", resp.Body)
+	}
+}
+
+func TestExecutorService_MultipartFormData_AllDisabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if len(r.MultipartForm.Value) > 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("unexpected fields sent"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	exec := newTestExecutor()
+	res := exec.Send(model.ExecuteRequest{
+		Method:   "POST",
+		URL:      srv.URL,
+		BodyType: "formdata",
+		FormData: []model.KVPair{
+			{Key: "user", Value: "alice", Enabled: false},
+			{Key: "pass", Value: "secret", Enabled: false},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("Expected success, got error: %+v", res.Error)
+	}
+	resp := res.Data.(model.ExecuteResponse)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d (%s)", resp.StatusCode, resp.Body)
+	}
+}
+

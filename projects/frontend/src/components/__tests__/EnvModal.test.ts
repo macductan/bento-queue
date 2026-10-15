@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import EnvModal from '../environment/EnvModal.vue'
+import EnvSelector from '../environment/EnvSelector.vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUiStore } from '@/stores/uiStore'
@@ -90,5 +91,32 @@ describe('EnvModal', () => {
 
     expect(saveSpy).toHaveBeenCalledTimes(1)
     expect(saveSpy.mock.calls[0][0].variables[0].value).toBe('127.0.0.1')
+  })
+})
+
+describe('EnvSelector', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('calls envStore.setActive when user selects an environment or "Không dùng env" (null)', async () => {
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [], created_at: '', updated_at: '' } as any,
+      { id: 'env-prod', name: 'Prod', variables: [], created_at: '', updated_at: '' } as any
+    ]
+    const setActiveSpy = vi.spyOn(envStore, 'setActive')
+
+    const wrapper = mount(EnvSelector)
+    const select = wrapper.find('select')
+
+    await select.setValue('env-local')
+    expect(setActiveSpy).toHaveBeenCalledWith('env-local')
+    expect(envStore.activeEnvId).toBe('env-local')
+
+    ;(select.element as HTMLSelectElement).selectedIndex = 0
+    await select.trigger('change')
+    expect(setActiveSpy).toHaveBeenCalledWith(null)
+    expect(envStore.activeEnvId).toBeNull()
   })
 })

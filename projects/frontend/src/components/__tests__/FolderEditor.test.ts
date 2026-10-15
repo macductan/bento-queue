@@ -341,5 +341,319 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     expect(vm.selectedEnvScope).toBe('env-dev')
     expect(vm.currentScopeVariables[0].key).toBe('auth_url')
   })
+
+  it('auto-detects selectedEnvScope from envStore.activeEnvId on folder open and folder switch without dirtying state', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Prod', variables: [] } as any
+    ]
+    envStore.activeEnvId = 'env-local'
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [
+      { ...mockTreeNode },
+      { ...mockTreeNode, id: 'folder-2', name: 'Folder 2' }
+    ]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('env-local')
+    expect(vm.folder_envs['env-local']).toEqual([])
+    expect(vm.isDirty).toBe(false)
+    expect(vm.saveStatus).toBe('saved')
+
+    // User manually switches dropdown to Folder Global Env
+    const select = wrapper.find('select#folder-env-scope-select')
+    await select.setValue('__folder_global__')
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+
+    // User switches to folder-2 -> auto-detects 'env-local' again
+    colStore.activeFolderId = 'folder-2'
+    await flushPromises()
+    expect(vm.selectedEnvScope).toBe('env-local')
+    expect(vm.isDirty).toBe(false)
+  })
+
+  it('updates selectedEnvScope reactively when envStore.activeEnvId changes on Header while preserving folder edits', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Prod', variables: [] } as any
+    ]
+    envStore.activeEnvId = 'env-local'
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('env-local')
+
+    // Edit variable in env-local scope
+    vm.currentScopeVariables = [{ key: 'local_key', value: 'local_val', enabled: true }]
+    await nextTick()
+    expect(vm.isDirty).toBe(true)
+
+    // Header changes activeEnvId to 'env-prod'
+    envStore.activeEnvId = 'env-prod'
+    await nextTick()
+    expect(vm.selectedEnvScope).toBe('env-prod')
+    expect(vm.folder_envs['env-local']).toEqual([{ key: 'local_key', value: 'local_val', enabled: true }])
+    expect(vm.isDirty).toBe(true)
+
+    // Header changes activeEnvId to null ("Không dùng env")
+    envStore.activeEnvId = null
+    await nextTick()
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+    expect(vm.isDirty).toBe(true)
+  })
+
+  it('falls back to __folder_global__ when activeEnvId is not in environments or when a manually selected env is deleted from environments', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Prod', variables: [] } as any
+    ]
+    // activeEnvId points to a non-existent environment
+    envStore.activeEnvId = 'env-missing'
+
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+
+    // User manually selects 'env-prod'
+    const select = wrapper.find('select#folder-env-scope-select')
+    await select.setValue('env-prod')
+    expect(vm.selectedEnvScope).toBe('env-prod')
+
+    // 'env-prod' is deleted from envStore.environments while activeEnvId is 'env-local'
+    envStore.activeEnvId = null
+    await nextTick()
+    await select.setValue('env-prod')
+    expect(vm.selectedEnvScope).toBe('env-prod')
+
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any
+    ]
+    await nextTick()
+    expect(vm.selectedEnvScope).toBe('__folder_global__')
+  })
+
+  it('includes current folder in folderHierarchyNodes and effectiveVariables while keeping parentNodes for AuthEditor, and guards syncExternalFolderVariables when dirty', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [
+      {
+        id: 'parent-folder',
+        name: 'Parent Folder',
+        type: 'folder',
+        path: 'Parent Folder',
+        created_at: '2026-10-13',
+        variables: [{ key: 'parent_var', value: 'p1', enabled: true }],
+        children: [
+          { ...mockTreeNode, path: 'Parent Folder/Auth Module' }
+        ]
+      }
+    ]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    expect(vm.parentNodes.map((n: any) => n.id)).toEqual(['parent-folder'])
+    expect(vm.folderHierarchyNodes.map((n: any) => n.id)).toEqual(['parent-folder', 'folder-1'])
+    expect(vm.effectiveVariables.get('parent_var')).toBe('p1')
+    expect(vm.effectiveVariables.get('base_url')).toBe('https://api.com')
+
+    // External update when clean should sync
+    window.dispatchEvent(new CustomEvent('hecto:folder-updated', {
+      detail: {
+        id: 'folder-1',
+        variables: [{ key: 'base_url', value: 'https://synced.api.com', enabled: true }],
+        folder_envs: {}
+      }
+    }))
+    await nextTick()
+    expect(vm.variables[0].value).toBe('https://synced.api.com')
+    expect(vm.isDirty).toBe(false)
+
+    // External update when dirty should NOT overwrite unsaved edits
+    vm.headers.push({ key: 'X-Unsaved', value: '1', enabled: true })
+    await nextTick()
+    expect(vm.isDirty).toBe(true)
+
+    window.dispatchEvent(new CustomEvent('hecto:folder-updated', {
+      detail: {
+        id: 'folder-1',
+        variables: [{ key: 'base_url', value: 'https://overwrite-attempt.api.com', enabled: true }],
+        folder_envs: {}
+      }
+    }))
+    await nextTick()
+    expect(vm.variables[0].value).toBe('https://synced.api.com')
+  })
+
+  it('integrates real KvpEditor, AuthEditor, and DefaultHeadersTable with 4-tier variable resolution and visible Key inputs', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    const colStore = useCollectionStore()
+
+    // Tier 1: Collection Env
+    colStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        variables: [{ key: 'coll_var', value: 'coll-val', enabled: true }]
+      } as any
+    ]
+    colStore.activeCollectionId = 'Test-Collection'
+
+    // Tier 2: Active Global Env
+    envStore.environments = [
+      {
+        id: 'env-dev',
+        name: 'Dev',
+        variables: [{ key: 'env_name', value: 'staging', enabled: true }]
+      } as any
+    ]
+    envStore.activeEnvId = 'env-dev'
+
+    // Tier 3 & 4: Parent Folder & Current Folder
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [
+      {
+        id: 'parent-folder',
+        name: 'Parent Folder',
+        type: 'folder',
+        path: 'Parent Folder',
+        created_at: '2026-10-13',
+        headers: [{ key: 'X-Env', value: '{{env_name}}-{{parent_var}}', enabled: true }],
+        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } },
+        variables: [{ key: 'parent_var', value: 'parent-v1', enabled: true }],
+        children: [
+          { ...mockTreeNode, path: 'Parent Folder/Auth Module' }
+        ]
+      }
+    ]
+
+    vi.useFakeTimers()
+    vi.mocked(LoadFolder).mockResolvedValue({
+      success: true,
+      data: {
+        id: 'folder-1',
+        name: 'Auth Module',
+        variables: [{ key: 'bearer_token', value: 'secret-jwt', enabled: true }],
+        folder_envs: {
+          'env-dev': [{ key: 'bearer_token', value: 'env-specific-jwt', enabled: true }]
+        },
+        headers: [{ key: 'X-Custom', value: '{{coll_var}}', enabled: true }],
+        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } }
+      }
+    } as any)
+
+    activeWrapper = mount(FolderEditor, { attachTo: document.body })
+    await flushPromises()
+    await nextTick()
+
+    // 1. Verify DefaultHeadersTable in FolderEditor resolves 4-tier variables for inherited headers and preserves rawValue
+    const vm = activeWrapper.vm as any
+    const inheritedEnvHeader = vm.defaultHeaders.find((h: any) => h.key === 'X-Env')
+    const authHeader = vm.defaultHeaders.find((h: any) => h.key === 'Authorization')
+    expect(inheritedEnvHeader).toEqual(
+      expect.objectContaining({
+        key: 'X-Env',
+        value: 'staging-parent-v1',
+        rawValue: '{{env_name}}-{{parent_var}}',
+        source: 'folder'
+      })
+    )
+    expect(authHeader).toEqual(
+      expect.objectContaining({
+        key: 'Authorization',
+        value: 'Bearer env-specific-jwt',
+        source: 'auth'
+      })
+    )
+
+    // Verify toggleDefaultHeader disable / re-enable cycle preserves rawValue for folder header and '' for auth header
+    vm.toggleDefaultHeader(inheritedEnvHeader)
+    expect(vm.headers).toContainEqual({
+      key: 'X-Env',
+      value: '{{env_name}}-{{parent_var}}',
+      enabled: false
+    })
+    vm.toggleDefaultHeader(vm.defaultHeaders.find((h: any) => h.key === 'X-Env'))
+    expect(vm.headers.some((h: any) => h.key === 'X-Env')).toBe(false)
+
+    vm.toggleDefaultHeader(authHeader)
+    expect(vm.headers).toContainEqual({
+      key: 'Authorization',
+      value: '',
+      enabled: false
+    })
+    vm.toggleDefaultHeader(vm.defaultHeaders.find((h: any) => h.key === 'Authorization'))
+    expect(vm.headers.some((h: any) => h.key === 'Authorization')).toBe(false)
+
+    // 2. Verify Key input in KvpEditor uses text-text-primary (not text-transparent) and Value highlights {{coll_var}}
+    const keyInputs = activeWrapper.findAll('input[placeholder="Key"]')
+    expect(keyInputs.length).toBeGreaterThan(0)
+    expect(keyInputs[0].classes()).toContain('text-text-primary')
+    expect(keyInputs[0].classes()).not.toContain('text-transparent')
+    expect(activeWrapper.find('span.text-variable-valid').text()).toBe('{{coll_var}}')
+
+    // 3. Verify typing into phantom row of Variables tab in env-dev scope binds directly to folder_envs['env-dev']
+    const varsTabInputs = activeWrapper.findAll('input[placeholder="Key"]')
+    const lastPhantomKeyInput = varsTabInputs[varsTabInputs.length - 1]
+    ;(lastPhantomKeyInput.element as HTMLInputElement).value = 'new_env_var'
+    await lastPhantomKeyInput.trigger('input')
+    await nextTick()
+
+    expect(vm.folder_envs['env-dev']).toEqual([
+      { key: 'bearer_token', value: 'env-specific-jwt', enabled: true },
+      { key: 'new_env_var', value: '', enabled: true }
+    ])
+
+    // 4. Verify AuthEditor highlights {{bearer_token}} and hovering opens VariableHoverPopover with all 4 tiers
+    const bearerInput = activeWrapper.find('input#bearer-token-input')
+    expect(bearerInput.exists()).toBe(true)
+    expect(bearerInput.attributes('type')).toBe('text')
+    const bearerSpan = activeWrapper
+      .findAll('span.text-variable-valid')
+      .find((s: any) => s.text() === '{{bearer_token}}')
+    expect(bearerSpan).toBeDefined()
+
+    await bearerSpan!.trigger('mousemove')
+    await vi.advanceTimersByTimeAsync(200)
+    await nextTick()
+
+    const popover = document.body.querySelector('[data-test="variable-hover-popover"]')
+    expect(popover).not.toBeNull()
+    expect(popover?.textContent).toContain('Folder: Auth Module (Dev)')
+    expect(popover?.textContent).toContain('Folder: Auth Module (Dùng chung)')
+    expect(popover?.textContent).toContain('Folder: Parent Folder (Dev)')
+    expect(popover?.textContent).toContain('Folder: Parent Folder (Dùng chung)')
+    expect(popover?.textContent).toContain('Global Env (Dev)')
+    expect(popover?.textContent).toContain('Collection Env (Dùng chung)')
+  })
 })
+
+
+
+
 

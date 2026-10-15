@@ -1,0 +1,34 @@
+- id: "1"
+  title: "Pre-request and Post-response Script Runner with pm.environment and pm.response APIs"
+  description: >-
+    Hỗ trợ viết và thực thi Pre-request Script và Post-response Script trên từng Request với đối tượng pm (pm.environment.get(k), pm.environment.set(k, v), pm.response.json(), pm.response.text(), pm.response.code) kèm giao diện tab Scripts và khung hiển thị log/lỗi thực thi (CAP-1 / Mục 32).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên Go backend: bổ sung struct Scripts (PreRequest string, PostResponse string) và trường Scripts *Scripts vào model.Request trong projects/model/types.go.
+    Trên Vue frontend: cập nhật projects/frontend/wailsjs/go/models.ts, requestStore.ts; tạo projects/frontend/src/utils/scriptRunner.ts cung cấp executeScript hỗ trợ pm.environment.get(k), pm.environment.set(k, v), pm.variables.get/set, pm.response.json(), pm.response.text(), pm.response.code, và console.log/warn/error.
+    Tích hợp thực thi Pre-request và Post-response script vào projects/frontend/src/stores/responseStore.ts và tự động lưu các biến được cập nhật qua pm.environment.set vào active environment (environmentStore) hoặc collection variables.
+    Tạo projects/frontend/src/components/ScriptEditor.vue (data-test="pre-request-script-input", data-test="post-response-script-input", data-test="script-execution-output") và gắn vào RequestTabs.vue + RequestEditor.vue.
+    Viết đầy đủ unit/component tests trong scriptRunner.test.ts và RequestEditor.test.ts; đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.
+
+- id: "2"
+  title: "Request Execution History and Collection Changelog"
+  description: >-
+    Lưu trữ và hiển thị Lịch sử gọi API (Request Execution History) và Lịch sử thay đổi (Changelog) theo từng Collection trên đĩa, cho phép tra cứu, lọc và khôi phục lại request/response từ lịch sử (CAP-2 / Mục 12 & 5).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên Go backend: bổ sung ExecutionHistoryEntry và ChangelogEntry vào projects/model/types.go; tạo HistoryService trong projects/service/history.go lưu trữ tại <collRoot>/.history/executions.json và <collRoot>/.history/changelog.json; gắn Wails bindings vào projects/app.go (ListExecutionHistory, RecordExecutionHistory, ClearExecutionHistory, ListChangelog, ClearChangelog) và tự động ghi nhận changelog/execution history khi thực thi request hoặc thay đổi dữ liệu.
+    Trên Vue frontend: cập nhật projects/frontend/wailsjs/go/models.ts và App.js/App.d.ts; tạo historyStore.ts và HistoryModal.vue (data-test="history-modal", data-test="history-tab-executions", data-test="history-tab-changelog", data-test="restore-execution-btn", data-test="clear-executions-btn", data-test="clear-changelog-btn") cùng nút mở trên AppHeader.vue (data-test="open-history-modal-btn").
+    Viết đầy đủ Go tests trong history_test.go và Vitest tests trong HistoryModal.test.ts; đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.
+
+- id: "3"
+  title: "Local Mock HTTP Server with Configurable Mock Routes"
+  description: >-
+    Tích hợp Local Mock HTTP Server trong Go backend và giao diện quản lý Mock Routes trên Vue frontend, cho phép khởi chạy HTTP server cục bộ trả về mock response theo Method, Path, Status Code, Headers, Body và Delay (CAP-3 / Mục 13).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên Go backend: bổ sung MockRoute, MockServerConfig, MockServerStatus vào projects/model/types.go; tạo MockServerService trong projects/service/mock_server.go quản lý net/http.Server lắng nghe trên 127.0.0.1:<port>, lưu cấu hình vào <collRoot>/mock-server.json, khớp route theo Method (GET/POST/.../ANY) và Path (exact hoặc :param); gắn Wails bindings vào projects/app.go (GetMockServerStatus, SaveMockServerConfig, StartMockServer, StopMockServer).
+    Trên Vue frontend: cập nhật projects/frontend/wailsjs/go/models.ts và App.js/App.d.ts; tạo mockServerStore.ts và MockServerModal.vue (data-test="mock-server-modal", data-test="mock-port-input", data-test="mock-toggle-server-btn", data-test="add-mock-route-btn", data-test="save-mock-config-btn") cùng nút mở trên AppHeader.vue (data-test="open-mock-server-btn").
+    Viết đầy đủ Go tests trong mock_server_test.go (sử dụng t.TempDir() và port 0) và Vitest tests trong MockServerModal.test.ts; đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.
