@@ -11,9 +11,25 @@ export interface KVPair {
 import type { AuthConfig } from './collectionStore'
 import { useTabStore } from './tabStore'
 
+export type BodyType = 'none' | 'json' | 'text' | 'xml' | 'urlencoded' | 'formdata'
+
+export const AUTO_CONTENT_TYPES: Record<string, string> = {
+  json: 'application/json',
+  xml: 'application/xml',
+  urlencoded: 'application/x-www-form-urlencoded',
+  formdata: 'multipart/form-data'
+}
+
 export interface Body {
   type: string
   content: string
+  form_data?: KVPair[]
+  urlencoded?: KVPair[]
+}
+
+export interface Scripts {
+  pre_request?: string
+  post_response?: string
 }
 
 export interface Request {
@@ -25,6 +41,8 @@ export interface Request {
   params: KVPair[]
   body: Body
   auth?: AuthConfig
+  auth_envs?: Record<string, AuthConfig>
+  scripts?: Scripts
   created_at: string
   updated_at: string
 }
@@ -96,11 +114,14 @@ export const useRequestStore = defineStore('request', {
           if (!this.original.auth) {
             this.original.auth = { type: 'inherit' }
           }
-          if (this.original?.body?.type === 'json' && this.original.headers) {
+          const expectedAutoCt = this.original?.body?.type
+            ? AUTO_CONTENT_TYPES[this.original.body.type]
+            : undefined
+          if (expectedAutoCt && this.original.headers) {
             const h = this.original.headers.find(
               item => item && typeof item.key === 'string' &&
               item.key.trim().toLowerCase() === 'content-type' &&
-              item.value.trim().toLowerCase() === 'application/json'
+              item.value.trim().toLowerCase() === expectedAutoCt
             )
             if (h) {
               h._isAuto = true
@@ -284,36 +305,44 @@ export const useRequestStore = defineStore('request', {
       this.activeSavePromise = savePromise
       return await savePromise
     },
-    setBodyType(type: 'none' | 'json' | 'text') {
+    setBodyType(type: BodyType) {
       if (!this.current) return
       if (!this.current.body) {
         this.current.body = { type: 'none', content: '' }
       }
+      if (type === 'urlencoded' && !Array.isArray(this.current.body.urlencoded)) {
+        this.current.body.urlencoded = []
+      }
+      if (type === 'formdata' && !Array.isArray(this.current.body.form_data)) {
+        this.current.body.form_data = []
+      }
       
       const hs = this.current.headers || []
       if (!this.current.headers) this.current.headers = hs
-    
-      if (type !== 'json' && this.contentTypeAuto) {
+
+      const targetCt = AUTO_CONTENT_TYPES[type]
+
+      if (this.contentTypeAuto || hs.some(h => h._isAuto)) {
         const autoIndex = hs.findIndex(h => h._isAuto)
         if (autoIndex >= 0) {
           hs.splice(autoIndex, 1)
         }
         this.contentTypeAuto = false
       }
-    
-      if (type === 'json' && !this.contentTypeAuto) {
+
+      if (targetCt) {
         const hasContentType = hs.some(h => h.key.trim().toLowerCase() === 'content-type')
         if (!hasContentType) {
           hs.unshift({
             key: 'Content-Type',
-            value: 'application/json',
+            value: targetCt,
             enabled: true,
             _isAuto: true
           })
           this.contentTypeAuto = true
         }
       }
-    
+
       this.current.body.type = type
     }
   }

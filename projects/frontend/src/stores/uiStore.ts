@@ -179,13 +179,34 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   // Active tab in request editor
-  const activeRequestTab = ref<'params' | 'headers' | 'body' | 'auth'>('params')
+  const activeRequestTab = ref<'params' | 'headers' | 'body' | 'auth' | 'scripts' | 'curl'>('params')
 
   // Environment modal state
   const envModalOpen = ref(false)
 
   // Settings modal state
   const settingsModalOpen = ref(false)
+
+  // Git Sync modal state
+  const gitSyncModalOpen = ref(false)
+
+  // History & Changelog modal state
+  const historyModalOpen = ref(false)
+  function openHistoryModal() {
+    historyModalOpen.value = true
+  }
+  function closeHistoryModal() {
+    historyModalOpen.value = false
+  }
+
+  // Local Mock Server modal state
+  const mockServerModalOpen = ref(false)
+  function openMockServerModal() {
+    mockServerModalOpen.value = true
+  }
+  function closeMockServerModal() {
+    mockServerModalOpen.value = false
+  }
 
   // Import Error modal state
   const importError = ref<string | null>(null)
@@ -273,6 +294,13 @@ export const useUiStore = defineStore('ui', () => {
     activeRequestTab,
     envModalOpen,
     settingsModalOpen,
+    gitSyncModalOpen,
+    historyModalOpen,
+    openHistoryModal,
+    closeHistoryModal,
+    mockServerModalOpen,
+    openMockServerModal,
+    closeMockServerModal,
     importError,
     showImportError,
     clearImportError,

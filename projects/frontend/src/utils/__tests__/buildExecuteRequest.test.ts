@@ -525,5 +525,71 @@ describe('buildExecuteRequest', () => {
     const exec = buildExecuteRequest(req)
     expect(exec.url).toBe('https://api.test.com/users?page=1#section')
   })
+
+  it('should support xml body with variable resolution and auto Content-Type: application/xml', () => {
+    const req = createMockRequest({
+      method: 'POST',
+      url: 'https://api.test.com/soap',
+      body: {
+        type: 'xml',
+        content: '<user><name>{{username}}</name></user>'
+      }
+    })
+    const vars = new Map([['username', 'Alice']])
+    const exec = buildExecuteRequest(req, vars)
+    expect(exec.body).toBe('<user><name>Alice</name></user>')
+    expect(exec.headers).toContainEqual({
+      key: 'Content-Type',
+      value: 'application/xml',
+      enabled: true
+    })
+  })
+
+  it('should serialize urlencoded key-value pairs with URL encoding and auto Content-Type: application/x-www-form-urlencoded', () => {
+    const req = createMockRequest({
+      method: 'POST',
+      url: 'https://api.test.com/oauth/token',
+      body: {
+        type: 'urlencoded',
+        content: '',
+        urlencoded: [
+          { key: 'grant_type', value: 'client_credentials', enabled: true },
+          { key: 'client_id', value: '{{cid}}', enabled: true },
+          { key: 'scope', value: 'read write', enabled: true },
+          { key: 'disabled_key', value: 'ignore', enabled: false }
+        ]
+      }
+    })
+    const vars = new Map([['cid', 'app-123']])
+    const exec = buildExecuteRequest(req, vars)
+    expect(exec.body).toBe('grant_type=client_credentials&client_id=app-123&scope=read%20write')
+    expect(exec.headers).toContainEqual({
+      key: 'Content-Type',
+      value: 'application/x-www-form-urlencoded',
+      enabled: true
+    })
+  })
+
+  it('should populate form_data and body_type="formdata" with variable substitution', () => {
+    const req = createMockRequest({
+      method: 'POST',
+      url: 'https://api.test.com/upload',
+      body: {
+        type: 'formdata',
+        content: '',
+        form_data: [
+          { key: 'title', value: 'Report {{year}}', enabled: true },
+          { key: 'draft', value: 'false', enabled: false }
+        ]
+      }
+    })
+    const vars = new Map([['year', '2026']])
+    const exec = buildExecuteRequest(req, vars)
+    expect(exec.body_type).toBe('formdata')
+    expect(exec.form_data).toEqual([
+      { key: 'title', value: 'Report 2026', enabled: true }
+    ])
+  })
 })
+
 

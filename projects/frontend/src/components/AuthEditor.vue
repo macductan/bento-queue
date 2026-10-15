@@ -2,14 +2,18 @@
 import { computed, ref, watch } from 'vue'
 import { getActivePinia } from 'pinia'
 import { useCollectionStore, type AuthConfig, type TreeNode } from '@/stores/collectionStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
 import { resolveEffectiveAuth } from '@/utils/auth'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
-const collectionStore = getActivePinia() ? useCollectionStore() : null
+const pinia = getActivePinia()
+const collectionStore = pinia ? useCollectionStore(pinia) : null
+const envStore = pinia ? useEnvironmentStore(pinia) : null
 
 const showBearerToken = ref<boolean | null>(null)
 const showBasicPassword = ref<boolean | null>(null)
 const showApiKeyValue = ref<boolean | null>(null)
+const internalEnvScope = ref<string>('__global__')
 
 const bearerHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 const basicUserHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
@@ -19,13 +23,19 @@ const apiKeyValHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | n
 const props = withDefaults(
   defineProps<{
     modelValue?: AuthConfig
+    authEnvs?: Record<string, AuthConfig>
+    envScope?: string
     pathNodes?: TreeNode[]
     isFolder?: boolean
+    isCollection?: boolean
   }>(),
   {
     modelValue: () => ({ type: 'inherit' }),
+    authEnvs: () => ({}),
+    envScope: undefined,
     pathNodes: () => [],
-    isFolder: false
+    isFolder: false,
+    isCollection: false
   }
 )
 
@@ -40,35 +50,92 @@ watch(
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: AuthConfig): void
+  (e: 'update:authEnvs', val: Record<string, AuthConfig>): void
+  (e: 'update:envScope', val: string): void
 }>()
 
+const selectedEnvScope = computed({
+  get: () => props.envScope ?? internalEnvScope.value,
+  set: (val: string) => {
+    internalEnvScope.value = val
+    emit('update:envScope', val)
+  }
+})
+
+const availableEnvironments = computed(() => envStore?.environments || [])
+
+const hasEnvAuthOverride = (envId: string): boolean => {
+  const cfg = props.authEnvs?.[envId]
+  return Boolean(cfg && cfg.type && cfg.type !== 'inherit')
+}
+
+const defaultAuthType = computed<AuthConfig['type']>(() =>
+  props.isCollection && selectedEnvScope.value === '__global__' ? 'none' : 'inherit'
+)
+
+const currentAuth = computed<AuthConfig>(() => {
+  if (selectedEnvScope.value === '__global__') {
+    return props.modelValue || { type: defaultAuthType.value }
+  }
+  return props.authEnvs?.[selectedEnvScope.value] || { type: 'inherit' }
+})
+
+const updateCurrentAuth = (updated: AuthConfig) => {
+  if (selectedEnvScope.value === '__global__') {
+    emit('update:modelValue', updated)
+  } else {
+    const nextEnvs: Record<string, AuthConfig> = { ...(props.authEnvs || {}) }
+    nextEnvs[selectedEnvScope.value] = updated
+    emit('update:authEnvs', nextEnvs)
+  }
+}
+
 const authType = computed({
-  get: () => props.modelValue?.type || 'inherit',
+  get: () => currentAuth.value?.type || defaultAuthType.value,
   set: (newType: AuthConfig['type']) => {
-    let updated: AuthConfig = { type: newType }
+    const updated: AuthConfig = { type: newType }
     if (newType === 'bearer') {
-      updated.bearer = { token: props.modelValue?.bearer?.token || '' }
+      updated.bearer = { token: currentAuth.value?.bearer?.token || '' }
     } else if (newType === 'basic') {
       updated.basic = {
-        username: props.modelValue?.basic?.username || '',
-        password: props.modelValue?.basic?.password || ''
+        username: currentAuth.value?.basic?.username || '',
+        password: currentAuth.value?.basic?.password || ''
       }
     } else if (newType === 'apiKey') {
       updated.apiKey = {
-        key: props.modelValue?.apiKey?.key || '',
-        value: props.modelValue?.apiKey?.value || '',
-        addTo: props.modelValue?.apiKey?.addTo || 'header'
+        key: currentAuth.value?.apiKey?.key || '',
+        value: currentAuth.value?.apiKey?.value || '',
+        addTo: currentAuth.value?.apiKey?.addTo || 'header'
       }
     }
-    emit('update:modelValue', updated)
+    updateCurrentAuth(updated)
   }
 })
 
 // Inherited auth preview when type is 'inherit'
-const inheritedPreview = computed(() => {
+const inheritedPreview = computed<{
+  auth: AuthConfig
+  sourceNode?: TreeNode
+  sourceCollection?: { id?: string; name?: string }
+  fromGlobalSelf?: boolean
+} | null>(() => {
   if (authType.value !== 'inherit') return null
-  const result = resolveEffectiveAuth({ type: 'inherit' }, props.pathNodes)
-  return result
+  if (
+    selectedEnvScope.value !== '__global__' &&
+    props.modelValue?.type &&
+    props.modelValue.type !== 'inherit'
+  ) {
+    return {
+      auth: props.modelValue,
+      fromGlobalSelf: true
+    }
+  }
+  const effectiveEnvId =
+    selectedEnvScope.value !== '__global__' ? selectedEnvScope.value : envStore?.activeEnvId
+  return resolveEffectiveAuth({ type: 'inherit' }, props.pathNodes, {
+    activeEnvId: effectiveEnvId,
+    collection: !props.isCollection ? (collectionStore?.activeCollection as any) : null
+  })
 })
 
 const inheritedFolderLevel = computed(() => {
@@ -79,10 +146,10 @@ const inheritedFolderLevel = computed(() => {
 })
 
 const bearerToken = computed({
-  get: () => props.modelValue?.bearer?.token || '',
+  get: () => currentAuth.value?.bearer?.token || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'bearer',
       bearer: { token: val }
     })
@@ -90,27 +157,27 @@ const bearerToken = computed({
 })
 
 const basicUsername = computed({
-  get: () => props.modelValue?.basic?.username || '',
+  get: () => currentAuth.value?.basic?.username || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'basic',
       basic: {
         username: val,
-        password: props.modelValue?.basic?.password || ''
+        password: currentAuth.value?.basic?.password || ''
       }
     })
   }
 })
 
 const basicPassword = computed({
-  get: () => props.modelValue?.basic?.password || '',
+  get: () => currentAuth.value?.basic?.password || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'basic',
       basic: {
-        username: props.modelValue?.basic?.username || '',
+        username: currentAuth.value?.basic?.username || '',
         password: val
       }
     })
@@ -118,30 +185,30 @@ const basicPassword = computed({
 })
 
 const apiKeyName = computed({
-  get: () => props.modelValue?.apiKey?.key || '',
+  get: () => currentAuth.value?.apiKey?.key || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'apiKey',
       apiKey: {
         key: val,
-        value: props.modelValue?.apiKey?.value || '',
-        addTo: props.modelValue?.apiKey?.addTo || 'header'
+        value: currentAuth.value?.apiKey?.value || '',
+        addTo: currentAuth.value?.apiKey?.addTo || 'header'
       }
     })
   }
 })
 
 const apiKeyValue = computed({
-  get: () => props.modelValue?.apiKey?.value || '',
+  get: () => currentAuth.value?.apiKey?.value || '',
   set: (val: string) => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'apiKey',
       apiKey: {
-        key: props.modelValue?.apiKey?.key || '',
+        key: currentAuth.value?.apiKey?.key || '',
         value: val,
-        addTo: props.modelValue?.apiKey?.addTo || 'header'
+        addTo: currentAuth.value?.apiKey?.addTo || 'header'
       }
     })
   }
@@ -160,14 +227,14 @@ const isApiKeyValueVisible = computed(() =>
 )
 
 const apiKeyAddTo = computed({
-  get: () => props.modelValue?.apiKey?.addTo || 'header',
+  get: () => currentAuth.value?.apiKey?.addTo || 'header',
   set: (val: 'header' | 'query') => {
-    emit('update:modelValue', {
-      ...props.modelValue,
+    updateCurrentAuth({
+      ...currentAuth.value,
       type: 'apiKey',
       apiKey: {
-        key: props.modelValue?.apiKey?.key || '',
-        value: props.modelValue?.apiKey?.value || '',
+        key: currentAuth.value?.apiKey?.key || '',
+        value: currentAuth.value?.apiKey?.value || '',
         addTo: val
       }
     })
@@ -177,6 +244,44 @@ const apiKeyAddTo = computed({
 
 <template>
   <div class="flex flex-col gap-4 max-w-2xl py-2">
+    <!-- Environment Scope Selector -->
+    <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
+      <div class="flex items-center gap-2">
+        <label for="auth-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
+          Phạm vi môi trường:
+        </label>
+        <div class="relative flex items-center">
+          <select
+            id="auth-env-scope-select"
+            v-model="selectedEnvScope"
+            :data-scope="selectedEnvScope"
+            data-test="auth-env-scope-select"
+            class="peer appearance-none bg-surface-overlay border border-border-default rounded-md h-[32px] pl-2.5 pr-7 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
+          >
+            <option value="__global__" class="bg-surface-overlay text-text-primary">
+              Global Auth (Dùng chung)
+            </option>
+            <option
+              v-for="env in availableEnvironments"
+              :key="env.id"
+              :value="env.id"
+              class="bg-surface-overlay text-text-primary"
+            >
+              {{ env.name }} {{ hasEnvAuthOverride(env.id) ? '(Custom)' : '' }}
+            </option>
+          </select>
+          <div class="absolute right-2 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
+            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <span class="text-xs text-text-muted">
+        {{ selectedEnvScope === '__global__' ? 'Áp dụng cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}
+      </span>
+    </div>
+
     <!-- Type Selector -->
     <div class="flex items-center gap-4">
       <label for="auth-type-select" class="text-xs font-semibold uppercase text-text-muted w-24 shrink-0">
@@ -186,6 +291,8 @@ const apiKeyAddTo = computed({
         <select
           id="auth-type-select"
           v-model="authType"
+          :data-scope="selectedEnvScope"
+          :data-auth-type="authType"
           class="peer appearance-none bg-surface-overlay border border-border-default rounded px-3 py-1.5 pr-8 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
         >
           <option value="inherit" class="bg-surface-overlay text-text-primary">Inherit from parent</option>
@@ -204,9 +311,21 @@ const apiKeyAddTo = computed({
 
     <!-- Inherit Mode Details -->
     <div v-if="authType === 'inherit'" class="p-3 bg-surface-raised/40 border border-border-subtle rounded text-xs text-text-secondary">
-      <div v-if="inheritedPreview?.sourceNode && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
+      <div v-if="inheritedPreview?.fromGlobalSelf && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
+        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-blue-400 font-medium">Global Auth</span>
+        <span class="text-text-muted ml-2">Type:</span>
+        <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
+      </div>
+      <div v-else-if="inheritedPreview?.sourceNode && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
         <span class="text-text-muted">Inherited from:</span>
         <span class="text-blue-400 font-medium">{{ inheritedPreview.sourceNode.name }} (Folder {{ inheritedFolderLevel }})</span>
+        <span class="text-text-muted ml-2">Type:</span>
+        <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
+      </div>
+      <div v-else-if="inheritedPreview?.sourceCollection && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
+        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-blue-400 font-medium">{{ inheritedPreview.sourceCollection.name || 'Collection' }} (Collection)</span>
         <span class="text-text-muted ml-2">Type:</span>
         <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
       </div>
@@ -217,7 +336,7 @@ const apiKeyAddTo = computed({
 
     <!-- None Mode Details -->
     <div v-else-if="authType === 'none'" class="p-3 bg-surface-raised/40 border border-border-subtle rounded text-xs text-text-muted italic">
-      No authentication for this {{ isFolder ? 'folder' : 'request' }}.
+      No authentication for this {{ isCollection ? 'collection' : isFolder ? 'folder' : 'request' }}.
     </div>
 
     <!-- Bearer Token Inputs -->

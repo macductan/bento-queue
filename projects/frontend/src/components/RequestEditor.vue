@@ -9,6 +9,7 @@ import BodyEditor from './BodyEditor.vue'
 import WarningBanner from './WarningBanner.vue'
 import DefaultHeadersTable from './DefaultHeadersTable.vue'
 import AuthEditor from './AuthEditor.vue'
+import ScriptEditor from './ScriptEditor.vue'
 import { getInheritedHeaders, getDefaultHeaders, type DefaultHeaderItem } from '@/utils/headers'
 import { resolveEffectiveAuth, getAuthArtifacts } from '@/utils/auth'
 import { useUiStore } from '@/stores/uiStore'
@@ -18,6 +19,7 @@ import { useUrlParamsSync } from '@/composables/useUrlParamsSync'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import { resolveVariables } from '@/utils/variables'
+import { generateCurlCommand } from '@/utils/curl'
 
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
@@ -54,6 +56,50 @@ const effectiveVariables = computed(() => {
 provide('effectiveVariables', effectiveVariables)
 provide('variableHierarchyFolders', pathNodes)
 
+const resolvedCurlPreview = computed(() => {
+  if (!req.value) return ''
+  return generateCurlCommand(req.value, {
+    vars: effectiveVariables.value,
+    pathNodes: pathNodes.value,
+    activeEnvId: envStore.activeEnvId,
+    collection: collectionStore.activeCollection as any,
+    multiline: true
+  })
+})
+
+const copyPreviewCurl = async () => {
+  if (!resolvedCurlPreview.value) return
+  let copied = false
+  if (navigator?.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(resolvedCurlPreview.value)
+      copied = true
+    } catch {
+      // fallback below
+    }
+  }
+  if (!copied) {
+    try {
+      const textArea = document.createElement('textarea')
+      textArea.value = resolvedCurlPreview.value
+      textArea.style.position = 'fixed'
+      textArea.style.opacity = '0'
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      copied = document.execCommand('copy')
+      document.body.removeChild(textArea)
+    } catch {
+      copied = false
+    }
+  }
+  if (copied) {
+    uiStore.showToast('Đã sao chép cURL vào clipboard')
+  } else {
+    uiStore.showToast('Không thể sao chép vào clipboard')
+  }
+}
+
 const defaultHeaders = computed(() => {
   if (!req.value) return []
   const inherited = getInheritedHeaders(pathNodes.value).map(h => ({
@@ -61,10 +107,14 @@ const defaultHeaders = computed(() => {
     rawValue: h.value || '',
     value: resolveVariables(h.value || '', effectiveVariables.value)
   }))
-  const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(req.value.auth, pathNodes.value)
+  const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(req.value.auth, pathNodes.value, {
+    activeEnvId: envStore.activeEnvId,
+    requestAuthEnvs: req.value.auth_envs,
+    collection: collectionStore.activeCollection as any
+  })
   const { headers: authHeaders } = getAuthArtifacts(effectiveAuth, effectiveVariables.value)
 
-  const isInherited = !req.value.auth || !req.value.auth.type || req.value.auth.type === 'inherit'
+  const isInherited = !!sourceNode
   const folderIdx = sourceNode ? pathNodes.value.findIndex(f => f.id === sourceNode.id) : -1
   const authFolderLevel = folderIdx !== -1 ? folderIdx + 1 : 1
 
@@ -179,7 +229,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
           </div>
 
           <div v-show="uiStore.activeRequestTab === 'auth'" role="tabpanel" id="panel-auth" aria-labelledby="tab-auth">
-            <AuthEditor v-model="req.auth" :path-nodes="pathNodes" />
+            <AuthEditor v-model="req.auth" v-model:authEnvs="req.auth_envs" :path-nodes="pathNodes" />
           </div>
           
           <div v-show="uiStore.activeRequestTab === 'headers'" role="tabpanel" id="panel-headers" aria-labelledby="tab-headers">
@@ -189,6 +239,34 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
           
           <div v-show="uiStore.activeRequestTab === 'body'" role="tabpanel" id="panel-body" aria-labelledby="tab-body" class="h-full flex flex-col">
             <BodyEditor />
+          </div>
+
+          <div v-show="uiStore.activeRequestTab === 'scripts'" role="tabpanel" id="panel-scripts" aria-labelledby="tab-scripts">
+            <ScriptEditor />
+          </div>
+
+          <div v-show="uiStore.activeRequestTab === 'curl'" role="tabpanel" id="panel-curl" aria-labelledby="tab-curl" data-test="curl-preview-panel" class="space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-text-muted">
+                Lệnh cURL đã phân giải đầy đủ biến môi trường, headers kế thừa và thông tin xác thực:
+              </span>
+              <button
+                type="button"
+                data-test="copy-preview-curl-btn"
+                class="px-2.5 py-1 text-xs font-medium rounded bg-surface-overlay border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center gap-1.5 cursor-pointer transition-colors"
+                @click="copyPreviewCurl"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span>Sao chép cURL</span>
+              </button>
+            </div>
+            <pre
+              data-test="curl-preview-code"
+              class="p-3 rounded-md bg-surface-input border border-border-default font-mono text-xs text-text-primary overflow-x-auto whitespace-pre-wrap break-all select-all"
+            ><code>{{ resolvedCurlPreview }}</code></pre>
           </div>
         </div>
       </div>

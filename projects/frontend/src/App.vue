@@ -8,12 +8,16 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import TreeContextMenu from '@/components/TreeContextMenu.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import EnvModal from '@/components/environment/EnvModal.vue'
+import GitSyncModal from '@/components/GitSyncModal.vue'
+import HistoryModal from '@/components/HistoryModal.vue'
+import MockServerModal from '@/components/MockServerModal.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useTabStore } from '@/stores/tabStore'
+import { installGlobalInputUndo } from '@/utils/inputUndo'
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
@@ -21,6 +25,8 @@ const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const envStore = useEnvironmentStore()
 const tabStore = useTabStore()
+
+let cleanupInputUndo: (() => void) | null = null
 
 const isDraggingSidebar = ref(false)
 
@@ -54,7 +60,7 @@ const handleWindowResize = () => {
 const handleKeyDown = (e: KeyboardEvent) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
     e.preventDefault()
-    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen) {
+    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
       return
     }
     if (tabStore.activeTabId) {
@@ -63,7 +69,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
     return
   }
 
-  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen) {
+  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
     return
   }
 
@@ -120,6 +126,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
 }
 
 onMounted(async () => {
+  cleanupInputUndo = installGlobalInputUndo(window)
   if (window.innerWidth > 0) {
     handleWindowResize()
   }
@@ -134,6 +141,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  cleanupInputUndo?.()
+  cleanupInputUndo = null
   stopSidebarResize()
   window.removeEventListener('keydown', handleKeyDown)
   window.removeEventListener('resize', handleWindowResize)
@@ -162,5 +171,8 @@ onUnmounted(() => {
     <TreeContextMenu />
     <UnsavedChangesDialog />
     <EnvModal />
+    <GitSyncModal />
+    <HistoryModal />
+    <MockServerModal />
   </div>
 </template>

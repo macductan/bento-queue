@@ -34,6 +34,7 @@ const resolveDefaultEnvScope = (): string => {
 const selectedEnvScope = ref<string>(resolveDefaultEnvScope())
 const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
+const auth_envs = ref<Record<string, AuthConfig>>({})
 const activeTab = ref<'headers' | 'variables' | 'auth'>('headers')
 
 watch(selectedEnvScope, (scope) => {
@@ -122,10 +123,14 @@ const defaultHeaders = computed(() => {
     rawValue: h.value || '',
     value: resolveVariables(h.value || '', effectiveVariables.value)
   }))
-  const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(auth.value, parentNodes.value)
+  const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(auth.value, parentNodes.value, {
+    activeEnvId: envStore.activeEnvId,
+    requestAuthEnvs: auth_envs.value,
+    collection: collectionStore.activeCollection as any
+  })
   const { headers: authHeaders } = getAuthArtifacts(effectiveAuth, effectiveVariables.value)
 
-  const isInherited = !auth.value || !auth.value.type || auth.value.type === 'inherit'
+  const isInherited = !!sourceNode
   const folderIdx = sourceNode ? parentNodes.value.findIndex(f => f.id === sourceNode.id) : -1
   const authFolderLevel = folderIdx !== -1 ? folderIdx + 1 : parentNodes.value.length + 1
 
@@ -186,13 +191,20 @@ const totalVariablesCount = computed(() => {
   return count
 })
 
+const isConfiguredFolderAuth = (a: AuthConfig | undefined): boolean => {
+  if (!a || a.type === 'none' || a.type === 'inherit') return false
+  if (a.type === 'bearer') return !!a.bearer?.token?.trim()
+  if (a.type === 'basic') return !!(a.basic?.username?.trim() || a.basic?.password?.trim())
+  if (a.type === 'apiKey') return !!a.apiKey?.key?.trim()
+  return false
+}
+
 const authCount = computed(() => {
-  const a = auth.value
-  if (!a || a.type === 'none' || a.type === 'inherit') return 0
-  if (a.type === 'bearer') return a.bearer?.token?.trim() ? 1 : 0
-  if (a.type === 'basic') return (a.basic?.username?.trim() || a.basic?.password?.trim()) ? 1 : 0
-  if (a.type === 'apiKey') return a.apiKey?.key?.trim() ? 1 : 0
-  return 0
+  let count = isConfiguredFolderAuth(auth.value) ? 1 : 0
+  for (const envAuth of Object.values(auth_envs.value || {})) {
+    if (isConfiguredFolderAuth(envAuth)) count++
+  }
+  return count
 })
 
 const initialData = ref<string>('')
@@ -208,11 +220,18 @@ const getCleanSnapshot = () => {
       cleanFolderEnvs[envId] = clean
     }
   }
+  const cleanAuthEnvs: Record<string, AuthConfig> = {}
+  for (const [envId, envAuth] of Object.entries(auth_envs.value || {})) {
+    if (envAuth && envAuth.type && envAuth.type !== 'inherit') {
+      cleanAuthEnvs[envId] = envAuth
+    }
+  }
   return JSON.stringify({
     variables: variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== ''),
     folder_envs: cleanFolderEnvs,
     headers: headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== ''),
-    auth: auth.value
+    auth: auth.value,
+    auth_envs: cleanAuthEnvs
   })
 }
 
@@ -257,7 +276,7 @@ const scheduleAutoSave = (delay = 800) => {
   }
 }
 
-watch([variables, folder_envs, headers, auth], () => {
+watch([variables, folder_envs, headers, auth, auth_envs], () => {
   if (loading.value) return
   if (isDirty.value) {
     scheduleAutoSave()
@@ -285,6 +304,7 @@ const loadFolderData = async () => {
       selectedEnvScope.value = defaultScope
       headers.value = result.data.headers || []
       auth.value = result.data.auth || { type: 'inherit' }
+      auth_envs.value = result.data.auth_envs || {}
       initialData.value = getCleanSnapshot()
       saveStatus.value = 'saved'
       if (folder.value?.id) {
@@ -334,13 +354,20 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
           cleanFolderEnvs[envId] = clean
         }
       }
+      const cleanAuthEnvs: Record<string, AuthConfig> = {}
+      for (const [envId, envAuth] of Object.entries(auth_envs.value || {})) {
+        if (envAuth && envAuth.type && envAuth.type !== 'inherit') {
+          cleanAuthEnvs[envId] = envAuth
+        }
+      }
 
       const dataToSave = { 
         ...folder.value, 
         variables: cleanVariables,
         folder_envs: cleanFolderEnvs,
         headers: cleanHeaders,
-        auth: auth.value
+        auth: auth.value,
+        auth_envs: cleanAuthEnvs
       }
       const result = await UpdateFolder(dataToSave)
       if (result.success) {
@@ -594,7 +621,7 @@ onBeforeUnmount(async () => {
           <KvpEditor v-model="headers" />
         </div>
         <div v-show="activeTab === 'auth'">
-          <AuthEditor v-model="auth" :path-nodes="parentNodes" :is-folder="true" />
+          <AuthEditor v-model="auth" v-model:authEnvs="auth_envs" :path-nodes="parentNodes" :is-folder="true" />
         </div>
         <div v-show="activeTab === 'variables'" class="flex flex-col gap-3">
           <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">

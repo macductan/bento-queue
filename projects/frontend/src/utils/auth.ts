@@ -5,19 +5,50 @@ import { resolveVariables } from './variables'
 export interface EffectiveAuthResult {
   auth: AuthConfig
   sourceNode?: TreeNode
+  sourceCollection?: { id?: string; name?: string }
+}
+
+export interface ResolveEffectiveAuthOptions {
+  activeEnvId?: string | null
+  requestAuthEnvs?: Record<string, AuthConfig>
+  collection?: {
+    id?: string
+    name?: string
+    auth?: AuthConfig
+    auth_envs?: Record<string, AuthConfig>
+  } | null
+}
+
+function pickEntityAuth(
+  globalAuth: AuthConfig | undefined,
+  authEnvs: Record<string, AuthConfig> | undefined,
+  activeEnvId: string | null | undefined
+): AuthConfig | undefined {
+  if (activeEnvId && authEnvs && authEnvs[activeEnvId]) {
+    const envAuth = authEnvs[activeEnvId]
+    if (envAuth && envAuth.type && envAuth.type !== 'inherit') {
+      return envAuth
+    }
+  }
+  return globalAuth
 }
 
 /**
  * Resolves the effective authentication for a request or folder by walking up the ancestor tree.
- * If auth is undefined or type is 'inherit', it traverses pathNodes from nearest parent to root.
+ * At each tier (Request -> Nearest Folder -> ... -> Root Folder -> Collection),
+ * environment-scoped auth (auth_envs[activeEnvId]) takes precedence over global auth when non-inherit.
  * If no non-inherit auth is found, defaults to { type: 'none' }.
  */
 export function resolveEffectiveAuth(
   auth: AuthConfig | undefined,
-  pathNodes: TreeNode[] = []
+  pathNodes: TreeNode[] = [],
+  options?: ResolveEffectiveAuthOptions
 ): EffectiveAuthResult {
-  if (auth && auth.type && auth.type !== 'inherit') {
-    return { auth }
+  const activeEnvId = options?.activeEnvId
+
+  const targetAuth = pickEntityAuth(auth, options?.requestAuthEnvs, activeEnvId)
+  if (targetAuth && targetAuth.type && targetAuth.type !== 'inherit') {
+    return { auth: targetAuth }
   }
 
   // Only inspect folder nodes in pathNodes (ignore request nodes)
@@ -26,10 +57,28 @@ export function resolveEffectiveAuth(
   // Walk from nearest parent (last in folderNodes) up to root (first in folderNodes)
   for (let i = folderNodes.length - 1; i >= 0; i--) {
     const node = folderNodes[i]
-    if (node.auth && node.auth.type && node.auth.type !== 'inherit') {
+    const nodeAuth = pickEntityAuth(node.auth, node.auth_envs, activeEnvId)
+    if (nodeAuth && nodeAuth.type && nodeAuth.type !== 'inherit') {
       return {
-        auth: node.auth,
+        auth: nodeAuth,
         sourceNode: node
+      }
+    }
+  }
+
+  if (options?.collection) {
+    const collAuth = pickEntityAuth(
+      options.collection.auth,
+      options.collection.auth_envs,
+      activeEnvId
+    )
+    if (collAuth && collAuth.type && collAuth.type !== 'inherit') {
+      return {
+        auth: collAuth,
+        sourceCollection: {
+          id: options.collection.id,
+          name: options.collection.name
+        }
       }
     }
   }

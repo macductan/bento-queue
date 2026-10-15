@@ -1,8 +1,9 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useCollectionStore } from '@/stores/collectionStore'
+import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import KvpEditor from './KvpEditor.vue'
+import AuthEditor from './AuthEditor.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -21,7 +22,11 @@ const targetCollection = computed(() => {
   return collectionStore.collections.find(c => c.id === props.collectionId) || null
 })
 
+const activeTab = ref<'variables' | 'auth'>('variables')
 const variables = ref<{ key: string; value: string; enabled: boolean }[]>([])
+const collectionAuth = ref<AuthConfig>({ type: 'none' })
+const collectionAuthEnvs = ref<Record<string, AuthConfig>>({})
+const collectionAuthEnvScope = ref<string>('__global__')
 const saving = ref(false)
 
 watch(
@@ -29,6 +34,9 @@ watch(
   ([isOpen, coll]) => {
     if (isOpen && coll) {
       variables.value = JSON.parse(JSON.stringify(coll.variables || []))
+      collectionAuth.value = coll.auth ? JSON.parse(JSON.stringify(coll.auth)) : { type: 'none' }
+      collectionAuthEnvs.value = coll.auth_envs ? JSON.parse(JSON.stringify(coll.auth_envs)) : {}
+      collectionAuthEnvScope.value = '__global__'
     }
   },
   { immediate: true }
@@ -49,7 +57,24 @@ const handleSave = async () => {
   if (saving.value || !targetCollection.value) return
   saving.value = true
   try {
-    const ok = await collectionStore.updateCollectionVariables(props.collectionId, variables.value)
+    const cleanAuthEnvs: Record<string, AuthConfig> = {}
+    for (const [envId, envAuth] of Object.entries(collectionAuthEnvs.value || {})) {
+      if (envAuth && envAuth.type && envAuth.type !== 'inherit') {
+        cleanAuthEnvs[envId] = envAuth
+      }
+    }
+    const hasAuthConfigured =
+      (collectionAuth.value.type && collectionAuth.value.type !== 'none' && collectionAuth.value.type !== 'inherit') ||
+      Object.keys(cleanAuthEnvs).length > 0 ||
+      Boolean(targetCollection.value.auth || targetCollection.value.auth_envs)
+    const ok = hasAuthConfigured
+      ? await collectionStore.updateCollectionVariables(
+          props.collectionId,
+          variables.value,
+          collectionAuth.value,
+          cleanAuthEnvs
+        )
+      : await collectionStore.updateCollectionVariables(props.collectionId, variables.value)
     if (ok) {
       uiStore.showToast('Đã lưu biến collection')
       close()
@@ -119,9 +144,45 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <!-- Tabs -->
+        <div class="flex border-b border-border-default px-4 bg-surface-base" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            data-test="collection-modal-tab-variables"
+            :aria-selected="activeTab === 'variables'"
+            @click="activeTab = 'variables'"
+            class="flex items-center gap-2 px-4 h-9 border-b-2 outline-none font-medium text-xs transition-colors cursor-pointer"
+            :class="activeTab === 'variables' ? 'border-brand-primary text-blue-400' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'"
+          >
+            Variables
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-test="collection-modal-tab-auth"
+            :aria-selected="activeTab === 'auth'"
+            @click="activeTab = 'auth'"
+            class="flex items-center gap-2 px-4 h-9 border-b-2 outline-none font-medium text-xs transition-colors cursor-pointer"
+            :class="activeTab === 'auth' ? 'border-brand-primary text-blue-400' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'"
+          >
+            Auth
+          </button>
+        </div>
+
         <!-- Body -->
         <div class="p-4 flex-1 overflow-y-auto">
-          <KvpEditor v-model="variables" />
+          <div v-show="activeTab === 'variables'">
+            <KvpEditor v-model="variables" />
+          </div>
+          <div v-show="activeTab === 'auth'">
+            <AuthEditor
+              v-model="collectionAuth"
+              v-model:authEnvs="collectionAuthEnvs"
+              v-model:envScope="collectionAuthEnvScope"
+              :is-collection="true"
+            />
+          </div>
         </div>
 
         <!-- Footer -->

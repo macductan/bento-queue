@@ -8,7 +8,9 @@ const methodColors: Record<string, string> = {
   post: 'text-method-post',
   put: 'text-method-put',
   patch: 'text-method-patch',
-  delete: 'text-method-delete'
+  delete: 'text-method-delete',
+  head: 'text-cyan-400',
+  options: 'text-purple-400'
 }
 
 const getMethodColorClass = (method?: string) => {

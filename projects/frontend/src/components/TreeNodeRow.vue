@@ -143,12 +143,21 @@ const methodColors: Record<string, string> = {
   post: 'text-method-post',
   put: 'text-method-put',
   patch: 'text-method-patch',
-  delete: 'text-method-delete'
+  delete: 'text-method-delete',
+  head: 'text-cyan-400',
+  options: 'text-purple-400'
 }
 
+const effectiveMethod = computed(() => {
+  if (!isFolder.value && requestStore.current?.id === props.node.id && requestStore.current?.method) {
+    return requestStore.current.method
+  }
+  return props.node.method
+})
+
 const methodColorClass = computed(() => {
-  if (!props.node.method) return ''
-  return methodColors[props.node.method.toLowerCase()] || ''
+  if (!effectiveMethod.value) return ''
+  return methodColors[effectiveMethod.value.toLowerCase()] || 'text-text-secondary'
 })
 
 const paddingLeft = computed(() => {
@@ -207,11 +216,11 @@ const paddingLeft = computed(() => {
 
       <!-- Request Method Badge -->
       <span 
-        v-if="!isFolder && node.method"
-        class="text-[10px] font-bold mr-2 w-9 shrink-0 text-left"
+        v-if="!isFolder && effectiveMethod"
+        class="text-[10px] font-bold mr-2 min-w-9 shrink-0 text-left"
         :class="methodColorClass"
       >
-        {{ node.method }}
+        {{ effectiveMethod }}
       </span>
 
       <!-- Name -->

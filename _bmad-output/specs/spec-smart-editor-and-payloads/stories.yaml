@@ -1,0 +1,34 @@
+- id: "1"
+  title: "Smart JSON Editor with Syntax Highlighting, Prettify Button & Syntax Error Reporting"
+  description: >-
+    Nâng cấp BodyEditor khi chọn định dạng JSON với tính năng tô màu cú pháp JSON (syntax highlighting) kết hợp hiển thị biến {{var}}, nút Format/Prettify JSON tự động căn chỉnh 2 spaces, và thanh báo lỗi cú pháp JSON theo thời gian thực kèm vị trí dòng/cột (CAP-1 / Mục 25).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Tạo projects/frontend/src/utils/jsonEditor.ts cung cấp validateJsonWithPlaceholders(content), prettifyJsonWithPlaceholders(content) và tokenizeJsonLine(line) hỗ trợ đầy đủ các placeholder {{variable}} trong chuỗi hoặc vị trí giá trị.
+    Cập nhật projects/frontend/src/components/VariableHighlighter.vue bổ sung prop syntax ('plain' | 'json' | 'xml') để tô màu cú pháp JSON (keys, strings, numbers, booleans, null) song song với pill biến {{var}}.
+    Cập nhật projects/frontend/src/components/BodyEditor.vue hiển thị thanh công cụ JSON gồm nút Format JSON (data-test="prettify-json-btn") và cảnh báo lỗi cú pháp JSON (data-test="json-error-banner") kèm số dòng/cột.
+    Viết đầy đủ unit/component tests trong jsonEditor.test.ts và RequestEditor.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "2"
+  title: "Extended Body Payloads: XML, x-www-form-urlencoded & multipart/form-data"
+  description: >-
+    Hỗ trợ các định dạng Body mới: XML (application/xml), x-www-form-urlencoded và multipart/form-data trên toàn bộ luồng từ giao diện RequestTabs/BodyEditor, DefaultHeadersTable, buildExecuteRequest, cURL generator/parser đến Go ExecutorService (CAP-2 / Mục 26).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên Go backend: mở rộng model.Body (thêm FormData []KVPair, URLEncoded []KVPair) và model.ExecuteRequest (thêm BodyType string, FormData []KVPair) trong projects/model/types.go; cập nhật ExecutorService.Send trong projects/service/executor.go để đóng gói multipart/form-data bằng mime/multipart.Writer kèm boundary chuẩn.
+    Trên Vue frontend: cập nhật projects/frontend/wailsjs/go/models.ts, requestStore.ts (setBodyType tự động gắn Content-Type cho json, xml, urlencoded, formdata), headers.ts (getDefaultHeaders), buildExecuteRequest.ts, curl.ts (generateCurlCommand và parseCurlCommand hỗ trợ -F/--form, --data-urlencode, xml), RequestTabs.vue (thêm tùy chọn XML, x-www-form-urlencoded, multipart/form-data vào data-test="body-type-select") và BodyEditor.vue (hiển thị KvpEditor cho urlencoded và formdata).
+    Viết đầy đủ Go tests trong executor_test.go và Vitest tests trên frontend; đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.
+
+- id: "3"
+  title: "Environment-Scoped and Global Authentication Configuration Across Collection, Folder & Request"
+  description: >-
+    Cho phép cấu hình Authentication theo từng Environment hoặc Global (auth + auth_envs) tại cả 3 cấp Collection, Folder và Request; tự động phân giải kế thừa theo thứ tự Request (Env -> Global) > Folder (Env -> Global) > Collection (Env -> Global) (CAP-3 / Mục 34).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên Go backend: bổ sung Auth *AuthConfig và AuthEnvs map[string]*AuthConfig vào model.Collection, bổ sung AuthEnvs map[string]*AuthConfig vào model.Folder, model.TreeNode và model.Request trong projects/model/types.go; cập nhật CollectionService (projects/service/collection.go) lưu và trả về đầy đủ Auth/AuthEnvs cho Collection và Folder.
+    Trên Vue frontend: cập nhật projects/frontend/wailsjs/go/models.ts, collectionStore.ts, requestStore.ts; nâng cấp resolveEffectiveAuth trong projects/frontend/src/utils/auth.ts hỗ trợ phân giải theo activeEnvId và kế thừa từ Collection/Folder/Request.
+    Cập nhật AuthEditor.vue bổ sung dropdown chọn phạm vi môi trường (data-test="auth-env-scope-select": Global hoặc từng Environment) và tích hợp vào RequestEditor.vue, FolderEditor.vue và CollectionEnvModal.vue (thêm tab Auth cho Collection).
+    Viết đầy đủ Go tests và Vitest tests; đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.

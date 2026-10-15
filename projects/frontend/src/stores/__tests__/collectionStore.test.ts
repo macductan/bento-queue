@@ -210,6 +210,25 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       expect(ListCollections).toHaveBeenCalled()
     })
 
+    it('refreshes mock server status on collection switch', async () => {
+      const store = useCollectionStore()
+      const { useMockServerStore } = await import('../mockServerStore')
+      const mockStore = useMockServerStore()
+      const loadStatusSpy = vi.spyOn(mockStore, 'loadStatus').mockResolvedValue()
+
+      store.activeCollectionId = 'default'
+      vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'default', name: 'Default', is_default: true, is_active: false },
+        { id: 'target-id', name: 'Target', is_default: false, is_active: true }
+      ]))
+
+      const result = await store.switchCollection('target-id')
+
+      expect(result).toBe(true)
+      expect(loadStatusSpy).toHaveBeenCalled()
+    })
+
     it('shows toast and keeps collection when backend SwitchCollection fails', async () => {
       const store = useCollectionStore()
       const uiStore = useUiStore()

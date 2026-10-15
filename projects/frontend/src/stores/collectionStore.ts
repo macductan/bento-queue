@@ -19,7 +19,11 @@ import {
   RenameCollection,
   UpdateCollection,
   DeleteCollection,
-  DuplicateCollection
+  DuplicateCollection,
+  SaveCollectionGitRemote,
+  GetCollectionGitStatus,
+  GitPullCollection,
+  GitPushCollection
 } from '../../wailsjs/go/main/App'
 import { useTabStore, type TabEntityType } from './tabStore'
 
@@ -41,6 +45,7 @@ export interface TreeNode {
   folder_envs?: Record<string, { key: string; value: string; enabled: boolean }[]>
   headers?: { key: string; value: string; enabled: boolean }[]
   auth?: AuthConfig
+  auth_envs?: Record<string, AuthConfig>
   created_at: string
 }
 
@@ -56,6 +61,9 @@ interface CollectionState {
   activeCollectionId: string | null
   collectionsLoading: boolean
   switching: boolean
+  gitSyncLoading: boolean
+  gitSyncStatus: model.GitSyncStatus | null
+  gitConflictError: { message: string; files: string[] } | null
 }
 
 export const useCollectionStore = defineStore('collection', {
@@ -70,7 +78,10 @@ export const useCollectionStore = defineStore('collection', {
     collections: [],
     activeCollectionId: null,
     collectionsLoading: false,
-    switching: false
+    switching: false,
+    gitSyncLoading: false,
+    gitSyncStatus: null,
+    gitConflictError: null
   }),
   getters: {
     activeCollection(state): model.Collection | null {
@@ -185,7 +196,9 @@ export const useCollectionStore = defineStore('collection', {
           uiStore.closeContextMenu()
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          const { useMockServerStore } = await import('./mockServerStore')
+          const mockStore = useMockServerStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), mockStore.loadStatus()])
           envStore.syncActiveEnvFromCollection()
           return true
         } else {
@@ -461,7 +474,12 @@ export const useCollectionStore = defineStore('collection', {
     async selectFolder(id: string) {
       await this.setActiveFolderId(id)
     },
-    async updateCollectionVariables(id: string, variables: { key: string; value: string; enabled: boolean }[]): Promise<boolean> {
+    async updateCollectionVariables(
+      id: string,
+      variables: { key: string; value: string; enabled: boolean }[],
+      auth?: AuthConfig,
+      authEnvs?: Record<string, AuthConfig>
+    ): Promise<boolean> {
       const coll = this.collections.find(c => c.id === id)
       if (!coll) return false
       const { useUiStore } = await import('./uiStore')
@@ -474,6 +492,8 @@ export const useCollectionStore = defineStore('collection', {
           ...coll,
           id,
           variables: cleanVars,
+          ...(auth !== undefined ? { auth } : {}),
+          ...(authEnvs !== undefined ? { auth_envs: authEnvs } : {}),
           active_env_id: preservedActiveEnvId
         }
         const result = await UpdateCollection(payload)
@@ -482,11 +502,23 @@ export const useCollectionStore = defineStore('collection', {
             Object.assign(coll, result.data)
             coll.is_active = prevIsActive
             coll.variables = result.data.variables ?? cleanVars
+            if (auth !== undefined) {
+              ;(coll as any).auth = (result.data as any).auth ?? auth
+            }
+            if (authEnvs !== undefined) {
+              ;(coll as any).auth_envs = (result.data as any).auth_envs ?? authEnvs
+            }
             if (result.data.active_env_id === undefined && preservedActiveEnvId) {
               coll.active_env_id = preservedActiveEnvId
             }
           } else {
             coll.variables = cleanVars
+            if (auth !== undefined) {
+              ;(coll as any).auth = auth
+            }
+            if (authEnvs !== undefined) {
+              ;(coll as any).auth_envs = authEnvs
+            }
           }
           return true
         } else {
@@ -907,6 +939,132 @@ export const useCollectionStore = defineStore('collection', {
         }
       }
       return null
+    },
+    async fetchGitStatus(collectionId?: string): Promise<model.GitSyncStatus | null> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      try {
+        const res = await GetCollectionGitStatus(targetId)
+        if (res.success && res.data) {
+          this.gitSyncStatus = res.data as model.GitSyncStatus
+          if (!this.gitSyncStatus.has_conflicts) {
+            this.gitConflictError = null
+          }
+          return this.gitSyncStatus
+        }
+      } catch {
+        // Ignore status fetch error
+      }
+      return null
+    },
+    async saveGitRemote(remoteUrl: string, collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      this.gitSyncLoading = true
+      try {
+        const res = await SaveCollectionGitRemote(targetId, remoteUrl.trim())
+        const { useUiStore } = await import('./uiStore')
+        const uiStore = useUiStore()
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          await this.loadCollections()
+          uiStore.showToast('Đã lưu cấu hình Git Remote')
+          return true
+        } else {
+          uiStore.showToast(res.error?.message || 'Không thể lưu cấu hình Git Remote')
+          return false
+        }
+      } catch (err) {
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitPull(collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const coll = this.collections.find(c => c.id === targetId) || this.activeCollection
+      if (!coll?.git_remote_url && !this.gitSyncStatus?.remote_url) {
+        uiStore.gitSyncModalOpen = true
+        uiStore.showToast('Vui lòng cấu hình Git Remote URL trước khi Pull')
+        return false
+      }
+
+      this.gitSyncLoading = true
+      this.gitConflictError = null
+      try {
+        const res = await GitPullCollection(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          if (this.activeRequestId && this.findNode(this.tree, this.activeRequestId)) {
+            const { useRequestStore } = await import('./requestStore')
+            await useRequestStore().loadRequest(this.activeRequestId)
+          }
+          uiStore.showToast('Git Pull thành công')
+          return true
+        } else {
+          if (res.data) {
+            this.gitSyncStatus = res.data as model.GitSyncStatus
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+            }
+            uiStore.gitSyncModalOpen = true
+          }
+          uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Pull')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitPush(collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const coll = this.collections.find(c => c.id === targetId) || this.activeCollection
+      if (!coll?.git_remote_url && !this.gitSyncStatus?.remote_url) {
+        uiStore.gitSyncModalOpen = true
+        uiStore.showToast('Vui lòng cấu hình Git Remote URL trước khi Push')
+        return false
+      }
+
+      this.gitSyncLoading = true
+      try {
+        const res = await GitPushCollection(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          uiStore.showToast('Git Push thành công')
+          return true
+        } else {
+          if (res.data) {
+            this.gitSyncStatus = res.data as model.GitSyncStatus
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+            }
+            uiStore.gitSyncModalOpen = true
+          }
+          uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Push')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
     }
   }
 })

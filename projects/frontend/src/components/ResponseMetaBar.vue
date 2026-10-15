@@ -35,6 +35,17 @@ const badgeClass = computed(() => toneClasses[tone.value].badge)
 const sizeText = computed(() => formatSize(props.response.size_bytes))
 const timeText = computed(() => `${props.response.time_ms} ms`)
 const timestampText = computed(() => formatTimestamp(props.response.timestamp))
+const formattedStatus = computed(() => {
+  const code = props.response.status_code
+  const text = (props.response.status_text || '').trim()
+  if (!text) {
+    return `${code}`
+  }
+  if (text === `${code}` || text.startsWith(`${code} `)) {
+    return text
+  }
+  return `${code} ${text}`
+})
 </script>
 
 <template>
@@ -47,7 +58,7 @@ const timestampText = computed(() => formatTimestamp(props.response.timestamp))
       >
         
         <span class="truncate">
-          {{ response.status_code }}{{ response.status_text ? ' ' + response.status_text : '' }}
+          {{ formattedStatus }}
         </span>
       </div>
 

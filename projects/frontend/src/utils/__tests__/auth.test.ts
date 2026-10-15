@@ -163,6 +163,92 @@ describe('auth.ts', () => {
       expect(result.auth.type).toBe('none')
       expect(result.sourceNode?.name).toBe('Child Folder (No Auth)')
     })
+
+    it('prioritizes request auth_envs[activeEnvId] over request global auth', () => {
+      const reqAuth: AuthConfig = {
+        type: 'bearer',
+        bearer: { token: 'global-req-token' }
+      }
+      const reqAuthEnvs: Record<string, AuthConfig> = {
+        'env-prod': { type: 'bearer', bearer: { token: 'prod-req-token' } }
+      }
+
+      const resultProd = resolveEffectiveAuth(reqAuth, [], {
+        activeEnvId: 'env-prod',
+        requestAuthEnvs: reqAuthEnvs
+      })
+      expect(resultProd.auth.bearer?.token).toBe('prod-req-token')
+
+      const resultDev = resolveEffectiveAuth(reqAuth, [], {
+        activeEnvId: 'env-dev',
+        requestAuthEnvs: reqAuthEnvs
+      })
+      expect(resultDev.auth.bearer?.token).toBe('global-req-token')
+    })
+
+    it('falls back through folder auth_envs -> folder auth -> collection auth_envs -> collection auth', () => {
+      const parentNodes: TreeNode[] = [
+        {
+          id: 'f1',
+          name: 'Auth Folder',
+          type: 'folder',
+          path: '/f1',
+          auth: { type: 'bearer', bearer: { token: 'folder-global-token' } },
+          auth_envs: {
+            'env-staging': { type: 'bearer', bearer: { token: 'folder-staging-token' } }
+          },
+          created_at: ''
+        }
+      ]
+      const collection = {
+        id: 'col-1',
+        name: 'Main Collection',
+        auth: { type: 'bearer', bearer: { token: 'collection-global-token' } } as AuthConfig,
+        auth_envs: {
+          'env-prod': { type: 'bearer', bearer: { token: 'collection-prod-token' } } as AuthConfig
+        }
+      }
+
+      // 1. Folder env-scoped auth matches activeEnvId = env-staging
+      const resStaging = resolveEffectiveAuth({ type: 'inherit' }, parentNodes, {
+        activeEnvId: 'env-staging',
+        collection
+      })
+      expect(resStaging.auth.bearer?.token).toBe('folder-staging-token')
+      expect(resStaging.sourceNode?.name).toBe('Auth Folder')
+
+      // 2. Folder global auth used when folder has no env-prod override
+      const resProdWithFolderGlobal = resolveEffectiveAuth({ type: 'inherit' }, parentNodes, {
+        activeEnvId: 'env-prod',
+        collection
+      })
+      expect(resProdWithFolderGlobal.auth.bearer?.token).toBe('folder-global-token')
+
+      // 3. When folder inherits, falls back to collection auth_envs[env-prod] then collection global auth
+      const inheritFolderNodes: TreeNode[] = [
+        {
+          id: 'f1',
+          name: 'Inherit Folder',
+          type: 'folder',
+          path: '/f1',
+          auth: { type: 'inherit' },
+          created_at: ''
+        }
+      ]
+      const resCollectionProd = resolveEffectiveAuth({ type: 'inherit' }, inheritFolderNodes, {
+        activeEnvId: 'env-prod',
+        collection
+      })
+      expect(resCollectionProd.auth.bearer?.token).toBe('collection-prod-token')
+      expect(resCollectionProd.sourceCollection?.name).toBe('Main Collection')
+
+      const resCollectionGlobal = resolveEffectiveAuth({ type: 'inherit' }, inheritFolderNodes, {
+        activeEnvId: 'env-dev',
+        collection
+      })
+      expect(resCollectionGlobal.auth.bearer?.token).toBe('collection-global-token')
+      expect(resCollectionGlobal.sourceCollection?.name).toBe('Main Collection')
+    })
   })
 
   describe('getAuthArtifacts', () => {

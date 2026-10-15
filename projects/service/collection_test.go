@@ -1443,3 +1443,118 @@ func TestCollection_ActiveEnvID_PersistenceAndBackwardCompat(t *testing.T) {
 		t.Errorf("expected cleared ActiveEnvID '', got %q", clearedDiskColl.ActiveEnvID)
 	}
 }
+
+func TestAuthEnvs_DiskPersistence(t *testing.T) {
+	svc, fs, collectionsRoot := setupCollectionService(t)
+
+	// 1. Create collection with AuthEnvs
+	collRes := svc.CreateCollection(collectionsRoot, "Auth Scope Test")
+	if !collRes.Success {
+		t.Fatalf("CreateCollection failed: %+v", collRes)
+	}
+	coll := collRes.Data.(model.Collection)
+
+	authEnvs := map[string]*model.AuthConfig{
+		"env-staging": {
+			Type: "bearer",
+			Bearer: &model.BearerAuth{
+				Token: "token-staging-123",
+			},
+		},
+		"env-prod": {
+			Type: "basic",
+			Basic: &model.BasicAuth{
+				Username: "admin",
+				Password: "secret-password",
+			},
+		},
+	}
+	coll.AuthEnvs = authEnvs
+
+	updRes := svc.UpdateCollection(collectionsRoot, coll)
+	if !updRes.Success {
+		t.Fatalf("UpdateCollection failed: %+v", updRes)
+	}
+
+	// Verify on-disk JSON for collection.json
+	collDir := filepath.Join(collectionsRoot, coll.ID)
+	var diskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collDir, "collection.json"), &diskColl); err != nil {
+		t.Fatalf("ReadJSON collection.json failed: %v", err)
+	}
+	if diskColl.AuthEnvs == nil || len(diskColl.AuthEnvs) != 2 {
+		t.Fatalf("expected 2 auth_envs on disk, got %+v", diskColl.AuthEnvs)
+	}
+	if diskColl.AuthEnvs["env-staging"].Bearer.Token != "token-staging-123" {
+		t.Errorf("unexpected staging token on disk: %s", diskColl.AuthEnvs["env-staging"].Bearer.Token)
+	}
+
+	// Verify ListCollections loads AuthEnvs
+	listRes := svc.ListCollections(collectionsRoot, coll.ID)
+	if !listRes.Success {
+		t.Fatalf("ListCollections failed: %+v", listRes)
+	}
+	colls := listRes.Data.([]model.Collection)
+	var foundColl *model.Collection
+	for _, c := range colls {
+		if c.ID == coll.ID {
+			foundColl = &c
+			break
+		}
+	}
+	if foundColl == nil || foundColl.AuthEnvs == nil || foundColl.AuthEnvs["env-prod"].Basic.Username != "admin" {
+		t.Errorf("expected loaded coll auth_envs to contain admin, got %+v", foundColl)
+	}
+
+	// Verify DuplicateCollection preserves AuthEnvs
+	dupRes := svc.DuplicateCollection(collectionsRoot, coll.ID)
+	if !dupRes.Success {
+		t.Fatalf("DuplicateCollection failed: %+v", dupRes)
+	}
+	dupColl := dupRes.Data.(model.Collection)
+	if dupColl.AuthEnvs == nil || dupColl.AuthEnvs["env-staging"].Bearer.Token != "token-staging-123" {
+		t.Errorf("expected duplicated collection to have AuthEnvs, got %+v", dupColl.AuthEnvs)
+	}
+
+	// 2. Test Folder AuthEnvs persistence
+	folderRes := svc.CreateFolder(collDir, "")
+	if !folderRes.Success {
+		t.Fatalf("CreateFolder failed: %+v", folderRes)
+	}
+	folderNode := folderRes.Data.(model.TreeNode)
+
+	loadFolderRes := svc.LoadFolder(folderNode.ID)
+	if !loadFolderRes.Success {
+		t.Fatalf("LoadFolder failed: %+v", loadFolderRes)
+	}
+	folder := loadFolderRes.Data.(model.Folder)
+	folderAuthEnvs := map[string]*model.AuthConfig{
+		"env-dev": {
+			Type: "apiKey",
+			APIKey: &model.APIKeyAuth{
+				Key:   "X-API-KEY",
+				Value: "dev-key-999",
+				AddTo: "header",
+			},
+		},
+	}
+	folder.AuthEnvs = folderAuthEnvs
+
+	updFolderRes := svc.UpdateFolder(folder)
+	if !updFolderRes.Success {
+		t.Fatalf("UpdateFolder failed: %+v", updFolderRes)
+	}
+
+	// Load folder again and verify
+	reloadedFolderRes := svc.LoadFolder(folderNode.ID)
+	if !reloadedFolderRes.Success {
+		t.Fatalf("LoadFolder failed after update: %+v", reloadedFolderRes)
+	}
+	reloadedFolder := reloadedFolderRes.Data.(model.Folder)
+	if reloadedFolder.AuthEnvs == nil || reloadedFolder.AuthEnvs["env-dev"] == nil {
+		t.Fatalf("expected reloaded folder to contain env-dev AuthEnvs, got %+v", reloadedFolder.AuthEnvs)
+	}
+	if reloadedFolder.AuthEnvs["env-dev"].APIKey.Value != "dev-key-999" {
+		t.Errorf("expected APIKey value 'dev-key-999', got %q", reloadedFolder.AuthEnvs["env-dev"].APIKey.Value)
+	}
+}

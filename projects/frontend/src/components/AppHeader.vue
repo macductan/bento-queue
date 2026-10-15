@@ -4,12 +4,14 @@ import pkg from '../../package.json'
 import logoSrc from '@/assets/images/turtle_esports_mascot.jpg'
 import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useMockServerStore } from '@/stores/mockServerStore'
 import EnvSelector from '@/components/environment/EnvSelector.vue'
 import ImportErrorModal from '@/components/ImportErrorModal.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
 
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
+const mockStore = useMockServerStore()
 const isImporting = ref(false)
 
 const handleKeydown = (e: KeyboardEvent) => {
@@ -34,6 +36,7 @@ const triggerImport = async () => {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  void mockStore.loadStatus()
 })
 
 onUnmounted(() => {
@@ -70,6 +73,39 @@ onUnmounted(() => {
         <span>{{ collectionStore.importProgress ? collectionStore.importProgress : (isImporting ? 'Đang import...' : 'Import Postman') }}</span>
       </button>
       <EnvSelector />
+      <button
+        type="button"
+        data-test="open-history-modal-btn"
+        @click="uiStore.openHistoryModal()"
+        class="icon-btn text-text-muted hover:text-text-primary p-2 flex items-center justify-center rounded transition-colors"
+        title="History & Changelog"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+          <path d="M3 3v5h5"></path>
+          <path d="M12 7v5l4 2"></path>
+        </svg>
+      </button>
+      <button
+        type="button"
+        data-test="open-mock-server-btn"
+        @click="uiStore.openMockServerModal()"
+        class="icon-btn relative p-2 flex items-center justify-center rounded transition-colors"
+        :class="mockStore.running ? 'text-status-2xx hover:text-status-2xx' : 'text-text-muted hover:text-text-primary'"
+        :title="mockStore.running ? `Local Mock Server (Đang chạy tại :${mockStore.port})` : 'Local Mock Server'"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect>
+          <rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect>
+          <line x1="6" x2="6.01" y1="6" y2="6"></line>
+          <line x1="6" x2="6.01" y1="18" y2="18"></line>
+        </svg>
+        <span
+          v-if="mockStore.running"
+          data-test="mock-server-running-indicator"
+          class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-status-2xx ring-2 ring-surface-raised"
+        />
+      </button>
       <button @click="uiStore.envModalOpen = true" class="icon-btn text-text-muted hover:text-text-primary p-2 flex items-center justify-center rounded transition-colors" title="Manage Environments">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>

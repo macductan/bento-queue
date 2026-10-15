@@ -123,6 +123,50 @@ export const useEnvironmentStore = defineStore('environment', () => {
     return await collectionStore.updateActiveCollectionEnv(id)
   }
 
+  async function applyVariableUpdates(updates: Record<string, string>): Promise<void> {
+    const entries = Object.entries(updates)
+    if (entries.length === 0) return
+
+    if (activeEnvId.value) {
+      const env = environments.value.find(e => e.id === activeEnvId.value)
+      if (env) {
+        if (!env.variables) env.variables = []
+        for (const [key, val] of entries) {
+          const existing = env.variables.find(v => v.key === key)
+          if (existing) {
+            existing.value = val
+            existing.enabled = true
+          } else {
+            env.variables.push({ key, value: val, enabled: true } as any)
+          }
+        }
+        await SaveEnvironment(env)
+        return
+      }
+    }
+
+    const collectionStore = useCollectionStore()
+    const activeColl = collectionStore.activeCollection
+    if (activeColl) {
+      const nextVars = Array.isArray(activeColl.variables)
+        ? activeColl.variables.map(v => ({ ...v }))
+        : []
+      for (const [key, val] of entries) {
+        const existing = nextVars.find(v => v.key === key)
+        if (existing) {
+          existing.value = val
+          existing.enabled = true
+        } else {
+          nextVars.push({ key, value: val, enabled: true })
+        }
+      }
+      activeColl.variables = nextVars
+      if (activeColl.id) {
+        await collectionStore.updateCollectionVariables(activeColl.id, nextVars)
+      }
+    }
+  }
+
   return {
     environments,
     activeEnvId,
@@ -133,6 +177,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     refresh,
     save,
     remove,
-    setActive
+    setActive,
+    applyVariableUpdates
   }
 })

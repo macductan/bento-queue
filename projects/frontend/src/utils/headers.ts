@@ -195,14 +195,21 @@ export function getDefaultHeaders(
     })
   }
 
-  // 3. Auto-generated Content-Type when body type is json
-  if (req?.body?.type === 'json') {
+  // 3. Auto-generated Content-Type when body type is json, xml, urlencoded, or formdata
+  const autoContentTypeMap: Record<string, string> = {
+    json: 'application/json',
+    xml: 'application/xml',
+    urlencoded: 'application/x-www-form-urlencoded',
+    formdata: 'multipart/form-data'
+  }
+  const autoCt = req?.body?.type ? autoContentTypeMap[req.body.type] : undefined
+  if (autoCt) {
     const hasInheritedContentType = items.some(item => item.key.toLowerCase() === 'content-type')
     if (!hasInheritedContentType) {
       const { overridden, disabled } = checkStatus('content-type')
       items.push({
         key: 'Content-Type',
-        value: 'application/json',
+        value: autoCt,
         source: 'auto',
         overridden,
         disabled

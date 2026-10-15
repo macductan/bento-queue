@@ -18,6 +18,7 @@ import {
   type FolderNodeLike
 } from '@/utils/resolveHierarchyVariables'
 import VariableHoverPopover, { type AnchorRectLike } from './VariableHoverPopover.vue'
+import { tokenizeJsonTextSegment, type JsonSyntaxToken } from '@/utils/jsonEditor'
 
 const HOVER_OPEN_DELAY_MS = 150
 const HOVER_CLOSE_DELAY_MS = 200
@@ -27,12 +28,39 @@ const props = withDefaults(defineProps<{
   overlayClass?: string;
   singleLine?: boolean;
   wrap?: boolean;
+  syntax?: 'plain' | 'json' | 'xml';
   variablesMap?: Map<string, string>;
   hierarchyFolders?: FolderNodeLike[];
 }>(), {
   singleLine: false,
-  wrap: true
+  wrap: true,
+  syntax: 'plain'
 })
+
+const getJsonTokensForSegment = (idx: number, textVal: string): JsonSyntaxToken[] => {
+  const list = segments.value
+  const prevWasVar = idx > 0 && (list[idx - 1].type === 'resolved' || list[idx - 1].type === 'missing')
+  const nextIsVar = idx + 1 < list.length && (list[idx + 1].type === 'resolved' || list[idx + 1].type === 'missing')
+  return tokenizeJsonTextSegment(textVal, prevWasVar, nextIsVar)
+}
+
+const jsonTokenClass = (type: JsonSyntaxToken['type']): string => {
+  switch (type) {
+    case 'key':
+      return 'text-sky-300'
+    case 'string':
+      return 'text-emerald-300'
+    case 'number':
+      return 'text-amber-300'
+    case 'boolean':
+    case 'null':
+      return 'text-purple-300'
+    case 'punctuation':
+      return 'text-text-secondary'
+    default:
+      return ''
+  }
+}
 
 const instanceId = Symbol('variable-highlighter')
 const hasPinia = Boolean(getActivePinia())
@@ -455,7 +483,17 @@ defineExpose({
       </div>
       <template v-else>
         <template v-for="(seg, idx) in segments" :key="idx">
-          <span v-if="seg.type === 'text'">{{ seg.value }}</span>
+          <template v-if="seg.type === 'text'">
+            <template v-if="syntax === 'json'">
+              <span
+                v-for="(tok, tIdx) in getJsonTokensForSegment(idx, seg.value)"
+                :key="tIdx"
+                :data-json-token="tok.type !== 'plain' ? tok.type : undefined"
+                :class="jsonTokenClass(tok.type)"
+              >{{ tok.value }}</span>
+            </template>
+            <span v-else>{{ seg.value }}</span>
+          </template>
           <span v-else-if="seg.type === 'resolved'" :data-var-name="seg.key" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
           <span v-else-if="seg.type === 'missing'" :data-var-name="seg.key" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
         </template>

@@ -8,6 +8,8 @@ import { useTabStore } from './tabStore'
 import { buildExecuteRequest } from '../utils/buildExecuteRequest'
 import { getInheritedHeaders } from '../utils/headers'
 import { resolveHierarchyVariables } from '../utils/resolveHierarchyVariables'
+import { executeScript } from '../utils/scriptRunner'
+import { useHistoryStore } from './historyStore'
 
 export interface ExecuteResponse {
   status_code: number
@@ -28,7 +30,9 @@ export const useResponseStore = defineStore('response', {
     response: null as ExecuteResponse | null,
     error: null as { code: string; message: string } | null,
     loading: false,
-    urlInvalid: false
+    urlInvalid: false,
+    scriptLogs: [] as string[],
+    scriptError: null as string | null
   }),
   actions: {
     async send() {
@@ -44,6 +48,8 @@ export const useResponseStore = defineStore('response', {
         return
       }
       this.urlInvalid = false
+      this.scriptLogs = []
+      this.scriptError = null
 
       const collectionStore = useCollectionStore()
       const envStore = useEnvironmentStore()
@@ -62,8 +68,34 @@ export const useResponseStore = defineStore('response', {
         activeEnvId: envStore.activeEnvId
       })
 
+      if (req.scripts?.pre_request?.trim()) {
+        const preRes = executeScript(req.scripts.pre_request, { variables: vars })
+        if (preRes.logs.length > 0) {
+          this.scriptLogs.push(...preRes.logs.map(l => `[Pre-request] ${l}`))
+        }
+        if (Object.keys(preRes.envUpdates).length > 0) {
+          await envStore.applyVariableUpdates(preRes.envUpdates)
+        }
+        if (!preRes.success) {
+          this.scriptError = preRes.error || 'Lỗi thực thi Pre-request Script'
+          useUiStore().showToast(`Lỗi Pre-request Script: ${this.scriptError}`)
+        }
+      }
+
       const inheritedHeaders = getInheritedHeaders(pathNodes)
-      const execReq = buildExecuteRequest(req, vars, inheritedHeaders, pathNodes)
+      const hasEnvOrCollectionAuth = Boolean(
+        (req.auth_envs && Object.keys(req.auth_envs).length > 0) ||
+        pathNodes.some(n => n.auth_envs && Object.keys(n.auth_envs).length > 0) ||
+        collectionStore.activeCollection?.auth ||
+        (collectionStore.activeCollection?.auth_envs && Object.keys(collectionStore.activeCollection.auth_envs).length > 0)
+      )
+      const execReq = hasEnvOrCollectionAuth
+        ? buildExecuteRequest(req, vars, inheritedHeaders, pathNodes, {
+            activeEnvId: envStore.activeEnvId,
+            requestAuthEnvs: req.auth_envs,
+            collection: collectionStore.activeCollection as any
+          })
+        : buildExecuteRequest(req, vars, inheritedHeaders, pathNodes)
       this.loading = true
       this.error = null
       const mySeq = ++seq
@@ -74,6 +106,36 @@ export const useResponseStore = defineStore('response', {
         if (result.success) {
           nextResponse = result.data as ExecuteResponse
           updatedResponse = true
+          if (req.scripts?.post_response?.trim()) {
+            const postRes = executeScript(req.scripts.post_response, {
+              variables: vars,
+              response: nextResponse
+            })
+            if (postRes.logs.length > 0) {
+              this.scriptLogs.push(...postRes.logs.map(l => `[Post-response] ${l}`))
+            }
+            if (Object.keys(postRes.envUpdates).length > 0) {
+              await envStore.applyVariableUpdates(postRes.envUpdates)
+            }
+            if (!postRes.success) {
+              this.scriptError = postRes.error || 'Lỗi thực thi Post-response Script'
+              useUiStore().showToast(`Lỗi Post-response Script: ${this.scriptError}`)
+            }
+          }
+          void useHistoryStore().recordExecution({
+            collection_id: collectionStore.activeCollection?.id || 'default',
+            request_id: req.id,
+            request_name: req.name || execReq.url,
+            method: execReq.method,
+            url: execReq.url,
+            status_code: nextResponse.status_code,
+            status_text: nextResponse.status_text,
+            time_ms: nextResponse.time_ms,
+            size_bytes: nextResponse.size_bytes,
+            timestamp: nextResponse.timestamp || new Date().toISOString(),
+            request: execReq,
+            response: nextResponse
+          })
         } else {
           const code = result.error?.code || 'UNKNOWN'
           const msg = result.error?.message || 'Lỗi không xác định'
@@ -142,6 +204,8 @@ export const useResponseStore = defineStore('response', {
       this.error = null
       this.loading = false
       this.urlInvalid = false
+      this.scriptLogs = []
+      this.scriptError = null
     }
   }
 })

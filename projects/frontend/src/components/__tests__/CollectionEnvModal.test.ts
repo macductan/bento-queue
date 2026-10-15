@@ -138,4 +138,68 @@ describe('CollectionEnvModal.vue', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(wrapper.emitted('close')).toBeTruthy()
   })
+
+  it('supports configuring collection global and environment-scoped auth in Auth tab', async () => {
+    const store = useCollectionStore()
+    const updateSpy = vi.spyOn(store, 'updateCollectionVariables').mockResolvedValue(true)
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-prod', name: 'Production', variables: [], created_at: '', updated_at: '' } as any
+    ]
+
+    store.collections = [
+      {
+        id: 'col-auth',
+        name: 'Auth Collection',
+        is_default: false,
+        is_active: true,
+        variables: []
+      } as any
+    ]
+
+    const wrapper = mount(CollectionEnvModal, {
+      props: {
+        modelValue: true,
+        collectionId: 'col-auth'
+      }
+    })
+
+    const authTabBtn = wrapper.find('[data-test="collection-modal-tab-auth"]')
+    expect(authTabBtn.exists()).toBe(true)
+    await authTabBtn.trigger('click')
+
+    // Select Bearer Token for Global Auth
+    const authTypeSelect = wrapper.find('#auth-type-select')
+    await authTypeSelect.setValue('bearer')
+    const tokenInput = wrapper.find('#bearer-token-input')
+    await tokenInput.setValue('global-coll-token')
+
+    // Switch scope to Production environment
+    const scopeSelect = wrapper.find('[data-test="auth-env-scope-select"]')
+    expect(scopeSelect.exists()).toBe(true)
+    await scopeSelect.setValue('env-prod')
+
+    await wrapper.find('#auth-type-select').setValue('bearer')
+    await wrapper.find('#bearer-token-input').setValue('prod-coll-token')
+
+    const saveBtn = wrapper.find('[data-test="save-collection-env-btn"]')
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      'col-auth',
+      [],
+      expect.objectContaining({
+        type: 'bearer',
+        bearer: { token: 'global-coll-token' }
+      }),
+      expect.objectContaining({
+        'env-prod': expect.objectContaining({
+          type: 'bearer',
+          bearer: { token: 'prod-coll-token' }
+        })
+      })
+    )
+  })
 })

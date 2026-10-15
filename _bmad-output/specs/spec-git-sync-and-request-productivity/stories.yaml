@@ -1,0 +1,39 @@
+- id: "1"
+  title: "Input/Textarea Ctrl+Z Undo/Redo, Custom HTTP Method & Inline Body Type Dropdown"
+  description: >-
+    Sửa lỗi Ctrl+Z (Undo) và Ctrl+Y / Ctrl+Shift+Z (Redo) trên mọi ô input và textarea trong ứng dụng (CAP-6).
+    Cho phép chọn HEAD, OPTIONS hoặc nhập bất kỳ Custom HTTP Method nào trong UrlBar.vue (CAP-4), đồng thời đưa dropdown chọn loại Body lên cùng hàng bên phải của thanh RequestTabs.vue (CAP-5).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Tạo projects/frontend/src/utils/inputUndo.ts quản lý ngăn xếp Undo/Redo (WeakMap lưu { value, selectionStart, selectionEnd }) cho mọi HTMLInputElement và HTMLTextAreaElement, tích hợp lắng nghe toàn cục trong App.vue và hỗ trợ recordInputSnapshot trong BodyEditor.vue khi nhấn Tab.
+    Trong projects/frontend/src/components/UrlBar.vue, mở rộng danh sách method chuẩn thêm HEAD, OPTIONS (kèm màu sắc trong UrlBar.vue, TreeNodeRow.vue, AppTabBar.vue) và thêm ô input data-test="custom-method-input" + nút áp dụng data-test="custom-method-apply" trong dropdown listbox để người dùng nhập custom method (ví dụ PURGE, PROPFIND), tự động chuẩn hóa UPPERCASE.
+    Trong projects/frontend/src/components/RequestTabs.vue, đặt dropdown chọn loại Body (data-test="body-type-select", gồm None, JSON, Text) nằm bên phải cùng hàng với các tabs; khi chọn sẽ gọi requestStore.setBodyType(type) và chuyển activeRequestTab sang 'body'. Xóa bỏ hàng nút radio chọn Body type cũ trong BodyEditor.vue.
+    Viết đầy đủ unit/component tests cho inputUndo, UrlBar custom method, RequestTabs body dropdown và BodyEditor; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "2"
+  title: "cURL Paste Auto-Parser in URL Bar & Resolved cURL Preview Tab"
+  description: >-
+    Tự động nhận diện và parse câu lệnh cURL khi người dùng paste vào thanh URL Bar thành Method, URL, Params, Headers, Auth và Body (CAP-2).
+    Bổ sung tab cURL trên thanh RequestTabs để hiển thị trực tiếp câu lệnh cURL đa dòng đã phân giải đầy đủ biến môi trường 4 tầng kèm nút sao chép nhanh (CAP-3).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trong projects/frontend/src/utils/curl.ts, bổ sung isCurlCommand(text) và parseCurlCommand(text) hỗ trợ phân tích lệnh cURL đơn dòng/đa dòng (cờ -X/--request, -H/--header, -d/--data/--data-raw/--data-binary/--data-urlencode, -u/--user chuyển thành Basic Auth, --url, -G/--get, chuỗi nháy đơn/nháy kép, tự suy luận POST khi có body, tự nhận diện JSON body và tách query params).
+    Trong projects/frontend/src/components/UrlBar.vue, xử lý sự kiện @paste trên #url-input: nếu dữ liệu dán là lệnh cURL, gọi e.preventDefault(), parse và gán method, url, params, headers, body, auth vào requestStore.current, hiển thị toast thông báo.
+    Trong projects/frontend/src/stores/uiStore.ts, mở rộng activeRequestTab thêm 'curl'. Trong RequestTabs.vue, thêm tab 'cURL'. Trong RequestEditor.vue, hiển thị panel preview cURL đa dòng (data-test="curl-preview-panel") sử dụng generateCurlCommand với effectiveVariables (4 tầng) và pathNodes, kèm nút sao chép (data-test="copy-preview-curl-btn").
+    Viết đầy đủ unit/component tests trong curl.test.ts, UrlBar.test.ts, RequestEditor.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "3"
+  title: "Per-Collection Git Remote Configuration, Git Pull & Git Push Synchronization"
+  description: >-
+    Cấu hình Git Remote URL (HTTPS/SSH) theo từng Collection trong collection.json và xây dựng GitSyncService trên Go backend thực thi git pull / git push trong thư mục Collection, trả về thông báo lỗi rõ ràng nếu xảy ra conflict để người dùng tự xử lý tay (CAP-1).
+    Bổ sung các nút Git Pull, Git Push và hộp thoại cấu hình Git Remote trên giao diện Sidebar.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trên Go backend: thêm trường GitRemoteURL (`json:"git_remote_url,omitempty"`) vào model.Collection và struct GitSyncStatus + mã lỗi ErrGitConflict/ErrGitError trong projects/model/types.go. Đảm bảo CollectionService (projects/service/collection.go) giữ nguyên hoặc cập nhật GitRemoteURL khi đọc/ghi collection.json.
+    Tạo projects/service/git_sync.go (GitSyncService) với các phương thức SaveRemoteURL, GetStatus, Pull, Push thực thi lệnh git an toàn (không dùng shell, chống path traversal và option injection, tự git init + cấu hình remote origin, tự commit thay đổi local khi push/pull, phát hiện conflict trả về mã lỗi GIT_CONFLICT kèm danh sách file bị conflict).
+    Expose Wails bindings SaveCollectionGitRemote, GetCollectionGitStatus, GitPullCollection, GitPushCollection trong projects/app.go và cập nhật khai báo trong projects/frontend/wailsjs/go/main/App.js, App.d.ts, models.ts.
+    Trên Vue frontend: bổ sung actions trong collectionStore.ts, tạo GitSyncModal.vue và gắn các nút Git Pull (data-test="git-pull-btn"), Git Push (data-test="git-push-btn"), Cấu hình Git (data-test="git-config-btn") vào AppSidebar.vue.
+    Viết đầy đủ Go tests trong projects/service/git_sync_test.go (sử dụng bare git repo trong t.TempDir() để kiểm thử init, remote config, push, pull, và conflict detection) và Vitest tests trên frontend; đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.
