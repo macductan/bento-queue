@@ -4,6 +4,7 @@ import { useRequestStore } from './requestStore'
 import { useUiStore } from './uiStore'
 import { useEnvironmentStore } from './environmentStore'
 import { useCollectionStore } from './collectionStore'
+import { useTabStore } from './tabStore'
 import { buildExecuteRequest } from '../utils/buildExecuteRequest'
 import { getInheritedHeaders } from '../utils/headers'
 import { resolveHierarchyVariables } from '../utils/resolveHierarchyVariables'
@@ -46,6 +47,13 @@ export const useResponseStore = defineStore('response', {
 
       const collectionStore = useCollectionStore()
       const envStore = useEnvironmentStore()
+      const tabStore = useTabStore()
+      const reqId = req.id
+      const initialResponse = this.response ? JSON.parse(JSON.stringify(this.response)) : null
+      let nextResponse: ExecuteResponse | null = initialResponse
+      let nextError: { code: string; message: string } | null = null
+      let updatedResponse = false
+
       const pathNodes = (collectionStore.findFolderPath(collectionStore.tree, req.id) || []).filter(n => n.type === 'folder')
       const vars = resolveHierarchyVariables({
         collectionVariables: collectionStore.activeCollection?.variables,
@@ -64,7 +72,8 @@ export const useResponseStore = defineStore('response', {
         const result = await SendRequest(execReq as any)
         if (mySeq !== seq) return
         if (result.success) {
-          this.response = result.data as ExecuteResponse
+          nextResponse = result.data as ExecuteResponse
+          updatedResponse = true
         } else {
           const code = result.error?.code || 'UNKNOWN'
           const msg = result.error?.message || 'Lỗi không xác định'
@@ -74,15 +83,40 @@ export const useResponseStore = defineStore('response', {
           } else if (code === 'VALIDATION' && msg.includes('đang được gửi')) {
             // Im lặng
           } else if (code === 'CONNECTION_ERROR' || code === 'TIMEOUT') {
-            this.error = { code, message: msg }
+            nextError = { code, message: msg }
           } else {
             useUiStore().showToast(msg)
           }
         }
       } catch (err) {
-        if (mySeq === seq) this.error = { code: 'UNKNOWN', message: String(err) }
+        if (mySeq !== seq) return
+        nextError = { code: 'UNKNOWN', message: String(err) }
       } finally {
-        if (mySeq === seq) this.loading = false
+        if (mySeq === seq) {
+          const isStillActiveRequest =
+            (collectionStore.activeRequestId === reqId && !collectionStore.activeFolderId) ||
+            (!collectionStore.activeRequestId && !collectionStore.activeFolderId && reqStore.current?.id === reqId)
+
+          if (isStillActiveRequest) {
+            if (updatedResponse) {
+              this.response = nextResponse
+            }
+            if (nextError) {
+              this.error = nextError
+            }
+            this.loading = false
+            if (tabStore.tabs.some(t => t.type === 'request' && t.entityId === reqId)) {
+              tabStore.saveResponseToCache(reqId)
+            }
+          } else if (tabStore.tabs.some(t => t.type === 'request' && t.entityId === reqId)) {
+            tabStore.responseCache[reqId] = {
+              response: nextResponse ? JSON.parse(JSON.stringify(nextResponse)) : null,
+              error: nextError ? { ...nextError } : null,
+              loading: false,
+              urlInvalid: false
+            }
+          }
+        }
       }
     },
     async abort() {
@@ -92,6 +126,12 @@ export const useResponseStore = defineStore('response', {
       } catch (err) {
         console.error('Lỗi khi hủy:', err)
       }
+    },
+    resetDisplay() {
+      this.response = null
+      this.error = null
+      this.loading = false
+      this.urlInvalid = false
     },
     clear() {
       if (this.loading) {

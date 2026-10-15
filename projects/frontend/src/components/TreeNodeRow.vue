@@ -24,7 +24,7 @@ const isFolder = computed(() => props.node.type === 'folder')
 const isExpanded = computed(() => store.expandedFolders.has(props.node.id))
 const isActive = computed(() => {
   if (isFolder.value) {
-    return store.activeFolderId === props.node.id
+    return store.activeFolderId === props.node.id && !store.activeRequestId
   }
   return store.activeRequestId === props.node.id
 })
@@ -33,7 +33,6 @@ const toggle = () => {
   if (isEditing.value) return
   if (isFolder.value) {
     store.toggleFolder(props.node.id)
-    void store.selectFolder(props.node.id)
   } else {
     store.selectRequest(props.node.id)
   }

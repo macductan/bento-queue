@@ -31,7 +31,6 @@ const displayRows = computed(() => {
 const keyInputs = ref<HTMLInputElement[]>([])
 const valueInputs = ref<HTMLTextAreaElement[]>([])
 const highlighterRefs = ref<any[]>([])
-const keyHighlighterRefs = ref<any[]>([])
 
 const focusCell = (index: number, part: 'key' | 'value') => {
   if (part === 'key') {
@@ -118,7 +117,6 @@ const removeRow = (index: number) => {
     }
     keyInputs.value.splice(index, 1)
     valueInputs.value.splice(index, 1)
-    keyHighlighterRefs.value.splice(index, 1)
     highlighterRefs.value.splice(index, 1)
     if (props.modelValue) {
       emit('update:modelValue', arr)
@@ -202,29 +200,20 @@ const initResize = (el: any) => {
         </div>
         
         <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded">
-          <VariableHighlighter
-            :ref="el => { if (el) keyHighlighterRefs[index] = el }"
+          <input 
+            type="text" 
             :value="row.key"
-            :wrap="false"
-            :single-line="true"
-            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent whitespace-pre overflow-hidden"
-          >
-            <input 
-              type="text" 
-              :value="row.key"
-              :readonly="row._isAuto"
-              :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
-              @compositionstart="ensureRealRow(index)"
-              @input="e => onCellInput(index, 'key', e)"
-              @compositionend="e => onCellInput(index, 'key', e)"
-              @scroll="e => keyHighlighterRefs[index]?.syncScroll(e)"
-              placeholder="Key"
-              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
-              :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
-              spellcheck="false"
-              autocomplete="off"
-            />
-          </VariableHighlighter>
+            :readonly="row._isAuto"
+            :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
+            @compositionstart="ensureRealRow(index)"
+            @input="e => onCellInput(index, 'key', e)"
+            @compositionend="e => onCellInput(index, 'key', e)"
+            placeholder="Key"
+            class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
+            :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
+            spellcheck="false"
+            autocomplete="off"
+          />
         </div>
         
         <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">

@@ -1,11 +1,20 @@
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue'
-import type { AuthConfig, TreeNode } from '@/stores/collectionStore'
+import { getActivePinia } from 'pinia'
+import { useCollectionStore, type AuthConfig, type TreeNode } from '@/stores/collectionStore'
 import { resolveEffectiveAuth } from '@/utils/auth'
+import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
-const showBearerToken = ref(false)
-const showBasicPassword = ref(false)
-const showApiKeyValue = ref(false)
+const collectionStore = getActivePinia() ? useCollectionStore() : null
+
+const showBearerToken = ref<boolean | null>(null)
+const showBasicPassword = ref<boolean | null>(null)
+const showApiKeyValue = ref<boolean | null>(null)
+
+const bearerHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
+const basicUserHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
+const basicPassHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
+const apiKeyValHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 
 const props = withDefaults(
   defineProps<{
@@ -20,11 +29,14 @@ const props = withDefaults(
   }
 )
 
-watch(() => props.modelValue, () => {
-  showBearerToken.value = false
-  showBasicPassword.value = false
-  showApiKeyValue.value = false
-})
+watch(
+  () => [collectionStore?.activeRequestId, collectionStore?.activeFolderId],
+  () => {
+    showBearerToken.value = null
+    showBasicPassword.value = null
+    showApiKeyValue.value = null
+  }
+)
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: AuthConfig): void
@@ -135,6 +147,18 @@ const apiKeyValue = computed({
   }
 })
 
+const hasVariableSyntax = (val: string): boolean => /\{\{/.test(val || '')
+
+const isBearerVisible = computed(() =>
+  showBearerToken.value !== null ? showBearerToken.value : hasVariableSyntax(bearerToken.value)
+)
+const isBasicPasswordVisible = computed(() =>
+  showBasicPassword.value !== null ? showBasicPassword.value : hasVariableSyntax(basicPassword.value)
+)
+const isApiKeyValueVisible = computed(() =>
+  showApiKeyValue.value !== null ? showApiKeyValue.value : hasVariableSyntax(apiKeyValue.value)
+)
+
 const apiKeyAddTo = computed({
   get: () => props.modelValue?.apiKey?.addTo || 'header',
   set: (val: 'header' | 'query') => {
@@ -200,22 +224,34 @@ const apiKeyAddTo = computed({
     <div v-else-if="authType === 'bearer'" class="flex flex-col gap-3">
       <div class="flex flex-col gap-1">
         <label for="bearer-token-input" class="text-xs font-medium text-text-muted">Token</label>
-        <div class="relative flex items-center">
-          <input
-            id="bearer-token-input"
-            v-model="bearerToken"
-            :type="showBearerToken ? 'text' : 'password'"
-            placeholder="Token or {{token}}"
-            class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 pr-10 text-sm text-text-primary font-mono focus:border-brand-primary outline-none"
-          />
+        <div class="relative flex items-center bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="bearerHighlighterRef"
+            :value="bearerToken"
+            :single-line="true"
+            :wrap="false"
+            :overlay-class="isBearerVisible ? 'px-3 py-2 pr-10 text-sm font-mono min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden' : 'hidden'"
+          >
+            <input
+              id="bearer-token-input"
+              v-model="bearerToken"
+              :type="isBearerVisible ? 'text' : 'password'"
+              placeholder="Token or {{token}}"
+              class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm font-mono focus:border-brand-primary outline-none"
+              :class="isBearerVisible ? 'transparent-selection text-transparent caret-text-primary placeholder:text-text-muted' : 'text-text-primary'"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => bearerHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
           <button
             type="button"
-            @click="showBearerToken = !showBearerToken"
-            class="absolute right-2 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="showBearerToken ? 'Hide token' : 'Show token'"
+            @click="showBearerToken = !isBearerVisible"
+            class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            :title="isBearerVisible ? 'Hide token' : 'Show token'"
             aria-label="Toggle token visibility"
           >
-            <svg v-if="showBearerToken" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+            <svg v-if="isBearerVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
             </svg>
             <svg v-else class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
@@ -230,35 +266,60 @@ const apiKeyAddTo = computed({
     <div v-else-if="authType === 'basic'" class="flex flex-col gap-3">
       <div class="flex flex-col gap-1">
         <label for="basic-username-input" class="text-xs font-medium text-text-muted">Username</label>
-        <input
-          id="basic-username-input"
-          v-model="basicUsername"
-          type="text"
-          placeholder="Username or {{username}}"
-          class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 text-sm text-text-primary focus:border-brand-primary outline-none"
-        />
+        <div class="relative bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="basicUserHighlighterRef"
+            :value="basicUsername"
+            :single-line="true"
+            :wrap="false"
+            overlay-class="px-3 py-2 text-sm min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden"
+          >
+            <input
+              id="basic-username-input"
+              v-model="basicUsername"
+              type="text"
+              placeholder="Username or {{username}}"
+              class="transparent-selection w-full bg-transparent border border-border-default rounded px-3 py-2 text-sm text-transparent caret-text-primary placeholder:text-text-muted focus:border-brand-primary outline-none"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => basicUserHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
+        </div>
         <span v-if="basicUsername.includes(':')" class="text-[11px] text-amber-400">
           Warning (RFC 7617): Username should not contain a colon (":").
         </span>
       </div>
       <div class="flex flex-col gap-1">
         <label for="basic-password-input" class="text-xs font-medium text-text-muted">Password</label>
-        <div class="relative flex items-center">
-          <input
-            id="basic-password-input"
-            v-model="basicPassword"
-            :type="showBasicPassword ? 'text' : 'password'"
-            placeholder="Password or {{password}}"
-            class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 pr-10 text-sm text-text-primary focus:border-brand-primary outline-none"
-          />
+        <div class="relative flex items-center bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="basicPassHighlighterRef"
+            :value="basicPassword"
+            :single-line="true"
+            :wrap="false"
+            :overlay-class="isBasicPasswordVisible ? 'px-3 py-2 pr-10 text-sm min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden' : 'hidden'"
+          >
+            <input
+              id="basic-password-input"
+              v-model="basicPassword"
+              :type="isBasicPasswordVisible ? 'text' : 'password'"
+              placeholder="Password or {{password}}"
+              class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm focus:border-brand-primary outline-none"
+              :class="isBasicPasswordVisible ? 'transparent-selection text-transparent caret-text-primary placeholder:text-text-muted' : 'text-text-primary'"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => basicPassHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
           <button
             type="button"
-            @click="showBasicPassword = !showBasicPassword"
-            class="absolute right-2 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="showBasicPassword ? 'Hide password' : 'Show password'"
+            @click="showBasicPassword = !isBasicPasswordVisible"
+            class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            :title="isBasicPasswordVisible ? 'Hide password' : 'Show password'"
             aria-label="Toggle password visibility"
           >
-            <svg v-if="showBasicPassword" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+            <svg v-if="isBasicPasswordVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
             </svg>
             <svg v-else class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
@@ -283,22 +344,34 @@ const apiKeyAddTo = computed({
       </div>
       <div class="flex flex-col gap-1">
         <label for="api-key-val-input" class="text-xs font-medium text-text-muted">Value</label>
-        <div class="relative flex items-center">
-          <input
-            id="api-key-val-input"
-            v-model="apiKeyValue"
-            :type="showApiKeyValue ? 'text' : 'password'"
-            placeholder="Value or {{apiKey}}"
-            class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 pr-10 text-sm text-text-primary font-mono focus:border-brand-primary outline-none"
-          />
+        <div class="relative flex items-center bg-surface-raised rounded">
+          <VariableHighlighter
+            ref="apiKeyValHighlighterRef"
+            :value="apiKeyValue"
+            :single-line="true"
+            :wrap="false"
+            :overlay-class="isApiKeyValueVisible ? 'px-3 py-2 pr-10 text-sm font-mono min-h-[38px] w-full border border-transparent whitespace-pre overflow-hidden' : 'hidden'"
+          >
+            <input
+              id="api-key-val-input"
+              v-model="apiKeyValue"
+              :type="isApiKeyValueVisible ? 'text' : 'password'"
+              placeholder="Value or {{apiKey}}"
+              class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm font-mono focus:border-brand-primary outline-none"
+              :class="isApiKeyValueVisible ? 'transparent-selection text-transparent caret-text-primary placeholder:text-text-muted' : 'text-text-primary'"
+              spellcheck="false"
+              autocomplete="off"
+              @scroll="e => apiKeyValHighlighterRef?.syncScroll(e)"
+            />
+          </VariableHighlighter>
           <button
             type="button"
-            @click="showApiKeyValue = !showApiKeyValue"
-            class="absolute right-2 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="showApiKeyValue ? 'Hide value' : 'Show value'"
+            @click="showApiKeyValue = !isApiKeyValueVisible"
+            class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+            :title="isApiKeyValueVisible ? 'Hide value' : 'Show value'"
             aria-label="Toggle API key value visibility"
           >
-            <svg v-if="showApiKeyValue" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+            <svg v-if="isApiKeyValueVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
             </svg>
             <svg v-else class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">

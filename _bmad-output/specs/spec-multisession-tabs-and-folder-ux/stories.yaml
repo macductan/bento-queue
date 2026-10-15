@@ -1,0 +1,37 @@
+- id: "1"
+  title: "Key Input Visibility Fix in KvpEditor & Folder Settings Environment Variable Resolution"
+  description: >-
+    Sửa lỗi gõ Key bị ẩn trong KvpEditor.vue bằng cách tháo bỏ VariableHighlighter và class text-transparent trên ô input cột Key, chỉ giữ text thông thường text-text-primary (CAP-3).
+    Đảm bảo trong FolderEditor.vue các tab Headers và Auth (AuthEditor.vue) nhận đầy đủ biến môi trường phân giải 4 tầng từ Collection Env + Active Global Env + Folder cha + Folder hiện tại để highlight và hover preview chính xác, đồng thời không tự động ẩn lại input mật khẩu/token khi đang gõ phím (CAP-4).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trong projects/frontend/src/components/KvpEditor.vue, tháo bỏ hoàn toàn VariableHighlighter và class text-transparent / transparent-selection trên ô <input placeholder="Key"> ở cột Key, thay bằng text-text-primary (giữ nguyên VariableHighlighter trên cột Value).
+    Trong projects/frontend/src/components/AuthEditor.vue, xóa watcher trên props.modelValue đang reset showBearerToken/showBasicPassword/showApiKeyValue mỗi khi gõ phím; tích hợp VariableHighlighter cho các ô nhập Token, Username, Password, API Key Value (khi ở chế độ hiển thị văn bản hoặc chứa cú pháp biến {{...}}) để highlight biến (text-variable-valid / text-variable-missing) và mở VariableHoverPopover.
+    Trong projects/frontend/src/components/FolderEditor.vue, đảm bảo currentScopeVariables luôn khởi tạo mảng cho folder_envs[selectedEnvScope] và provide đầy đủ effectiveVariables + variableHierarchyFolders (Collection Env + Active Global Env + Folder cha + Folder hiện tại) cho cả tab Headers và Auth.
+    Cập nhật và bổ sung unit tests trong KvpEditor.test.ts, AuthEditor.test.ts, FolderEditor.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "2"
+  title: "Folder Sidebar Click Toggle-Only Behavior"
+  description: >-
+    Cập nhật TreeNodeRow.vue để thao tác click chuột trái (hoặc nhấn phím Enter) vào hàng thư mục trên Sidebar chỉ toggle đóng/mở nhánh cây (store.toggleFolder) mà không tự động mở FolderEditor (CAP-2).
+    Đảm bảo FolderEditor chỉ được mở khi người dùng chủ động chọn "Cài đặt thư mục" từ Context Menu (TreeContextMenu.vue) hoặc chọn tab Folder đang mở.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Trong projects/frontend/src/components/TreeNodeRow.vue, sửa hàm toggle() khi isFolder === true chỉ gọi store.toggleFolder(props.node.id) và bỏ lời gọi store.selectFolder(props.node.id).
+    Kiểm tra TreeContextMenu.vue đảm bảo nút "Cài đặt thư mục" (handleFolderSettings) vẫn gọi collectionStore.setActiveFolderId(nodeId) để mở FolderEditor cho thư mục được chọn.
+    Cập nhật và bổ sung unit tests trong projects/frontend/src/components/__tests__/TreeNodeRow.test.ts để xác minh click vào folder chỉ toggle expand/collapse mà không kích hoạt activeFolderId, đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "3"
+  title: "Multisession Tabs Bar & Per-Tab Response State Persistence"
+  description: >-
+    Xây dựng tabStore quản lý danh sách các tab Request và Folder đang mở (activeTabId, entityId, type, name, method, isDirty) kèm cơ chế lưu giữ trạng thái responseStore riêng biệt cho từng Request tab (CAP-1).
+    Triển khai thanh AppTabBar.vue trên đỉnh ContentArea.vue hỗ trợ hiển thị badge method/icon folder, chấm amber dot khi chưa lưu, đóng tab bằng nút ✕, click chuột giữa hoặc phím tắt Ctrl+W, và đồng bộ vòng đời tự động với Sidebar khi đổi tên, xóa hoặc chuyển đổi Collection.
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    Tạo projects/frontend/src/stores/tabStore.ts quản lý tabs (id, entityId, type: 'request' | 'folder', name, method, isDirty), activeTabId, và responseCache lưu/khôi phục trạng thái responseStore theo từng request entityId khi chuyển tab.
+    Tạo projects/frontend/src/components/AppTabBar.vue hiển thị danh sách tab trên đỉnh ContentArea.vue với badge HTTP method (cho request) hoặc icon folder (cho folder), tên mục, chấm tròn bg-unsaved-dot khi isDirty, nút đóng (✕), hỗ trợ click chuột giữa (@auxclick / button === 1) để đóng tab, và phím tắt Ctrl+W / Cmd+W trong App.vue để đóng tab đang active.
+    Đồng bộ vòng đời giữa collectionStore, requestStore, FolderEditor và tabStore: mở request hoặc chọn "Cài đặt thư mục" sẽ mở mới hoặc focus tab đã có (không tạo trùng); đổi tên/đổi method/thay đổi isDirty cập nhật tab tức thì; xóa request hoặc xóa folder (cùng toàn bộ request/folder con bên trong) tự động đóng các tab liên quan và chuyển sang tab kế bên (hoặc EmptyStateRequest nếu hết tab); switch/delete/refresh collection xóa toàn bộ tab của collection cũ.
+    Viết đầy đủ unit/component tests cho tabStore, AppTabBar, ContentArea và collectionStore; đảm bảo 'bun run type-check', 'bun run test', 'go test ./...' pass 100%.

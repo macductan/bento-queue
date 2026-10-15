@@ -17,6 +17,7 @@ import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUrlParamsSync } from '@/composables/useUrlParamsSync'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
+import { resolveVariables } from '@/utils/variables'
 
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
@@ -55,7 +56,11 @@ provide('variableHierarchyFolders', pathNodes)
 
 const defaultHeaders = computed(() => {
   if (!req.value) return []
-  const inherited = getInheritedHeaders(pathNodes.value)
+  const inherited = getInheritedHeaders(pathNodes.value).map(h => ({
+    ...h,
+    rawValue: h.value || '',
+    value: resolveVariables(h.value || '', effectiveVariables.value)
+  }))
   const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(req.value.auth, pathNodes.value)
   const { headers: authHeaders } = getAuthArtifacts(effectiveAuth, effectiveVariables.value)
 
@@ -96,7 +101,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
     // Suppress default header without leaking sensitive auth secrets into request file on disk
     req.value.headers.push({
       key: item.key,
-      value: item.source === 'auth' ? '' : (item.value || ''),
+      value: item.source === 'auth' ? '' : (item.rawValue ?? item.value ?? ''),
       enabled: false,
       ...(item.source === 'auto' ? { _isAuto: true } : {})
     })

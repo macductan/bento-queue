@@ -9,6 +9,7 @@ import {
   type Ref,
   type ComputedRef
 } from 'vue'
+import { getActivePinia } from 'pinia'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { parseVariables } from '@/utils/variables'
@@ -34,8 +35,9 @@ const props = withDefaults(defineProps<{
 })
 
 const instanceId = Symbol('variable-highlighter')
-const envStore = useEnvironmentStore()
-const collectionStore = useCollectionStore()
+const hasPinia = Boolean(getActivePinia())
+const envStore = hasPinia ? useEnvironmentStore() : null
+const collectionStore = hasPinia ? useCollectionStore() : null
 const injectedVars = inject<Ref<Map<string, string>> | ComputedRef<Map<string, string>> | Map<string, string> | null>('effectiveVariables', null)
 const injectedFolders = inject<Ref<FolderNodeLike[]> | ComputedRef<FolderNodeLike[]> | FolderNodeLike[] | null>('variableHierarchyFolders', null)
 
@@ -52,11 +54,11 @@ const resolvedHierarchyFolders = computed<FolderNodeLike[]>(() => {
   if (Array.isArray(fromInject)) {
     return fromInject
   }
-  if (collectionStore.activeRequestId) {
+  if (collectionStore?.activeRequestId) {
     const full = collectionStore.findFolderPath(collectionStore.tree, collectionStore.activeRequestId) || []
     return full.filter(n => n.type === 'folder')
   }
-  if (collectionStore.activeFolderId) {
+  if (collectionStore?.activeFolderId) {
     const full = collectionStore.findFolderPath(collectionStore.tree, collectionStore.activeFolderId) || []
     return full.filter(n => n.type === 'folder')
   }
@@ -65,14 +67,14 @@ const resolvedHierarchyFolders = computed<FolderNodeLike[]>(() => {
 
 const fallbackVariablesMap = computed(() => {
   void localRevision.value
-  const activeEnvObj = envStore.activeEnvId
+  const activeEnvObj = envStore?.activeEnvId
     ? envStore.environments.find(e => e.id === envStore.activeEnvId)
     : null
   return resolveHierarchyVariables({
-    collectionVariables: collectionStore.activeCollection?.variables,
-    activeEnvVariables: activeEnvObj?.variables ?? envStore.variablesMap,
+    collectionVariables: collectionStore?.activeCollection?.variables,
+    activeEnvVariables: activeEnvObj?.variables ?? envStore?.variablesMap,
     pathFolders: resolvedHierarchyFolders.value,
-    activeEnvId: envStore.activeEnvId
+    activeEnvId: envStore?.activeEnvId
   })
 })
 
@@ -442,7 +444,7 @@ defineExpose({
       ]"
       aria-hidden="true"
     >
-      <div v-if="singleLine" class="flex items-center h-full">
+      <div v-if="singleLine" class="flex items-center h-full min-h-full">
         <span>
           <template v-for="(seg, idx) in segments" :key="idx">
             <span v-if="seg.type === 'text'">{{ seg.value }}</span>

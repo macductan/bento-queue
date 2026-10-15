@@ -13,12 +13,14 @@ import { useUiStore } from '@/stores/uiStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useTabStore } from '@/stores/tabStore'
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const envStore = useEnvironmentStore()
+const tabStore = useTabStore()
 
 const isDraggingSidebar = ref(false)
 
@@ -50,6 +52,17 @@ const handleWindowResize = () => {
 }
 
 const handleKeyDown = (e: KeyboardEvent) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+    e.preventDefault()
+    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen) {
+      return
+    }
+    if (tabStore.activeTabId) {
+      void tabStore.closeTab(tabStore.activeTabId)
+    }
+    return
+  }
+
   if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen) {
     return
   }

@@ -1,15 +1,14 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+import AppTabBar from '@/components/AppTabBar.vue'
 import EmptyStateRequest from '@/components/EmptyStateRequest.vue'
 import ResponseViewer from '@/components/ResponseViewer.vue'
 import RequestEditor from '@/components/RequestEditor.vue'
 import FolderEditor from '@/components/FolderEditor.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
-import { useResponseStore } from '@/stores/responseStore'
 import { useUiStore } from '@/stores/uiStore'
 
 const collectionStore = useCollectionStore()
-const responseStore = useResponseStore()
 const uiStore = useUiStore()
 
 const contentAreaRef = ref<HTMLElement | null>(null)
@@ -56,10 +55,6 @@ watch(() => collectionStore.activeRequestId, (newId) => {
   if (!newId) {
     stopContentResize()
   }
-  responseStore.clear()
-})
-watch(() => collectionStore.activeFolderId, () => {
-  responseStore.clear()
 })
 
 onMounted(() => {
@@ -75,6 +70,7 @@ onUnmounted(() => {
 
 <template>
   <main ref="contentAreaRef" class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <AppTabBar />
     <div
       data-test="request-pane"
       :class="[

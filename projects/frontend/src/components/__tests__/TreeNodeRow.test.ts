@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import TreeNodeRow from '../TreeNodeRow.vue'
+import TreeContextMenu from '../TreeContextMenu.vue'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
+import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetCollectionTree: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -25,10 +27,15 @@ describe('TreeNodeRow.vue', () => {
     setActivePinia(createPinia())
   })
 
-  it('toggles folder and selects folder on left click (CAP-1)', async () => {
+  it('toggles folder only without selecting folder or clearing activeRequestId on left click (CAP-2)', async () => {
     const store = useCollectionStore()
+    const uiStore = useUiStore()
+    store.activeRequestId = 'req-1'
+    store.activeFolderId = null
+
     const toggleSpy = vi.spyOn(store, 'toggleFolder')
-    const selectSpy = vi.spyOn(store, 'selectFolder').mockResolvedValue()
+    const selectFolderSpy = vi.spyOn(store, 'selectFolder')
+    const setActiveFolderSpy = vi.spyOn(store, 'setActiveFolderId')
 
     const folderNode: TreeNode = {
       id: 'folder-auth',
@@ -49,13 +56,142 @@ describe('TreeNodeRow.vue', () => {
     const row = wrapper.find('[data-tree-row="true"]')
     expect(row.exists()).toBe(true)
 
+    // First click expands folder while keeping activeRequestId = 'req-1'
     await row.trigger('click')
 
+    expect(toggleSpy).toHaveBeenCalledTimes(1)
     expect(toggleSpy).toHaveBeenCalledWith('folder-auth')
-    expect(selectSpy).toHaveBeenCalledWith('folder-auth')
+    expect(store.expandedFolders.has('folder-auth')).toBe(true)
+    expect(selectFolderSpy).not.toHaveBeenCalled()
+    expect(setActiveFolderSpy).not.toHaveBeenCalled()
+    expect(store.activeRequestId).toBe('req-1')
+    expect(store.activeFolderId).toBeNull()
+
+    // Second click collapses folder
+    await row.trigger('click')
+    expect(toggleSpy).toHaveBeenCalledTimes(2)
+    expect(store.expandedFolders.has('folder-auth')).toBe(false)
+    expect(selectFolderSpy).not.toHaveBeenCalled()
+    expect(setActiveFolderSpy).not.toHaveBeenCalled()
+
+    // Clicking when activeRequestId === null also only toggles folder
+    store.activeRequestId = null
+    await row.trigger('click')
+    expect(toggleSpy).toHaveBeenCalledTimes(3)
+    expect(store.expandedFolders.has('folder-auth')).toBe(true)
+    expect(store.activeFolderId).toBeNull()
+    expect(store.activeRequestId).toBeNull()
+
+    // Clicking "..." options button opens context menu without triggering toggleFolder
+    const optionsBtn = wrapper.find('button[aria-label="Tùy chọn"]')
+    expect(optionsBtn.exists()).toBe(true)
+    await optionsBtn.trigger('click')
+    expect(toggleSpy).toHaveBeenCalledTimes(3)
+    expect(uiStore.contextMenu?.nodeId).toBe('folder-auth')
+    expect(uiStore.contextMenu?.nodeType).toBe('folder')
   })
 
-  it('renders active visual indicator when folder is active (CAP-1)', async () => {
+  it('toggles folder only without activating folder when pressing Enter on focused folder row (CAP-2)', async () => {
+    const store = useCollectionStore()
+    store.activeRequestId = 'req-1'
+    store.activeFolderId = null
+
+    const toggleSpy = vi.spyOn(store, 'toggleFolder')
+    const selectFolderSpy = vi.spyOn(store, 'selectFolder')
+    const setActiveFolderSpy = vi.spyOn(store, 'setActiveFolderId')
+
+    const folderNode: TreeNode = {
+      id: 'folder-auth',
+      name: 'Auth',
+      type: 'folder',
+      path: '/folder-auth',
+      children: [],
+      created_at: '2026-10-13'
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: {
+        node: folderNode,
+        depth: 0
+      }
+    })
+
+    const row = wrapper.find('[data-tree-row="true"]')
+    await row.trigger('keydown', { key: 'Enter' })
+
+    expect(toggleSpy).toHaveBeenCalledTimes(1)
+    expect(toggleSpy).toHaveBeenCalledWith('folder-auth')
+    expect(store.expandedFolders.has('folder-auth')).toBe(true)
+    expect(selectFolderSpy).not.toHaveBeenCalled()
+    expect(setActiveFolderSpy).not.toHaveBeenCalled()
+    expect(store.activeFolderId).toBeNull()
+    expect(store.activeRequestId).toBe('req-1')
+
+    // Second Enter collapses expanded folder
+    await row.trigger('keydown', { key: 'Enter' })
+    expect(toggleSpy).toHaveBeenCalledTimes(2)
+    expect(store.expandedFolders.has('folder-auth')).toBe(false)
+    expect(store.activeFolderId).toBeNull()
+    expect(store.activeRequestId).toBe('req-1')
+  })
+
+  it('opens Folder Settings via TreeContextMenu "Cài đặt thư mục" and activates folder row (CAP-2)', async () => {
+    const store = useCollectionStore()
+    const uiStore = useUiStore()
+    store.activeRequestId = 'req-1'
+    store.activeFolderId = null
+
+    const setActiveFolderSpy = vi.spyOn(store, 'setActiveFolderId')
+
+    const folderNode: TreeNode = {
+      id: 'folder-auth',
+      name: 'Auth',
+      type: 'folder',
+      path: '/folder-auth',
+      children: [],
+      created_at: '2026-10-13'
+    }
+
+    const rowWrapper = mount(TreeNodeRow, {
+      props: {
+        node: folderNode,
+        depth: 0
+      }
+    })
+    const menuWrapper = mount(TreeContextMenu)
+
+    try {
+      // Open context menu on folder-auth
+      const row = rowWrapper.find('[data-tree-row="true"]')
+      await row.trigger('contextmenu', { clientX: 100, clientY: 120 })
+      await menuWrapper.vm.$nextTick()
+
+      expect(uiStore.contextMenu).toEqual({
+        x: 100,
+        y: 120,
+        nodeId: 'folder-auth',
+        nodeType: 'folder'
+      })
+
+      const settingsBtn = menuWrapper.findAll('button').find(b => b.text().trim() === 'Cài đặt thư mục')
+      expect(settingsBtn).toBeDefined()
+      await settingsBtn!.trigger('click')
+      await flushPromises()
+      await rowWrapper.vm.$nextTick()
+
+      expect(setActiveFolderSpy).toHaveBeenCalledWith('folder-auth')
+      expect(store.activeFolderId).toBe('folder-auth')
+      expect(store.activeRequestId).toBeNull()
+      expect(uiStore.contextMenu).toBeNull()
+      expect(row.attributes('data-active')).toBe('true')
+      expect(row.classes()).toContain('border-brand-primary')
+    } finally {
+      menuWrapper.unmount()
+      rowWrapper.unmount()
+    }
+  })
+
+  it('renders active visual indicator when folder is active and activeRequestId is null (CAP-2)', async () => {
     const store = useCollectionStore()
     const folderNode: TreeNode = {
       id: 'folder-auth',
@@ -77,13 +213,21 @@ describe('TreeNodeRow.vue', () => {
     expect(row.attributes('data-active')).toBeUndefined()
     expect(row.classes()).not.toContain('border-brand-primary')
 
-    // Mark as active folder
+    // Mark as active folder with no active request
     store.activeFolderId = 'folder-auth'
+    store.activeRequestId = null
     await wrapper.vm.$nextTick()
 
     expect(row.attributes('data-active')).toBe('true')
     expect(row.classes()).toContain('border-brand-primary')
     expect(row.classes()).toContain('bg-surface-hover')
+
+    // If activeRequestId is non-null, folder row should NOT be active
+    store.activeRequestId = 'req-other'
+    await wrapper.vm.$nextTick()
+
+    expect(row.attributes('data-active')).toBeUndefined()
+    expect(row.classes()).not.toContain('border-brand-primary')
   })
 
   it('selects request on left click and applies active visual indicator when active', async () => {

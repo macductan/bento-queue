@@ -203,5 +203,73 @@ describe('RequestEditor.vue - Save State Indicator', () => {
       _isAuto: true
     })
   })
+
+  it('resolves 4-tier variables in inherited folder headers for defaultHeaders while preserving rawValue on toggleDefaultHeader', async () => {
+    const { useCollectionStore } = await import('@/stores/collectionStore')
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const collectionStore = useCollectionStore()
+    const envStore = useEnvironmentStore()
+    const requestStore = useRequestStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        variables: [{ key: 'apiUrl', value: 'https://coll.api', enabled: true }]
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    envStore.environments = [
+      {
+        id: 'env-dev',
+        name: 'Dev',
+        variables: [{ key: 'apiUrl', value: 'https://dev.api', enabled: true }]
+      } as any
+    ]
+    envStore.activeEnvId = 'env-dev'
+
+    collectionStore.tree = [
+      {
+        id: 'f1',
+        name: 'Auth',
+        type: 'folder',
+        path: '/coll/f1',
+        created_at: '',
+        headers: [{ key: 'X-Upstream', value: '{{apiUrl}}/v1', enabled: true }],
+        folder_envs: {
+          'env-dev': [{ key: 'apiUrl', value: 'https://custom.dev.api', enabled: true }]
+        },
+        children: [
+          {
+            id: 'req-1',
+            name: 'Get Users',
+            type: 'request',
+            path: '/coll/f1/users.json',
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    requestStore.current = createMockRequest({ id: 'req-1', headers: [] })
+    const wrapper = mountEditor()
+    const vm = wrapper.vm as any
+
+    const upstreamHeader = vm.defaultHeaders.find((h: any) => h.key === 'X-Upstream')
+    expect(upstreamHeader).toBeDefined()
+    expect(upstreamHeader.value).toBe('https://custom.dev.api/v1')
+    expect(upstreamHeader.rawValue).toBe('{{apiUrl}}/v1')
+
+    vm.toggleDefaultHeader(upstreamHeader)
+    expect(requestStore.current.headers).toEqual([
+      {
+        key: 'X-Upstream',
+        value: '{{apiUrl}}/v1',
+        enabled: false
+      }
+    ])
+  })
 })
+
 

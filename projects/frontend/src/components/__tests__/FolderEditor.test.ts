@@ -508,7 +508,152 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     await nextTick()
     expect(vm.variables[0].value).toBe('https://synced.api.com')
   })
+
+  it('integrates real KvpEditor, AuthEditor, and DefaultHeadersTable with 4-tier variable resolution and visible Key inputs', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    const colStore = useCollectionStore()
+
+    // Tier 1: Collection Env
+    colStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        variables: [{ key: 'coll_var', value: 'coll-val', enabled: true }]
+      } as any
+    ]
+    colStore.activeCollectionId = 'Test-Collection'
+
+    // Tier 2: Active Global Env
+    envStore.environments = [
+      {
+        id: 'env-dev',
+        name: 'Dev',
+        variables: [{ key: 'env_name', value: 'staging', enabled: true }]
+      } as any
+    ]
+    envStore.activeEnvId = 'env-dev'
+
+    // Tier 3 & 4: Parent Folder & Current Folder
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [
+      {
+        id: 'parent-folder',
+        name: 'Parent Folder',
+        type: 'folder',
+        path: 'Parent Folder',
+        created_at: '2026-10-13',
+        headers: [{ key: 'X-Env', value: '{{env_name}}-{{parent_var}}', enabled: true }],
+        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } },
+        variables: [{ key: 'parent_var', value: 'parent-v1', enabled: true }],
+        children: [
+          { ...mockTreeNode, path: 'Parent Folder/Auth Module' }
+        ]
+      }
+    ]
+
+    vi.useFakeTimers()
+    vi.mocked(LoadFolder).mockResolvedValue({
+      success: true,
+      data: {
+        id: 'folder-1',
+        name: 'Auth Module',
+        variables: [{ key: 'bearer_token', value: 'secret-jwt', enabled: true }],
+        folder_envs: {
+          'env-dev': [{ key: 'bearer_token', value: 'env-specific-jwt', enabled: true }]
+        },
+        headers: [{ key: 'X-Custom', value: '{{coll_var}}', enabled: true }],
+        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } }
+      }
+    } as any)
+
+    activeWrapper = mount(FolderEditor, { attachTo: document.body })
+    await flushPromises()
+    await nextTick()
+
+    // 1. Verify DefaultHeadersTable in FolderEditor resolves 4-tier variables for inherited headers and preserves rawValue
+    const vm = activeWrapper.vm as any
+    const inheritedEnvHeader = vm.defaultHeaders.find((h: any) => h.key === 'X-Env')
+    const authHeader = vm.defaultHeaders.find((h: any) => h.key === 'Authorization')
+    expect(inheritedEnvHeader).toEqual(
+      expect.objectContaining({
+        key: 'X-Env',
+        value: 'staging-parent-v1',
+        rawValue: '{{env_name}}-{{parent_var}}',
+        source: 'folder'
+      })
+    )
+    expect(authHeader).toEqual(
+      expect.objectContaining({
+        key: 'Authorization',
+        value: 'Bearer env-specific-jwt',
+        source: 'auth'
+      })
+    )
+
+    // Verify toggleDefaultHeader disable / re-enable cycle preserves rawValue for folder header and '' for auth header
+    vm.toggleDefaultHeader(inheritedEnvHeader)
+    expect(vm.headers).toContainEqual({
+      key: 'X-Env',
+      value: '{{env_name}}-{{parent_var}}',
+      enabled: false
+    })
+    vm.toggleDefaultHeader(vm.defaultHeaders.find((h: any) => h.key === 'X-Env'))
+    expect(vm.headers.some((h: any) => h.key === 'X-Env')).toBe(false)
+
+    vm.toggleDefaultHeader(authHeader)
+    expect(vm.headers).toContainEqual({
+      key: 'Authorization',
+      value: '',
+      enabled: false
+    })
+    vm.toggleDefaultHeader(vm.defaultHeaders.find((h: any) => h.key === 'Authorization'))
+    expect(vm.headers.some((h: any) => h.key === 'Authorization')).toBe(false)
+
+    // 2. Verify Key input in KvpEditor uses text-text-primary (not text-transparent) and Value highlights {{coll_var}}
+    const keyInputs = activeWrapper.findAll('input[placeholder="Key"]')
+    expect(keyInputs.length).toBeGreaterThan(0)
+    expect(keyInputs[0].classes()).toContain('text-text-primary')
+    expect(keyInputs[0].classes()).not.toContain('text-transparent')
+    expect(activeWrapper.find('span.text-variable-valid').text()).toBe('{{coll_var}}')
+
+    // 3. Verify typing into phantom row of Variables tab in env-dev scope binds directly to folder_envs['env-dev']
+    const varsTabInputs = activeWrapper.findAll('input[placeholder="Key"]')
+    const lastPhantomKeyInput = varsTabInputs[varsTabInputs.length - 1]
+    ;(lastPhantomKeyInput.element as HTMLInputElement).value = 'new_env_var'
+    await lastPhantomKeyInput.trigger('input')
+    await nextTick()
+
+    expect(vm.folder_envs['env-dev']).toEqual([
+      { key: 'bearer_token', value: 'env-specific-jwt', enabled: true },
+      { key: 'new_env_var', value: '', enabled: true }
+    ])
+
+    // 4. Verify AuthEditor highlights {{bearer_token}} and hovering opens VariableHoverPopover with all 4 tiers
+    const bearerInput = activeWrapper.find('input#bearer-token-input')
+    expect(bearerInput.exists()).toBe(true)
+    expect(bearerInput.attributes('type')).toBe('text')
+    const bearerSpan = activeWrapper
+      .findAll('span.text-variable-valid')
+      .find((s: any) => s.text() === '{{bearer_token}}')
+    expect(bearerSpan).toBeDefined()
+
+    await bearerSpan!.trigger('mousemove')
+    await vi.advanceTimersByTimeAsync(200)
+    await nextTick()
+
+    const popover = document.body.querySelector('[data-test="variable-hover-popover"]')
+    expect(popover).not.toBeNull()
+    expect(popover?.textContent).toContain('Folder: Auth Module (Dev)')
+    expect(popover?.textContent).toContain('Folder: Auth Module (Dùng chung)')
+    expect(popover?.textContent).toContain('Folder: Parent Folder (Dev)')
+    expect(popover?.textContent).toContain('Folder: Parent Folder (Dùng chung)')
+    expect(popover?.textContent).toContain('Global Env (Dev)')
+    expect(popover?.textContent).toContain('Collection Env (Dùng chung)')
+  })
 })
+
+
 
 
 

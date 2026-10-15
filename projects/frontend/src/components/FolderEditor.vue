@@ -3,14 +3,20 @@ import { ref, watch, onMounted, computed, onBeforeUnmount, provide } from 'vue'
 import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useTabStore } from '@/stores/tabStore'
 import KvpEditor from '@/components/KvpEditor.vue'
 import AuthEditor from '@/components/AuthEditor.vue'
+import DefaultHeadersTable from '@/components/DefaultHeadersTable.vue'
 import { LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
+import { getInheritedHeaders, getDefaultHeaders, type DefaultHeaderItem } from '@/utils/headers'
+import { resolveEffectiveAuth, getAuthArtifacts } from '@/utils/auth'
+import { resolveVariables } from '@/utils/variables'
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
 const envStore = useEnvironmentStore()
+const tabStore = useTabStore()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -61,13 +67,16 @@ const currentScopeVariables = computed<{ key: string, value: string, enabled: bo
     if (selectedEnvScope.value === '__folder_global__') {
       return variables.value
     }
-    return folder_envs.value[selectedEnvScope.value] || []
+    if (!folder_envs.value[selectedEnvScope.value]) {
+      folder_envs.value[selectedEnvScope.value] = []
+    }
+    return folder_envs.value[selectedEnvScope.value]
   },
   set(newVal) {
     if (selectedEnvScope.value === '__folder_global__') {
-      variables.value = [...newVal]
+      variables.value = Array.isArray(newVal) ? newVal : []
     } else {
-      folder_envs.value = { ...folder_envs.value, [selectedEnvScope.value]: [...newVal] }
+      folder_envs.value[selectedEnvScope.value] = Array.isArray(newVal) ? newVal : []
     }
   }
 })
@@ -108,6 +117,53 @@ const effectiveVariables = computed(() => {
 
 provide('effectiveVariables', effectiveVariables)
 provide('variableHierarchyFolders', folderHierarchyNodes)
+
+const defaultHeaders = computed(() => {
+  if (!folder.value) return []
+  const inherited = getInheritedHeaders(parentNodes.value).map(h => ({
+    ...h,
+    rawValue: h.value || '',
+    value: resolveVariables(h.value || '', effectiveVariables.value)
+  }))
+  const { auth: effectiveAuth, sourceNode } = resolveEffectiveAuth(auth.value, parentNodes.value)
+  const { headers: authHeaders } = getAuthArtifacts(effectiveAuth, effectiveVariables.value)
+
+  const isInherited = !auth.value || !auth.value.type || auth.value.type === 'inherit'
+  const folderIdx = sourceNode ? parentNodes.value.findIndex(f => f.id === sourceNode.id) : -1
+  const authFolderLevel = folderIdx !== -1 ? folderIdx + 1 : parentNodes.value.length + 1
+
+  const taggedAuthHeaders = authHeaders.map(h => ({
+    ...h,
+    authSource: 'folder' as const,
+    folderLevel: isInherited && sourceNode ? authFolderLevel : parentNodes.value.length + 1,
+    folderName: isInherited && sourceNode ? sourceNode.name : (folderName.value || folder.value?.name)
+  }))
+
+  return getDefaultHeaders({ headers: headers.value }, inherited, taggedAuthHeaders)
+})
+
+const toggleDefaultHeader = (item: DefaultHeaderItem) => {
+  if (!folder.value || item.overridden) return
+
+  const lower = item.key.toLowerCase().trim()
+  const idx = headers.value.findIndex(
+    h => h && typeof h.key === 'string' && h.key.trim().toLowerCase() === lower
+  )
+
+  if (idx !== -1) {
+    if (!headers.value[idx].enabled) {
+      headers.value.splice(idx, 1)
+    } else {
+      headers.value[idx].enabled = false
+    }
+  } else {
+    headers.value.push({
+      key: item.key,
+      value: item.source === 'auth' ? '' : (item.rawValue ?? item.value ?? ''),
+      enabled: false
+    })
+  }
+}
 
 const headersCount = computed(() => {
   return headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '').length
@@ -168,6 +224,18 @@ const isDirty = computed(() => {
   return getCleanSnapshot() !== initialData.value
 })
 
+watch(
+  isDirty,
+  (dirty) => {
+    if (loading.value) return
+    const targetFolderId = folder.value?.id || collectionStore.activeFolderId
+    if (targetFolderId) {
+      tabStore.setTabDirty('folder', targetFolderId, dirty)
+    }
+  },
+  { flush: 'sync' }
+)
+
 const cancelAutoSave = () => {
   if (autoSaveTimer) {
     clearTimeout(autoSaveTimer)
@@ -206,6 +274,7 @@ const loadFolderData = async () => {
   if (!collectionStore.activeFolderId) return
   cancelAutoSave()
   loading.value = true
+  initialData.value = ''
   try {
     const result = await LoadFolder(collectionStore.activeFolderId)
     if (result.success && result.data) {
@@ -221,6 +290,12 @@ const loadFolderData = async () => {
       auth.value = result.data.auth || { type: 'inherit' }
       initialData.value = getCleanSnapshot()
       saveStatus.value = 'saved'
+      if (folder.value?.id) {
+        tabStore.updateTabMeta('folder', folder.value.id, {
+          name: folderName.value || folder.value.name
+        })
+        tabStore.setTabDirty('folder', folder.value.id, false)
+      }
     } else {
       uiStore.showToast(result.error?.message || 'Không thể tải thông tin thư mục')
     }
@@ -274,6 +349,9 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
       if (result.success) {
         initialData.value = getCleanSnapshot()
         saveStatus.value = 'saved'
+        if (folder.value?.id) {
+          tabStore.setTabDirty('folder', folder.value.id, false)
+        }
         if (!options?.silent) {
           uiStore.showToast('Đã lưu cấu hình thư mục')
         }
@@ -301,6 +379,14 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
   return await savePromise
 }
 
+const flushFolder = async (): Promise<boolean> => {
+  cancelAutoSave()
+  if (!folder.value || !isDirty.value) return true
+  return await saveFolderData({ silent: true })
+}
+
+tabStore.registerFolderFlush(flushFolder)
+
 const handleKeydown = (e: KeyboardEvent) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
@@ -322,7 +408,8 @@ watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
     isReverting = false
     return
   }
-  if (oldId && isDirty.value) {
+  const oldStillExists = Boolean(oldId && collectionStore.findNode(collectionStore.tree, oldId))
+  if (oldId && oldStillExists && isDirty.value) {
     const saved = await saveFolderData({ silent: true })
     if (!saved) {
       isReverting = true
@@ -331,6 +418,7 @@ watch(() => collectionStore.activeFolderId, async (newId, oldId) => {
     }
   }
   cancelAutoSave()
+  if (!newId) return
   await loadFolderData()
 })
 
@@ -370,6 +458,7 @@ const handleExternalFolderUpdated = (e: Event) => {
 }
 
 onMounted(() => {
+  tabStore.registerFolderFlush(flushFolder)
   loadFolderData()
   window.addEventListener('keydown', handleKeydown)
   if (typeof window !== 'undefined') {
@@ -379,6 +468,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(async () => {
+  tabStore.registerFolderFlush(null)
   window.removeEventListener('keydown', handleKeydown)
   if (typeof window !== 'undefined') {
     window.removeEventListener('beforeunload', handleBeforeUnload)
@@ -503,6 +593,7 @@ onBeforeUnmount(async () => {
       <!-- Tab Content -->
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         <div v-show="activeTab === 'headers'">
+          <DefaultHeadersTable :items="defaultHeaders" @toggle="toggleDefaultHeader" />
           <KvpEditor v-model="headers" />
         </div>
         <div v-show="activeTab === 'auth'">

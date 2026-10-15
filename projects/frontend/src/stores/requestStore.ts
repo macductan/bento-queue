@@ -9,6 +9,7 @@ export interface KVPair {
 }
 
 import type { AuthConfig } from './collectionStore'
+import { useTabStore } from './tabStore'
 
 export interface Body {
   type: string
@@ -59,6 +60,8 @@ function stringifySorted(obj: any): string {
   return JSON.stringify(sortedObj)
 }
 
+let loadReqSeq = 0
+
 export const useRequestStore = defineStore('request', {
   state: (): RequestState => ({
     original: null,
@@ -80,12 +83,14 @@ export const useRequestStore = defineStore('request', {
   actions: {
     async loadRequest(id: string) {
       this.cancelAutoSave()
+      const mySeq = ++loadReqSeq
       this.loading = true
       this.error = null
       this.saveStatus = 'saved'
       this.contentTypeAuto = false
       try {
         const result = await GetRequest(id)
+        if (mySeq !== loadReqSeq) return
         if (result.success && result.data) {
           this.original = result.data as Request
           if (!this.original.auth) {
@@ -103,20 +108,33 @@ export const useRequestStore = defineStore('request', {
             }
           }
           this.current = JSON.parse(JSON.stringify(this.original))
+          const tabStore = useTabStore()
+          tabStore._ensureRequestStoreSync()
+          if (this.current) {
+            tabStore.updateTabMeta('request', this.current.id, {
+              name: this.current.name,
+              method: this.current.method
+            })
+            tabStore.setTabDirty('request', this.current.id, this.isDirty)
+          }
         } else {
           this.error = result.error?.message || 'Không thể tải request'
           this.original = null
           this.current = null
         }
       } catch (err) {
+        if (mySeq !== loadReqSeq) return
         this.error = String(err)
         this.original = null
         this.current = null
       } finally {
-        this.loading = false
+        if (mySeq === loadReqSeq) {
+          this.loading = false
+        }
       }
     },
     clearRequest() {
+      ++loadReqSeq
       this.cancelAutoSave()
       this.original = null
       this.current = null
@@ -128,6 +146,11 @@ export const useRequestStore = defineStore('request', {
     },
     scheduleAutoSave(delay: number = 800) {
       this.cancelAutoSave()
+      const tabStore = useTabStore()
+      tabStore._ensureRequestStoreSync()
+      if (this.current) {
+        tabStore.setTabDirty('request', this.current.id, this.isDirty)
+      }
       if (!this.current || !this.isDirty) {
         if (!this.isDirty && this.saveStatus !== 'saving') {
           this.saveStatus = 'saved'
@@ -205,6 +228,7 @@ export const useRequestStore = defineStore('request', {
           }
           const result = await SaveRequest(toSave as any)
           if (result.success) {
+            const tabStore = useTabStore()
             if (this.current && this.current.id === toSave.id) {
               if (stringifySorted(this.current) === stringifySorted(toSave)) {
                 this.original = JSON.parse(JSON.stringify(this.current))
@@ -213,6 +237,13 @@ export const useRequestStore = defineStore('request', {
                 this.original = JSON.parse(JSON.stringify(toSave))
                 this.saveStatus = 'unsaved'
               }
+              tabStore.updateTabMeta('request', this.current.id, {
+                name: this.current.name,
+                method: this.current.method
+              })
+              tabStore.setTabDirty('request', this.current.id, this.isDirty)
+            } else if (toSave?.id) {
+              tabStore.setTabDirty('request', toSave.id, false)
             }
             if (!options?.silent) {
               const { useUiStore } = await import('./uiStore')
