@@ -324,6 +324,75 @@ describe('requestStore', () => {
         ]
       }))
     })
+
+    it('does not show false unsaved dot on tab when loading and switching between unmodified requests with active useUrlParamsSync (Bug 1)', async () => {
+      const { toRef, nextTick } = await import('vue')
+      const { GetRequest } = await import('../../../wailsjs/go/main/App')
+      const { useTabStore } = await import('../tabStore')
+      const { useUrlParamsSync } = await import('../../composables/useUrlParamsSync')
+      const store = useRequestStore()
+      const tabStore = useTabStore()
+
+      // Attach live URL/params bi-directional sync composable as RequestEditor.vue does
+      useUrlParamsSync(toRef(store, 'current'))
+
+      tabStore.openTab({
+        type: 'request',
+        entityId: 'req-a',
+        name: 'Request A',
+        method: 'POST'
+      })
+      tabStore.openTab({
+        type: 'request',
+        entityId: 'req-b',
+        name: 'Request B',
+        method: 'GET'
+      })
+
+      // Request A has JSON body without explicit Content-Type header and URL with query string (triggers normalization)
+      vi.mocked(GetRequest).mockResolvedValueOnce({
+        success: true,
+        data: createMockRequest({
+          id: 'req-a',
+          name: 'Request A',
+          method: 'POST',
+          url: 'https://api.example.com/items?page=1',
+          params: [],
+          headers: [],
+          body: { type: 'json', content: '{"a":1}' }
+        })
+      } as any)
+
+      await store.loadRequest('req-a')
+      await nextTick()
+      expect(store.current?.params).toEqual([{ key: 'page', value: '1', enabled: true }])
+      expect(store.isDirty).toBe(false)
+      expect(store.saveStatus).toBe('saved')
+      expect(tabStore.tabs.find(t => t.entityId === 'req-a')?.isDirty).toBe(false)
+
+      // Now switch to Request B without modifying Request A
+      vi.mocked(GetRequest).mockResolvedValueOnce({
+        success: true,
+        data: createMockRequest({
+          id: 'req-b',
+          name: 'Request B',
+          method: 'GET',
+          url: 'https://api.example.com/users',
+          params: [{ key: 'limit', value: '10', enabled: true }],
+          headers: [],
+          body: { type: 'none', content: '' }
+        })
+      } as any)
+
+      await store.loadRequest('req-b')
+      await nextTick()
+      expect(store.current?.url).toBe('https://api.example.com/users?limit=10')
+      expect(store.isDirty).toBe(false)
+      expect(store.saveStatus).toBe('saved')
+      expect(tabStore.tabs.find(t => t.entityId === 'req-a')?.isDirty).toBe(false)
+      expect(tabStore.tabs.find(t => t.entityId === 'req-b')?.isDirty).toBe(false)
+    })
   })
 })
+
 

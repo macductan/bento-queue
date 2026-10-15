@@ -362,13 +362,333 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result
 	return model.NewSuccess(status)
 }
 
+// resolveTargetRemoteBranch determines which remote branch on origin to pull/reset against.
+// Returns ("", false) when the remote repository has no branches yet.
+func (s *GitSyncService) resolveTargetRemoteBranch(collDir string) (string, bool) {
+	branch := s.getCurrentBranch(collDir)
+	targetBranch := branch
+	if _, err := s.runGit(collDir, "rev-parse", "--verify", "origin/"+targetBranch); err != nil {
+		if _, errMain := s.runGit(collDir, "rev-parse", "--verify", "origin/main"); errMain == nil {
+			targetBranch = "main"
+		} else if _, errMaster := s.runGit(collDir, "rev-parse", "--verify", "origin/master"); errMaster == nil {
+			targetBranch = "master"
+		} else if out, errRefs := s.runGit(collDir, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/"); errRefs == nil && strings.TrimSpace(out) != "" {
+			for _, line := range strings.Split(out, "\n") {
+				ref := strings.TrimSpace(line)
+				if strings.HasPrefix(ref, "origin/") && ref != "origin/HEAD" {
+					cand := strings.TrimPrefix(ref, "origin/")
+					if cand != "" {
+						return cand, true
+					}
+				}
+			}
+			return "", false
+		} else {
+			return "", false
+		}
+	}
+	return targetBranch, true
+}
+
+// ClearAndPull saves the remote URL, fetches origin, discards local uncommitted/untracked changes,
+// resets hard to origin/<branch>, and rebuilds the collection index.
+func (s *GitSyncService) ClearAndPull(collectionsRoot, collectionID string, remoteURL ...string) model.Result {
+	s.logger.Info("GitSyncService.ClearAndPull called", "collectionID", collectionID)
+
+	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
+	if errRes != nil {
+		return *errRes
+	}
+
+	targetRemote := strings.TrimSpace(coll.GitRemoteURL)
+	if len(remoteURL) > 0 && strings.TrimSpace(remoteURL[0]) != "" {
+		targetRemote = strings.TrimSpace(remoteURL[0])
+	}
+	if !isValidGitRemoteURL(targetRemote) || targetRemote == "" {
+		return model.NewError(model.ErrValidation, "Git Remote URL không hợp lệ (hỗ trợ HTTPS, SSH git@..., ssh://, hoặc đường dẫn hợp lệ)")
+	}
+
+	coll.GitRemoteURL = targetRemote
+	coll.UpdatedAt = time.Now()
+	if err := s.fs.WriteJSON(metaPath, *coll); err != nil {
+		return model.NewError(model.ErrIO, "Không thể lưu cấu hình Git Remote vào collection.json")
+	}
+
+	if err := s.ensureGitRepoAndRemote(collDir, targetRemote); err != nil {
+		return model.NewError(model.ErrGitError, err.Error())
+	}
+
+	if fetchOut, err := s.runGit(collDir, "fetch", "--prune", "origin"); err != nil {
+		return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể kết nối tới Git Remote khi fetch: %s", fetchOut))
+	}
+
+	// Discard local working tree changes and untracked files when HEAD exists
+	if _, headErr := s.runGit(collDir, "rev-parse", "--verify", "HEAD"); headErr == nil {
+		_, _ = s.runGit(collDir, "checkout", "--", ".")
+	}
+	_, _ = s.runGit(collDir, "clean", "-fd")
+
+	targetBranch, hasRemoteBranch := s.resolveTargetRemoteBranch(collDir)
+	var resetOut string
+	if hasRemoteBranch {
+		out, err := s.runGit(collDir, "reset", "--hard", "origin/"+targetBranch)
+		if err != nil {
+			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể git reset --hard origin/%s: %s", targetBranch, out))
+		}
+		resetOut = out
+	} else {
+		// Remote is empty: remove any previously tracked collection items so local data is genuinely cleared
+		if entries, err := os.ReadDir(collDir); err == nil {
+			for _, entry := range entries {
+				name := entry.Name()
+				if name == ".git" || name == "collection.json" {
+					continue
+				}
+				_ = os.RemoveAll(filepath.Join(collDir, name))
+			}
+		}
+		_, _ = s.runGit(collDir, "rm", "-rf", "--cached", "--ignore-unmatch", ".")
+		resetOut = "Remote repository chưa có nhánh nào để pull."
+	}
+
+	// Re-persist GitRemoteURL in collection.json in case origin/<branch>'s collection.json had a different/empty URL
+	var updatedColl model.Collection
+	if hasRemoteBranch && s.fs.ReadJSON(metaPath, &updatedColl) == nil {
+		updatedColl.ID = coll.ID
+		updatedColl.IsDefault = coll.IsDefault
+		updatedColl.GitRemoteURL = targetRemote
+		_ = s.fs.WriteJSON(metaPath, updatedColl)
+	} else {
+		_ = s.fs.WriteJSON(metaPath, *coll)
+	}
+
+	if s.fs != nil {
+		_ = s.fs.IndexRebuild(collDir)
+	}
+
+	status := s.inspectStatus(collDir, targetRemote)
+	status.Output = resetOut
+	return model.NewSuccess(status)
+}
+
+// StashAndPull saves the remote URL, stashes local changes, pulls from origin/<branch> with --allow-unrelated-histories,
+// pops the stash, and reports ErrGitConflict with conflict files if any conflicts arise.
+func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remoteURL ...string) model.Result {
+	s.logger.Info("GitSyncService.StashAndPull called", "collectionID", collectionID)
+
+	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
+	if errRes != nil {
+		return *errRes
+	}
+
+	targetRemote := strings.TrimSpace(coll.GitRemoteURL)
+	if len(remoteURL) > 0 && strings.TrimSpace(remoteURL[0]) != "" {
+		targetRemote = strings.TrimSpace(remoteURL[0])
+	}
+	if !isValidGitRemoteURL(targetRemote) || targetRemote == "" {
+		return model.NewError(model.ErrValidation, "Git Remote URL không hợp lệ (hỗ trợ HTTPS, SSH git@..., ssh://, hoặc đường dẫn hợp lệ)")
+	}
+
+	coll.GitRemoteURL = targetRemote
+	coll.UpdatedAt = time.Now()
+	if err := s.fs.WriteJSON(metaPath, *coll); err != nil {
+		return model.NewError(model.ErrIO, "Không thể lưu cấu hình Git Remote vào collection.json")
+	}
+
+	if err := s.ensureGitRepoAndRemote(collDir, targetRemote); err != nil {
+		return model.NewError(model.ErrGitError, err.Error())
+	}
+
+	// Ensure at least an initial commit exists before git stash push -u (git stash requires HEAD)
+	if _, headErr := s.runGit(collDir, "rev-parse", "--verify", "HEAD"); headErr != nil {
+		_, _ = s.runGit(collDir, "commit", "--allow-empty", "-m", "chore(hecto): initial commit")
+	}
+
+	restoreCollectionMeta := func() {
+		var updatedColl model.Collection
+		if err := s.fs.ReadJSON(metaPath, &updatedColl); err == nil {
+			updatedColl.ID = coll.ID
+			updatedColl.IsDefault = coll.IsDefault
+			updatedColl.GitRemoteURL = targetRemote
+			if len(updatedColl.Variables) == 0 && len(coll.Variables) > 0 {
+				updatedColl.Variables = coll.Variables
+			}
+			if updatedColl.Auth == nil && coll.Auth != nil {
+				updatedColl.Auth = coll.Auth
+			}
+			if len(updatedColl.AuthEnvs) == 0 && len(coll.AuthEnvs) > 0 {
+				updatedColl.AuthEnvs = coll.AuthEnvs
+			}
+			_ = s.fs.WriteJSON(metaPath, updatedColl)
+		} else {
+			_ = s.fs.WriteJSON(metaPath, *coll)
+		}
+	}
+
+	// Prevent collection.json metadata edit from colliding during stash/pull/pop
+	if _, lsErr := s.runGit(collDir, "ls-files", "--error-unmatch", "collection.json"); lsErr != nil {
+		_ = os.Remove(metaPath)
+	} else {
+		_, _ = s.runGit(collDir, "checkout", "HEAD", "--", "collection.json")
+	}
+
+	stashed := false
+	if porcelain, err := s.runGit(collDir, "status", "--porcelain"); err == nil && strings.TrimSpace(porcelain) != "" {
+		stashOut, stashErr := s.runGit(collDir, "stash", "push", "-u", "-m", "hecto-stash-before-pull")
+		if stashErr != nil {
+			restoreCollectionMeta()
+			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể git stash trước khi pull: %s", stashOut))
+		}
+		if !strings.Contains(stashOut, "No local changes to save") {
+			stashed = true
+		}
+	}
+
+	if fetchOut, err := s.runGit(collDir, "fetch", "--prune", "origin"); err != nil {
+		if stashed {
+			_, _ = s.runGit(collDir, "stash", "pop")
+		}
+		restoreCollectionMeta()
+		return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể kết nối tới Git Remote khi fetch: %s", fetchOut))
+	}
+
+	targetBranch, hasRemoteBranch := s.resolveTargetRemoteBranch(collDir)
+	var combinedOut string
+	var pullErr error
+	if hasRemoteBranch {
+		combinedOut, pullErr = s.runGit(collDir, "pull", "--no-rebase", "--no-edit", "--allow-unrelated-histories", "origin", targetBranch)
+	} else {
+		combinedOut = "Remote repository chưa có nhánh nào để pull."
+	}
+
+	var popOut string
+	var popErr error
+	if stashed {
+		popOut, popErr = s.runGit(collDir, "stash", "pop")
+		if popOut != "" {
+			if combinedOut != "" {
+				combinedOut = combinedOut + "\n" + popOut
+			} else {
+				combinedOut = popOut
+			}
+		}
+	}
+
+	conflicts := s.getConflictFiles(collDir)
+	if popErr != nil && strings.Contains(popOut, "already exists, no checkout") {
+		for _, line := range strings.Split(popOut, "\n") {
+			if idx := strings.Index(line, " already exists, no checkout"); idx > 0 {
+				file := strings.TrimSpace(line[:idx])
+				if file != "" {
+					conflicts = append(conflicts, file)
+				}
+			}
+		}
+	}
+	if len(conflicts) > 0 || (pullErr != nil && strings.Contains(combinedOut, "CONFLICT")) || (popErr != nil && strings.Contains(popOut, "CONFLICT")) {
+		restoreCollectionMeta()
+		if s.fs != nil {
+			_ = s.fs.IndexRebuild(collDir)
+		}
+		status := s.inspectStatus(collDir, targetRemote)
+		status.HasConflicts = true
+		if len(conflicts) > 0 {
+			status.ConflictFiles = conflicts
+		}
+		status.Output = combinedOut
+		conflictList := strings.Join(status.ConflictFiles, ", ")
+		if conflictList == "" {
+			conflictList = "các file trong collection"
+		}
+		return model.Result{
+			Success: false,
+			Data:    status,
+			Error: &model.AppError{
+				Code:    model.ErrGitConflict,
+				Message: fmt.Sprintf("Xung đột Git (Merge Conflict) khi Stash & Pull tại: %s. Vui lòng mở thư mục Collection và xử lý conflict thủ công bằng Git.", conflictList),
+			},
+		}
+	}
+
+	restoreCollectionMeta()
+
+	if pullErr != nil {
+		return model.NewError(model.ErrGitError, fmt.Sprintf("Lỗi khi thực thi git pull: %s", combinedOut))
+	}
+	if popErr != nil {
+		return model.NewError(model.ErrGitError, fmt.Sprintf("Lỗi khi thực thi git stash pop: %s", popOut))
+	}
+
+	if s.fs != nil {
+		_ = s.fs.IndexRebuild(collDir)
+	}
+
+	status := s.inspectStatus(collDir, targetRemote)
+	status.Output = combinedOut
+	return model.NewSuccess(status)
+}
+
+// ListLocalBranches returns the list of local git branches for a collection.
+func (s *GitSyncService) ListLocalBranches(collectionsRoot, collectionID string) model.Result {
+	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
+	if errRes != nil {
+		return *errRes
+	}
+
+	gitDir := filepath.Join(collDir, ".git")
+	if !s.fs.Exists(gitDir) {
+		if strings.TrimSpace(coll.GitRemoteURL) != "" {
+			_ = s.ensureGitRepoAndRemote(collDir, coll.GitRemoteURL)
+		} else {
+			return model.NewSuccess([]string{"main"})
+		}
+	}
+
+	out, err := s.runGit(collDir, "branch", "--list", "--format=%(refname:short)")
+	var branches []string
+	if err == nil && strings.TrimSpace(out) != "" {
+		for _, line := range strings.Split(out, "\n") {
+			b := strings.TrimSpace(line)
+			if b != "" {
+				branches = append(branches, b)
+			}
+		}
+	}
+
+	current := s.getCurrentBranch(collDir)
+	hasCurrent := false
+	for _, b := range branches {
+		if b == current {
+			hasCurrent = true
+			break
+		}
+	}
+	if !hasCurrent && current != "" {
+		branches = append([]string{current}, branches...)
+	}
+	if len(branches) == 0 {
+		branches = []string{"main"}
+	}
+
+	return model.NewSuccess(branches)
+}
+
 // Push stages all collection files, creates a commit if needed, and pushes to origin.
-func (s *GitSyncService) Push(collectionsRoot, collectionID string) model.Result {
-	s.logger.Info("GitSyncService.Push called", "collectionID", collectionID)
+// Optional branch parameter specifies the target branch on origin; when empty, pushes to current branch.
+func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...string) model.Result {
+	targetBranch := ""
+	if len(branch) > 0 {
+		targetBranch = strings.TrimSpace(branch[0])
+	}
+	s.logger.Info("GitSyncService.Push called", "collectionID", collectionID, "branch", targetBranch)
 
 	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
 		return *errRes
+	}
+
+	if strings.HasPrefix(targetBranch, "-") {
+		return model.NewError(model.ErrValidation, "Tên nhánh Git không hợp lệ")
 	}
 
 	remoteURL := strings.TrimSpace(coll.GitRemoteURL)
@@ -413,8 +733,19 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string) model.Result
 		}
 	}
 
-	branch := s.getCurrentBranch(collDir)
-	pushOut, pushErr := s.runGit(collDir, "push", "-u", "origin", "HEAD:"+branch)
+	currentBranch := s.getCurrentBranch(collDir)
+	if targetBranch == "" {
+		targetBranch = currentBranch
+	}
+
+	// Always push the newly committed HEAD to refs/heads/<targetBranch> on origin,
+	// and fast-forward local branch ref when pushing to a non-current local branch.
+	refSpec := "HEAD:refs/heads/" + targetBranch
+	if targetBranch != currentBranch {
+		_, _ = s.runGit(collDir, "branch", "-f", targetBranch, "HEAD")
+	}
+
+	pushOut, pushErr := s.runGit(collDir, "push", "-u", "origin", refSpec)
 	if pushErr != nil {
 		if strings.Contains(pushOut, "rejected") || strings.Contains(pushOut, "fetch first") || strings.Contains(pushOut, "non-fast-forward") {
 			return model.NewError(model.ErrGitConflict, "Không thể Push do Remote có thay đổi mới hoặc xung đột. Vui lòng thực hiện Git Pull và xử lý xung đột trước khi Push.\nChi tiết: "+pushOut)
@@ -426,3 +757,4 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string) model.Result
 	status.Output = pushOut
 	return model.NewSuccess(status)
 }
+

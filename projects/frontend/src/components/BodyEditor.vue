@@ -5,7 +5,11 @@ import { useUiStore } from '@/stores/uiStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 import KvpEditor from '@/components/KvpEditor.vue'
 import { recordInputSnapshot } from '@/utils/inputUndo'
-import { validateJsonWithPlaceholders, prettifyJsonWithPlaceholders } from '@/utils/jsonEditor'
+import {
+  validateJsonWithPlaceholders,
+  prettifyJsonWithPlaceholders,
+  normalizeSmartChars
+} from '@/utils/jsonEditor'
 
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
@@ -46,7 +50,7 @@ const formDataRows = computed<KVPair[]>({
 
 const jsonValidation = computed(() => {
   if (bodyType.value !== 'json') {
-    return { valid: true }
+    return { valid: true, isJsonc: false }
   }
   return validateJsonWithPlaceholders(bodyContent.value)
 })
@@ -83,6 +87,16 @@ const lineNumbersRef = ref<HTMLDivElement | null>(null)
 const preRef = ref<HTMLElement | null>(null)
 const highlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 
+const handleTextareaInput = (e: Event) => {
+  const el = e.target as HTMLTextAreaElement
+  if ((e as InputEvent).isComposing) {
+    bodyContent.value = el.value
+    return
+  }
+  const normalized = normalizeSmartChars(el)
+  bodyContent.value = normalized
+}
+
 const handleScroll = (e: Event) => {
   if (lineNumbersRef.value) {
     if (preRef.value) { preRef.value.style.transform = `translateY(-${(e.target as HTMLTextAreaElement).scrollTop}px)` }
@@ -108,7 +122,7 @@ const handleTab = (e: KeyboardEvent) => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex-1 flex flex-col h-full min-h-0">
     <!-- Body content -->
     <div v-if="bodyType === 'none' || !['none', 'json', 'text', 'xml', 'urlencoded', 'formdata'].includes(bodyType)" class="flex-1 p-3 text-text-secondary ui-sm">
       Request này không có body.
@@ -122,12 +136,20 @@ const handleTab = (e: KeyboardEvent) => {
       <KvpEditor v-model="formDataRows" />
     </div>
     
-    <div v-else class="flex-1 p-3 pt-0 flex flex-col min-h-0 gap-2">
+    <div v-else class="flex-1 h-full p-3 pt-0 flex flex-col min-h-0 gap-2">
       <!-- Smart JSON Toolbar -->
-      <div v-if="bodyType === 'json'" class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2 text-xs">
+      <div v-if="bodyType === 'json'" class="flex items-center justify-between gap-2 shrink-0">
+        <div class="flex items-center gap-2 text-xs min-w-0 flex-wrap">
           <span
-            v-if="jsonValidation.valid"
+            v-if="jsonValidation.valid && jsonValidation.isJsonc"
+            data-test="json-valid-badge"
+            title="Comments/trailing comma sẽ được xóa khi gửi"
+            class="inline-flex items-center gap-1 text-emerald-300/90 font-medium"
+          >
+            ✓ JSONC
+          </span>
+          <span
+            v-else-if="jsonValidation.valid"
             data-test="json-valid-badge"
             class="inline-flex items-center gap-1 text-emerald-400 font-medium"
           >
@@ -135,34 +157,27 @@ const handleTab = (e: KeyboardEvent) => {
           </span>
           <span
             v-else
-            class="inline-flex items-center gap-1 text-red-400 font-medium"
+            data-test="json-error-banner"
+            role="alert"
+            class="inline-flex items-center gap-1 text-amber-400/70 font-medium truncate"
+            :title="jsonValidation.error"
           >
-            ⚠ JSON lỗi cú pháp (dòng {{ jsonValidation.line }}, cột {{ jsonValidation.column }})
+            ⚠ {{ jsonValidation.error || `JSON lỗi cú pháp (dòng ${jsonValidation.line}, cột ${jsonValidation.column})` }}
           </span>
         </div>
         <button
           type="button"
           data-test="prettify-json-btn"
           title="Format / Prettify JSON"
-          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors"
+          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
           @click="formatJson"
         >
           Format JSON
         </button>
       </div>
 
-      <!-- JSON Syntax Error Banner -->
-      <div
-        v-if="bodyType === 'json' && !jsonValidation.valid"
-        data-test="json-error-banner"
-        role="alert"
-        class="px-3 py-1.5 rounded bg-red-950/50 border border-red-500/50 text-red-300 text-xs font-mono"
-      >
-        {{ jsonValidation.error }}
-      </div>
-
-      <div class="flex-1 flex flex-row bg-surface-input border rounded-md overflow-hidden min-h-0"
-           :class="bodyType === 'json' && !jsonValidation.valid ? 'border-red-500/60' : 'border-default'">
+      <div class="flex-1 h-full flex flex-row bg-surface-input border rounded-md overflow-hidden min-h-0"
+           :class="bodyType === 'json' && !jsonValidation.valid ? 'border-amber-500/40' : 'border-default'">
         <!-- Line numbers -->
         <div 
           ref="lineNumbersRef"
@@ -177,17 +192,20 @@ const handleTab = (e: KeyboardEvent) => {
           :wrap="false"
           :syntax="bodyType === 'json' ? 'json' : bodyType === 'xml' ? 'xml' : 'plain'"
           overlay-class="p-2 pb-32 mono-base w-full h-full" style="line-height: 21px; font-size: 13px;"
-          class="flex-1 w-full h-full min-w-0"
+          class="flex-1 w-full h-full min-w-0 min-h-0"
         >
           <textarea 
             ref="textareaRef"
-            v-model="bodyContent"
-            @input="e => { bodyContent = (e.target as HTMLTextAreaElement).value }"
+            :value="bodyContent"
+            @input="handleTextareaInput"
+            @compositionend="handleTextareaInput"
             @scroll="handleScroll"
             @keydown.tab="handleTab"
-            class="w-full h-full bg-transparent border-none outline-none resize-none p-2 pb-32 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto" style="line-height: 21px; font-size: 13px;"
+            class="flex-1 w-full h-full min-h-0 bg-transparent border-none outline-none resize-none p-2 pb-32 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto" style="line-height: 21px; font-size: 13px;"
             spellcheck="false"
             autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
             wrap="off"
           ></textarea>
         </VariableHighlighter>

@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import TreeNodeRow from './TreeNodeRow.vue'
@@ -6,6 +7,47 @@ import CollectionSwitcher from './CollectionSwitcher.vue'
 
 const store = useCollectionStore()
 const uiStore = useUiStore()
+
+const addDropdownOpen = ref(false)
+const addMenuContainerRef = ref<HTMLElement | null>(null)
+
+const toggleAddDropdown = () => {
+  addDropdownOpen.value = !addDropdownOpen.value
+}
+
+const handleCreateRequest = () => {
+  addDropdownOpen.value = false
+  void store.createRequest()
+}
+
+const handleCreateFolder = () => {
+  addDropdownOpen.value = false
+  void store.createFolder()
+}
+
+const handleDocumentClick = (e: MouseEvent) => {
+  if (!addDropdownOpen.value) return
+  const target = e.target as Node | null
+  if (addMenuContainerRef.value && target && !addMenuContainerRef.value.contains(target)) {
+    addDropdownOpen.value = false
+  }
+}
+
+const handleDocumentKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && addDropdownOpen.value) {
+    addDropdownOpen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('mousedown', handleDocumentClick)
+  document.addEventListener('keydown', handleDocumentKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', handleDocumentClick)
+  document.removeEventListener('keydown', handleDocumentKeydown)
+})
 
 const handleRootContextMenu = (e: MouseEvent) => {
   // If clicked directly on the container (not inside a node row), show root folder menu
@@ -23,42 +65,14 @@ const handleRootContextMenu = (e: MouseEvent) => {
   >
     <div class="px-3 py-2 border-b border-border-default shrink-0 flex items-center justify-between gap-1">
       <CollectionSwitcher />
-      <div class="flex items-center gap-0.5 shrink-0">
-        <button
-          type="button"
-          data-test="git-pull-btn"
-          :disabled="store.gitSyncLoading"
-          title="Git Pull (Kéo thay đổi từ Remote)"
-          aria-label="Git Pull"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors disabled:opacity-50 cursor-pointer"
-          @click="store.gitPull()"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <polyline points="19 12 12 19 5 12"></polyline>
-          </svg>
-        </button>
-        <button
-          type="button"
-          data-test="git-push-btn"
-          :disabled="store.gitSyncLoading"
-          title="Git Push (Đẩy thay đổi lên Remote)"
-          aria-label="Git Push"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors disabled:opacity-50 cursor-pointer"
-          @click="store.gitPush()"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="19" x2="12" y2="5"></line>
-            <polyline points="5 12 12 5 19 12"></polyline>
-          </svg>
-        </button>
+      <div class="flex items-center gap-1 shrink-0">
         <button
           type="button"
           data-test="git-config-btn"
           title="Cấu hình Git Remote"
           aria-label="Cấu hình Git Remote"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          :class="store.gitConflictError ? 'text-red-400' : (store.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
+          class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          :class="(store.gitConflictError || store.gitSyncStatus?.has_conflicts) ? 'text-red-400' : (store.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
           @click="uiStore.gitSyncModalOpen = true"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -67,30 +81,64 @@ const handleRootContextMenu = (e: MouseEvent) => {
             <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
             <line x1="6" y1="9" x2="6" y2="21"></line>
           </svg>
+          <span
+            v-if="store.gitConflictError || store.gitSyncStatus?.has_conflicts"
+            data-test="git-status-badge-conflict"
+            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-500"
+          />
+          <span
+            v-else-if="store.activeCollection?.git_remote_url"
+            data-test="git-status-badge-configured"
+            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400"
+          />
         </button>
-        <button 
-          @click="store.createRequest()"
-          title="Request mới (Ctrl+N)"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors"
-          aria-label="Request mới"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-        <button 
-          @click="store.createFolder()"
-          title="Thư mục mới (Ctrl+Shift+N)"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors"
-          aria-label="Thư mục mới"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            <line x1="12" y1="11" x2="12" y2="17"></line>
-            <line x1="9" y1="14" x2="15" y2="14"></line>
-          </svg>
-        </button>
+
+        <div ref="addMenuContainerRef" class="relative">
+          <button
+            type="button"
+            data-test="sidebar-add-btn"
+            title="Thêm mới (Request / Thư mục)"
+            aria-label="Thêm mới"
+            :aria-expanded="addDropdownOpen"
+            class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+            @click="toggleAddDropdown"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+
+          <div
+            v-if="addDropdownOpen"
+            data-test="sidebar-add-dropdown"
+            role="menu"
+            class="absolute right-0 mt-1 w-44 rounded-md bg-surface-overlay border border-border-default shadow-lg py-1 z-50"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              data-test="add-request-item"
+              aria-label="Request mới"
+              title="Request mới (Ctrl+N)"
+              class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+              @click="handleCreateRequest"
+            >
+              <span>📄 New Request</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-test="add-folder-item"
+              aria-label="Thư mục mới"
+              title="Thư mục mới (Ctrl+Shift+N)"
+              class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+              @click="handleCreateFolder"
+            >
+              <span>📁 New Folder</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
     <div 

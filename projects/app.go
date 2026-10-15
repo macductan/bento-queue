@@ -524,10 +524,51 @@ func (a *App) GitPullCollection(collectionID string) model.Result {
 	return res
 }
 
-// GitPushCollection stages, commits, and pushes the collection directory to its configured git remote.
-func (a *App) GitPushCollection(collectionID string) model.Result {
+// GitClearAndPullCollection clears local uncommitted/untracked files, resets hard to remote, and rebuilds index.
+func (a *App) GitClearAndPullCollection(collectionID string) model.Result {
 	cRoot, id := a.resolveCollectionID(collectionID)
-	return a.gitSyncSvc.Push(cRoot, id)
+	res := a.gitSyncSvc.ClearAndPull(cRoot, id)
+	if res.Success {
+		a.mu.RLock()
+		root := a.collRoot
+		a.mu.RUnlock()
+		if root != "" {
+			_ = a.fs.IndexRebuild(root)
+		}
+	}
+	return res
+}
+
+// GitStashAndPullCollection stashes local changes, pulls from remote, pops stash, and rebuilds index.
+func (a *App) GitStashAndPullCollection(collectionID string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	res := a.gitSyncSvc.StashAndPull(cRoot, id)
+	if res.Success {
+		a.mu.RLock()
+		root := a.collRoot
+		a.mu.RUnlock()
+		if root != "" {
+			_ = a.fs.IndexRebuild(root)
+		}
+	}
+	return res
+}
+
+// GitListLocalBranches lists local git branches for the specified collection.
+func (a *App) GitListLocalBranches(collectionID string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	return a.gitSyncSvc.ListLocalBranches(cRoot, id)
+}
+
+// GitPushCollectionToBranch stages, commits, and pushes the collection directory to the specified branch on origin.
+func (a *App) GitPushCollectionToBranch(collectionID, branch string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	return a.gitSyncSvc.Push(cRoot, id, branch)
+}
+
+// GitPushCollection stages, commits, and pushes the collection directory to its configured git remote (backward compatible).
+func (a *App) GitPushCollection(collectionID string) model.Result {
+	return a.GitPushCollectionToBranch(collectionID, "")
 }
 
 // ListExecutionHistory returns execution history entries for the active collection.

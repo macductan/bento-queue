@@ -166,9 +166,9 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
       <div class="h-10 bg-surface-hover rounded w-full"></div>
       <div class="h-32 bg-surface-hover rounded w-full"></div>
     </div>
-    <div v-else-if="req" class="space-y-6">
+    <div v-else-if="req" class="flex-1 flex flex-col min-h-0 space-y-6">
       <!-- Name and Breadcrumb -->
-      <div>
+      <div class="shrink-0">
         <div v-if="requestPath.length > 1" class="flex items-center gap-1.5 text-text-muted text-xs font-medium mb-1.5 opacity-80">
           <template v-for="(part, idx) in requestPath.slice(0, -1)" :key="idx">
             <span>{{ part }}</span>
@@ -223,7 +223,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
       <div class="flex-1 flex flex-col min-h-0 mt-2">
         <RequestTabs />
         
-        <div class="flex-1 overflow-y-auto mt-4 pb-4">
+        <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-4 pb-4">
           <div v-show="uiStore.activeRequestTab === 'params'" role="tabpanel" id="panel-params" aria-labelledby="tab-params">
             <KvpEditor field="params" />
           </div>
@@ -237,7 +237,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             <KvpEditor field="headers" />
           </div>
           
-          <div v-show="uiStore.activeRequestTab === 'body'" role="tabpanel" id="panel-body" aria-labelledby="tab-body" class="h-full flex flex-col">
+          <div v-show="uiStore.activeRequestTab === 'body'" role="tabpanel" id="panel-body" aria-labelledby="tab-body" class="flex-1 h-full min-h-0 flex flex-col">
             <BodyEditor />
           </div>
 

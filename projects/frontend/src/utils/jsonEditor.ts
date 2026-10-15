@@ -1,5 +1,16 @@
+import {
+  parseTree,
+  format as formatJsoncEdits,
+  applyEdits,
+  stripComments,
+  createScanner,
+  printParseErrorCode,
+  type ParseError
+} from 'jsonc-parser'
+
 export interface JsonValidationResult {
   valid: boolean
+  isJsonc: boolean
   error?: string
   line?: number
   column?: number
@@ -15,19 +26,85 @@ interface BareVarSubstitution {
   bareVars: string[]
 }
 
+const SMART_CHAR_MAP: Record<string, string> = {
+  '\u201C': '"',
+  '\u201D': '"',
+  '\u2018': "'",
+  '\u2019': "'",
+  '\uFF5B': '{',
+  '\uFF5D': '}',
+  '\u300C': '[',
+  '\u300D': ']'
+}
+
+const SMART_CHAR_REGEX = /[\u201C\u201D\u2018\u2019\uFF5B\uFF5D\u300C\u300D]/g
+
 /**
- * Replaces bare (unquoted) {{variable}} placeholders in JSON with quoted sentinel strings
- * so standard JSON.parse / JSON.stringify can process the document without syntax errors.
+ * Replaces smart quotes and fullwidth/CJK brackets in a textarea with standard ASCII characters
+ * while preserving the user's cursor selection position.
+ */
+export function normalizeSmartChars(el: HTMLTextAreaElement): string {
+  const val = el.value || ''
+  SMART_CHAR_REGEX.lastIndex = 0
+  if (!SMART_CHAR_REGEX.test(val)) {
+    return val
+  }
+  const start = typeof el.selectionStart === 'number' ? el.selectionStart : val.length
+  const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : val.length
+  const scrollTop = el.scrollTop
+  const scrollLeft = el.scrollLeft
+  const normalized = val.replace(SMART_CHAR_REGEX, (ch) => SMART_CHAR_MAP[ch] ?? ch)
+  if (normalized !== val) {
+    el.value = normalized
+    try {
+      if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(start, end)
+      }
+      el.scrollTop = scrollTop
+      el.scrollLeft = scrollLeft
+    } catch {
+      // Ignore selection range errors on detached elements
+    }
+  }
+  return normalized
+}
+
+/**
+ * Replaces bare (unquoted) {{variable}} placeholders in JSON/JSONC with quoted sentinel strings
+ * while skipping over strings and line/block comments so standard parsers can process the document.
  */
 function substituteBareVariables(input: string): BareVarSubstitution {
   const bareVars: string[] = []
   let out = ''
   let inString = false
+  let inLineComment = false
+  let inBlockComment = false
   let i = 0
   const len = input.length
 
   while (i < len) {
     const ch = input[i]
+
+    if (inLineComment) {
+      if (ch === '\n' || ch === '\r') {
+        inLineComment = false
+      }
+      out += ch
+      i++
+      continue
+    }
+
+    if (inBlockComment) {
+      if (ch === '*' && i + 1 < len && input[i + 1] === '/') {
+        out += '*/'
+        inBlockComment = false
+        i += 2
+        continue
+      }
+      out += ch
+      i++
+      continue
+    }
 
     if (inString) {
       if (ch === '\\' && i + 1 < len) {
@@ -48,6 +125,21 @@ function substituteBareVariables(input: string): BareVarSubstitution {
       out += ch
       i++
       continue
+    }
+
+    if (ch === '/' && i + 1 < len) {
+      if (input[i + 1] === '/') {
+        inLineComment = true
+        out += '//'
+        i += 2
+        continue
+      }
+      if (input[i + 1] === '*') {
+        inBlockComment = true
+        out += '/*'
+        i += 2
+        continue
+      }
     }
 
     if (ch === '{' && i + 1 < len && input[i + 1] === '{') {
@@ -84,62 +176,134 @@ function offsetToLineColumn(text: string, offset: number): { line: number; colum
   return { line, column }
 }
 
-/**
- * Validates a JSON string while allowing {{variable}} placeholders both inside strings
- * and as bare value tokens.
- */
-export function validateJsonWithPlaceholders(content: string): JsonValidationResult {
-  if (!content || content.trim() === '') {
-    return { valid: true }
+// Numeric values matching jsonc-parser SyntaxKind (declared as ambient const enum in jsonc-parser)
+const TOKEN_CLOSE_BRACE = 2
+const TOKEN_CLOSE_BRACKET = 4
+const TOKEN_COMMA = 5
+const TOKEN_LINE_COMMENT = 12
+const TOKEN_BLOCK_COMMENT = 13
+const TOKEN_LINE_BREAK = 14
+const TOKEN_TRIVIA = 15
+const TOKEN_EOF = 17
+
+function detectJsoncFeatures(sanitized: string): boolean {
+  const scanner = createScanner(sanitized, false)
+  let prevNonTrivia: number | null = null
+  let token = scanner.scan() as number
+  while (token !== TOKEN_EOF) {
+    if (token === TOKEN_LINE_COMMENT || token === TOKEN_BLOCK_COMMENT) {
+      return true
+    }
+    if (token !== TOKEN_TRIVIA && token !== TOKEN_LINE_BREAK) {
+      if (
+        (token === TOKEN_CLOSE_BRACE || token === TOKEN_CLOSE_BRACKET) &&
+        prevNonTrivia === TOKEN_COMMA
+      ) {
+        return true
+      }
+      prevNonTrivia = token
+    }
+    token = scanner.scan() as number
   }
+  return false
+}
 
-  const { sanitized } = substituteBareVariables(content)
-  try {
-    JSON.parse(sanitized)
-    return { valid: true }
-  } catch (err: any) {
-    const msg = err instanceof Error ? err.message : String(err)
-    let line = 1
-    let column = 1
-
-    const lineColMatch = msg.match(/line\s+(\d+)\s+column\s+(\d+)/i)
-    const posMatch = msg.match(/position\s+(\d+)/i)
-    if (lineColMatch) {
-      line = Number(lineColMatch[1]) || 1
-      column = Number(lineColMatch[2]) || 1
-    } else if (posMatch) {
-      const pos = Number(posMatch[1]) || 0
-      const lc = offsetToLineColumn(sanitized, pos)
-      line = lc.line
-      column = lc.column
-    } else {
-      const lc = offsetToLineColumn(sanitized, sanitized.length)
-      line = lc.line
-      column = lc.column
-    }
-
-    return {
-      valid: false,
-      error: `Lỗi cú pháp JSON (dòng ${line}, cột ${column}): ${msg}`,
-      line,
-      column
-    }
+function parseErrorToMessage(error: ParseError['error']): string {
+  const name = printParseErrorCode(error)
+  switch (name) {
+    case 'InvalidSymbol':
+      return 'Ký hiệu không hợp lệ'
+    case 'InvalidNumberFormat':
+      return 'Định dạng số không hợp lệ'
+    case 'PropertyNameExpected':
+      return 'Thiếu tên thuộc tính (key)'
+    case 'ValueExpected':
+      return 'Thiếu giá trị (value)'
+    case 'ColonExpected':
+      return 'Thiếu dấu hai chấm (:)'
+    case 'CommaExpected':
+      return 'Thiếu dấu phẩy (,)'
+    case 'CloseBraceExpected':
+      return 'Thiếu dấu đóng ngoặc nhọn (})'
+    case 'CloseBracketExpected':
+      return 'Thiếu dấu đóng ngoặc vuông (])'
+    case 'EndOfFileExpected':
+      return 'Dữ liệu thừa sau kết thúc JSON'
+    case 'UnexpectedEndOfComment':
+      return 'Comment chưa được đóng (*/)'
+    case 'UnexpectedEndOfString':
+      return 'Chuỗi ký tự chưa được đóng (")'
+    case 'UnexpectedEndOfNumber':
+      return 'Số chưa hoàn chỉnh'
+    case 'InvalidEscapeCharacter':
+      return 'Ký tự escape không hợp lệ'
+    case 'InvalidUnicode':
+      return 'Ký tự Unicode không hợp lệ'
+    case 'InvalidCharacter':
+      return 'Ký tự không hợp lệ'
+    default:
+      return 'Cú pháp JSON không hợp lệ'
   }
 }
 
 /**
- * Formats/prettifies a JSON string with 2-space indentation while preserving
- * {{variable}} placeholders (both quoted and unquoted).
- * Throws an error if the JSON is invalid.
+ * Validates a JSON or JSONC string while allowing {{variable}} placeholders both inside strings
+ * and as bare value tokens.
+ */
+export function validateJsonWithPlaceholders(content: string): JsonValidationResult {
+  if (!content || content.trim() === '') {
+    return { valid: true, isJsonc: false }
+  }
+
+  const { sanitized } = substituteBareVariables(content)
+  const errors: ParseError[] = []
+  parseTree(sanitized, errors, {
+    allowTrailingComma: true,
+    allowEmptyContent: true,
+    disallowComments: false
+  })
+
+  if (errors.length === 0) {
+    const isJsonc = detectJsoncFeatures(sanitized)
+    return { valid: true, isJsonc }
+  }
+
+  const firstErr = errors[0]
+  const offset = firstErr ? firstErr.offset : sanitized.length
+  const { line, column } = offsetToLineColumn(sanitized, offset)
+  const detail = firstErr ? parseErrorToMessage(firstErr.error) : 'Cú pháp JSON không hợp lệ'
+
+  return {
+    valid: false,
+    isJsonc: false,
+    error: `Lỗi cú pháp JSON (dòng ${line}, cột ${column}): ${detail}`,
+    line,
+    column
+  }
+}
+
+/**
+ * Formats/prettifies a JSON or JSONC string with 2-space indentation while preserving
+ * comments, trailing commas, and {{variable}} placeholders (both quoted and unquoted).
+ * Throws an error if the JSON/JSONC is invalid.
  */
 export function prettifyJsonWithPlaceholders(content: string): string {
   if (!content || content.trim() === '') {
     return content
   }
 
+  const validation = validateJsonWithPlaceholders(content)
+  if (!validation.valid) {
+    throw new Error(validation.error || 'JSON không hợp lệ')
+  }
+
   const { sanitized, bareVars } = substituteBareVariables(content)
-  const parsed = JSON.parse(sanitized)
-  let formatted = JSON.stringify(parsed, null, 2)
+  const edits = formatJsoncEdits(sanitized, undefined, {
+    tabSize: 2,
+    insertSpaces: true,
+    eol: '\n'
+  })
+  let formatted = applyEdits(sanitized, edits)
 
   for (let i = 0; i < bareVars.length; i++) {
     formatted = formatted.replace(`"__HECTO_BARE_VAR_${i}__"`, () => bareVars[i])
@@ -148,8 +312,77 @@ export function prettifyJsonWithPlaceholders(content: string): string {
   return formatted
 }
 
+export const formatJsonc = prettifyJsonWithPlaceholders
+
+/**
+ * Strips line/block comments and trailing commas from a JSONC string to produce pure JSON,
+ * without touching content inside string literals.
+ */
+export function stripJsoncToJson(content: string): string {
+  if (!content || content.trim() === '') {
+    return content
+  }
+
+  // 1. Strip comments using jsonc-parser's AST-aware scanner (safe for strings containing // or /*)
+  const withoutComments = stripComments(content)
+
+  // 2. Remove trailing commas outside of string literals by masking strings first
+  const strings: string[] = []
+  let masked = ''
+  let inString = false
+  let strStart = 0
+  let i = 0
+  const len = withoutComments.length
+
+  while (i < len) {
+    const ch = withoutComments[i]
+    if (inString) {
+      if (ch === '\\' && i + 1 < len) {
+        i += 2
+        continue
+      }
+      if (ch === '"') {
+        inString = false
+        const literal = withoutComments.slice(strStart, i + 1)
+        const idx = strings.length
+        strings.push(literal)
+        masked += `"__HECTO_STR_${idx}__"`
+        i++
+        continue
+      }
+      i++
+      continue
+    }
+
+    if (ch === '"') {
+      inString = true
+      strStart = i
+      i++
+      continue
+    }
+
+    masked += ch
+    i++
+  }
+
+  if (inString) {
+    // Unclosed string fallback: append remaining characters as-is
+    masked += withoutComments.slice(strStart)
+  }
+
+  let strippedMasked = masked
+  while (/,(\s*[}\]])/.test(strippedMasked)) {
+    strippedMasked = strippedMasked.replace(/,(\s*[}\]])/g, '$1')
+  }
+
+  return strippedMasked.replace(/"__HECTO_STR_(\d+)__"/g, (_, idxStr) => {
+    const idx = Number(idxStr)
+    return strings[idx] ?? _
+  })
+}
+
 const JSON_TOKEN_REGEX =
-  /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}\[\]:,])/g
+  /(\/\/[^\r\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}\[\]:,])/g
 
 /**
  * Tokenizes a plain text segment of JSON into syntax tokens for syntax highlighting.
@@ -211,8 +444,10 @@ export function tokenizeJsonTextSegment(
       })
     }
 
-    const [full, strLiteral, colonSuffix, boolLiteral, nullLiteral, numLiteral, punct] = match
-    if (strLiteral !== undefined) {
+    const [full, commentLiteral, strLiteral, colonSuffix, boolLiteral, nullLiteral, numLiteral, punct] = match
+    if (commentLiteral !== undefined) {
+      tokens.push({ type: 'plain', value: commentLiteral })
+    } else if (strLiteral !== undefined) {
       if (colonSuffix !== undefined) {
         tokens.push({ type: 'key', value: strLiteral })
         tokens.push({ type: 'punctuation', value: colonSuffix })

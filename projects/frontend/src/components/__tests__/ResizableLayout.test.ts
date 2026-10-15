@@ -205,6 +205,82 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       window.dispatchEvent(new MouseEvent('mousemove', { clientX: 200 }))
       expect(uiStore.sidebarWidth).toBe(350)
     })
+
+    it('consolidates sidebar actions into Git button (with status badge) and + dropdown menu (Enhancement 4)', async () => {
+      const uiStore = useUiStore()
+      const collectionStore = useCollectionStore()
+      collectionStore.collections = [
+        { id: 'default', name: 'Default', is_default: true, git_remote_url: 'https://github.com/org/repo.git' } as any
+      ]
+      collectionStore.activeCollectionId = 'default'
+
+      const wrapper = mount(AppSidebar, {
+        global: {
+          stubs: {
+            CollectionSwitcher: true,
+            TreeNodeRow: true
+          }
+        }
+      })
+
+      // Old standalone pull/push buttons are removed
+      expect(wrapper.find('[data-test="git-pull-btn"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="git-push-btn"]').exists()).toBe(false)
+
+      // Git button exists and displays emerald badge when git_remote_url is configured
+      const gitBtn = wrapper.find('[data-test="git-config-btn"]')
+      expect(gitBtn.exists()).toBe(true)
+      expect(wrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(true)
+
+      // When gitConflictError is set, displays red conflict badge instead
+      collectionStore.gitConflictError = { message: 'Conflict', files: ['req.json'] }
+      await nextTick()
+      expect(wrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
+
+      await gitBtn.trigger('click')
+      expect(uiStore.gitSyncModalOpen).toBe(true)
+
+      // '+' dropdown button toggles New Request / New Folder menu
+      const createReqSpy = vi.spyOn(collectionStore, 'createRequest').mockResolvedValue(undefined as any)
+      const createFolderSpy = vi.spyOn(collectionStore, 'createFolder').mockResolvedValue(undefined as any)
+
+      const addBtn = wrapper.find('[data-test="sidebar-add-btn"]')
+      expect(addBtn.exists()).toBe(true)
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(false)
+
+      await addBtn.trigger('click')
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="add-request-item"]').text()).toContain('New Request')
+      expect(wrapper.find('[data-test="add-folder-item"]').text()).toContain('New Folder')
+
+      // Clicking New Request triggers createRequest and closes dropdown
+      await wrapper.find('[data-test="add-request-item"]').trigger('click')
+      expect(createReqSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(false)
+
+      // Reopen and click New Folder triggers createFolder and closes dropdown
+      await addBtn.trigger('click')
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(true)
+      await wrapper.find('[data-test="add-folder-item"]').trigger('click')
+      expect(createFolderSpy).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(false)
+
+      // Reopen and press Escape closes dropdown
+      await addBtn.trigger('click')
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(true)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await nextTick()
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(false)
+
+      // Reopen and clickaway closes dropdown
+      await addBtn.trigger('click')
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(true)
+      document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      await nextTick()
+      expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(false)
+
+      wrapper.unmount()
+    })
   })
 
   describe('ContentArea.vue Horizontal Splitter', () => {

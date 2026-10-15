@@ -7,26 +7,49 @@ const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
 
 const remoteUrlInput = ref('')
+const selectedBranch = ref('main')
+const showRemoteChangeConfirm = ref(false)
+const pendingRemoteUrl = ref('')
 
 const activeCollectionName = computed(() => {
   return collectionStore.activeCollection?.name || 'Default Collection'
+})
+
+const availableBranches = computed(() => {
+  const list = collectionStore.gitBranches.length > 0
+    ? [...collectionStore.gitBranches]
+    : [collectionStore.gitSyncStatus?.branch || 'main']
+  const current = collectionStore.gitSyncStatus?.branch || 'main'
+  if (current && !list.includes(current)) {
+    list.unshift(current)
+  }
+  return list
 })
 
 watch(
   () => uiStore.gitSyncModalOpen,
   async (open) => {
     if (open) {
+      showRemoteChangeConfirm.value = false
+      pendingRemoteUrl.value = ''
       remoteUrlInput.value = collectionStore.activeCollection?.git_remote_url || ''
-      const status = await collectionStore.fetchGitStatus()
+      const [status, branches] = await Promise.all([
+        collectionStore.fetchGitStatus(),
+        collectionStore.fetchLocalBranches()
+      ])
       if (!remoteUrlInput.value && status?.remote_url) {
         remoteUrlInput.value = status.remote_url
       }
+      const defaultBranch = status?.branch || branches[0] || 'main'
+      selectedBranch.value = defaultBranch
     }
   },
   { immediate: true }
 )
 
 const closeModal = () => {
+  showRemoteChangeConfirm.value = false
+  pendingRemoteUrl.value = ''
   uiStore.gitSyncModalOpen = false
 }
 
@@ -34,7 +57,12 @@ function handleKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape' && uiStore.gitSyncModalOpen) {
     e.preventDefault()
     e.stopPropagation()
-    closeModal()
+    if (showRemoteChangeConfirm.value) {
+      showRemoteChangeConfirm.value = false
+      pendingRemoteUrl.value = ''
+    } else {
+      closeModal()
+    }
   }
 }
 
@@ -47,23 +75,67 @@ onUnmounted(() => {
 })
 
 const onSaveRemote = async () => {
+  const newUrl = remoteUrlInput.value.trim()
+  const currentUrl = (collectionStore.activeCollection?.git_remote_url || '').trim()
+
+  if (newUrl !== '' && newUrl !== currentUrl) {
+    pendingRemoteUrl.value = newUrl
+    showRemoteChangeConfirm.value = true
+    return
+  }
+
   await collectionStore.saveGitRemote(remoteUrlInput.value)
 }
 
+const onConfirmClearAndPull = async () => {
+  const url = pendingRemoteUrl.value || remoteUrlInput.value.trim()
+  showRemoteChangeConfirm.value = false
+  pendingRemoteUrl.value = ''
+  await collectionStore.gitClearAndPull(url)
+  if (collectionStore.gitSyncStatus?.branch) {
+    selectedBranch.value = collectionStore.gitSyncStatus.branch
+  }
+}
+
+const onConfirmStashAndPull = async () => {
+  const url = pendingRemoteUrl.value || remoteUrlInput.value.trim()
+  showRemoteChangeConfirm.value = false
+  pendingRemoteUrl.value = ''
+  await collectionStore.gitStashAndPull(url)
+  if (collectionStore.gitSyncStatus?.branch) {
+    selectedBranch.value = collectionStore.gitSyncStatus.branch
+  }
+}
+
+const onCancelRemoteChange = () => {
+  showRemoteChangeConfirm.value = false
+  pendingRemoteUrl.value = ''
+}
+
 const onPull = async () => {
-  if (remoteUrlInput.value.trim() !== (collectionStore.activeCollection?.git_remote_url || '')) {
-    const saved = await collectionStore.saveGitRemote(remoteUrlInput.value)
-    if (!saved) return
+  const newUrl = remoteUrlInput.value.trim()
+  const currentUrl = (collectionStore.activeCollection?.git_remote_url || '').trim()
+  if (newUrl !== '' && newUrl !== currentUrl) {
+    pendingRemoteUrl.value = newUrl
+    showRemoteChangeConfirm.value = true
+    return
   }
   await collectionStore.gitPull()
+  await collectionStore.fetchLocalBranches()
+  if (collectionStore.gitSyncStatus?.branch) {
+    selectedBranch.value = collectionStore.gitSyncStatus.branch
+  }
 }
 
 const onPush = async () => {
-  if (remoteUrlInput.value.trim() !== (collectionStore.activeCollection?.git_remote_url || '')) {
-    const saved = await collectionStore.saveGitRemote(remoteUrlInput.value)
-    if (!saved) return
+  const newUrl = remoteUrlInput.value.trim()
+  const currentUrl = (collectionStore.activeCollection?.git_remote_url || '').trim()
+  if (newUrl !== '' && newUrl !== currentUrl) {
+    pendingRemoteUrl.value = newUrl
+    showRemoteChangeConfirm.value = true
+    return
   }
-  await collectionStore.gitPush()
+  await collectionStore.gitPush(selectedBranch.value)
 }
 </script>
 
@@ -152,6 +224,47 @@ const onPush = async () => {
         </div>
       </div>
 
+      <!-- Confirm Dialog when Remote URL changes -->
+      <div
+        v-if="showRemoteChangeConfirm"
+        data-test="git-remote-confirm-dialog"
+        role="alertdialog"
+        aria-label="Xác nhận thay đổi Git Remote URL"
+        class="p-3 rounded-md bg-amber-950/40 border border-amber-500/50 text-xs space-y-2.5"
+      >
+        <p class="m-0 text-amber-200 font-medium">
+          Bạn đang kết nối với Git Remote URL mới. Vui lòng chọn cách xử lý dữ liệu local hiện tại:
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-test="git-clear-and-pull-btn"
+            :disabled="collectionStore.gitSyncLoading"
+            class="px-3 py-1.5 rounded bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
+            @click="onConfirmClearAndPull"
+          >
+            Clear local data
+          </button>
+          <button
+            type="button"
+            data-test="git-stash-and-pull-btn"
+            :disabled="collectionStore.gitSyncLoading"
+            class="px-3 py-1.5 rounded bg-brand-primary hover:opacity-90 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
+            @click="onConfirmStashAndPull"
+          >
+            Stash &amp; merge
+          </button>
+          <button
+            type="button"
+            data-test="git-cancel-remote-change-btn"
+            class="px-2.5 py-1.5 rounded text-xs text-text-muted hover:text-text-primary cursor-pointer"
+            @click="onCancelRemoteChange"
+          >
+            Hủy
+          </button>
+        </div>
+      </div>
+
       <!-- Status Info -->
       <div v-if="collectionStore.gitSyncStatus" class="text-xs text-text-muted flex items-center justify-between bg-surface-base px-3 py-2 rounded border border-border-default">
         <span>
@@ -166,8 +279,8 @@ const onPush = async () => {
       </div>
 
       <!-- Pull & Push Actions -->
-      <div class="flex items-center justify-between pt-2 border-t border-border-default">
-        <div class="flex items-center gap-2">
+      <div class="flex items-center justify-between pt-2 border-t border-border-default gap-2">
+        <div class="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             data-test="git-pull-modal-btn"
@@ -177,15 +290,28 @@ const onPush = async () => {
           >
             ↓ Git Pull
           </button>
-          <button
-            type="button"
-            data-test="git-push-modal-btn"
-            :disabled="collectionStore.gitSyncLoading"
-            class="px-3 py-1.5 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
-            @click="onPush"
-          >
-            ↑ Git Push
-          </button>
+          <div class="flex items-center gap-1.5">
+            <select
+              v-model="selectedBranch"
+              data-test="git-push-branch-select"
+              aria-label="Chọn nhánh để Push"
+              :disabled="collectionStore.gitSyncLoading"
+              class="px-2 py-1.5 rounded bg-surface-input border border-border-default font-mono text-xs text-text-primary focus:border-brand-primary outline-none cursor-pointer"
+            >
+              <option v-for="b in availableBranches" :key="b" :value="b">
+                {{ b }}
+              </option>
+            </select>
+            <button
+              type="button"
+              data-test="git-push-modal-btn"
+              :disabled="collectionStore.gitSyncLoading"
+              class="px-3 py-1.5 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
+              @click="onPush"
+            >
+              ↑ Git Push
+            </button>
+          </div>
         </div>
         <button
           type="button"
