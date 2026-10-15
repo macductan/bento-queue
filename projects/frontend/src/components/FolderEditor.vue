@@ -67,10 +67,7 @@ const currentScopeVariables = computed<{ key: string, value: string, enabled: bo
     if (selectedEnvScope.value === '__folder_global__') {
       return variables.value
     }
-    if (!folder_envs.value[selectedEnvScope.value]) {
-      folder_envs.value[selectedEnvScope.value] = []
-    }
-    return folder_envs.value[selectedEnvScope.value]
+    return folder_envs.value[selectedEnvScope.value] ?? []
   },
   set(newVal) {
     if (selectedEnvScope.value === '__folder_global__') {
