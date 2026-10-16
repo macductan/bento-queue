@@ -78,13 +78,14 @@ const onSaveRemote = async () => {
   const newUrl = remoteUrlInput.value.trim()
   const currentUrl = (collectionStore.activeCollection?.git_remote_url || '').trim()
 
-  if (newUrl !== '' && newUrl !== currentUrl) {
+  if (newUrl !== '' && currentUrl !== '' && newUrl !== currentUrl) {
     pendingRemoteUrl.value = newUrl
     showRemoteChangeConfirm.value = true
     return
   }
 
-  await collectionStore.saveGitRemote(remoteUrlInput.value)
+  await collectionStore.saveGitRemote(newUrl)
+  await collectionStore.fetchLocalBranches()
 }
 
 const onConfirmClearAndPull = async () => {
@@ -107,6 +108,14 @@ const onConfirmStashAndPull = async () => {
   }
 }
 
+const onConfirmSaveRemoteOnly = async () => {
+  const url = pendingRemoteUrl.value || remoteUrlInput.value.trim()
+  showRemoteChangeConfirm.value = false
+  pendingRemoteUrl.value = ''
+  await collectionStore.saveGitRemote(url)
+  await collectionStore.fetchLocalBranches()
+}
+
 const onCancelRemoteChange = () => {
   showRemoteChangeConfirm.value = false
   pendingRemoteUrl.value = ''
@@ -116,9 +125,13 @@ const onPull = async () => {
   const newUrl = remoteUrlInput.value.trim()
   const currentUrl = (collectionStore.activeCollection?.git_remote_url || '').trim()
   if (newUrl !== '' && newUrl !== currentUrl) {
-    pendingRemoteUrl.value = newUrl
-    showRemoteChangeConfirm.value = true
-    return
+    if (currentUrl !== '') {
+      pendingRemoteUrl.value = newUrl
+      showRemoteChangeConfirm.value = true
+      return
+    }
+    const saved = await collectionStore.saveGitRemote(newUrl)
+    if (!saved) return
   }
   await collectionStore.gitPull()
   await collectionStore.fetchLocalBranches()
@@ -131,11 +144,14 @@ const onPush = async () => {
   const newUrl = remoteUrlInput.value.trim()
   const currentUrl = (collectionStore.activeCollection?.git_remote_url || '').trim()
   if (newUrl !== '' && newUrl !== currentUrl) {
-    pendingRemoteUrl.value = newUrl
-    showRemoteChangeConfirm.value = true
-    return
+    const saved = await collectionStore.saveGitRemote(newUrl)
+    if (!saved) return
   }
   await collectionStore.gitPush(selectedBranch.value)
+  await collectionStore.fetchLocalBranches()
+  if (collectionStore.gitSyncStatus?.branch) {
+    selectedBranch.value = collectionStore.gitSyncStatus.branch
+  }
 }
 </script>
 
@@ -253,6 +269,15 @@ const onPush = async () => {
             @click="onConfirmStashAndPull"
           >
             Stash &amp; merge
+          </button>
+          <button
+            type="button"
+            data-test="git-save-only-remote-btn"
+            :disabled="collectionStore.gitSyncLoading"
+            class="px-3 py-1.5 rounded bg-surface-raised border border-border-default hover:bg-surface-hover text-text-primary text-xs font-semibold disabled:opacity-50 cursor-pointer"
+            @click="onConfirmSaveRemoteOnly"
+          >
+            Chỉ lưu Remote
           </button>
           <button
             type="button"

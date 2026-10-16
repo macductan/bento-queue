@@ -36,15 +36,27 @@ describe('ScriptEditor.vue', () => {
     vi.clearAllMocks()
   })
 
-  it('renders Pre-request and Post-response script inputs and empty console log area', () => {
+  it('renders phase select switcher showing Pre-request by default and switches to Post-response on select', async () => {
     const reqStore = useRequestStore()
     reqStore.current = createMockRequest()
 
     const wrapper = mount(ScriptEditor)
 
     expect(wrapper.find('[data-test="script-editor"]').exists()).toBe(true)
+    const select = wrapper.find('[data-test="script-phase-select"]')
+    expect(select.exists()).toBe(true)
+    expect((select.element as HTMLSelectElement).value).toBe('pre_request')
+
     expect(wrapper.find('[data-test="pre-request-script-input"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-response-script-input"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="pre-script-syntax-overlay"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="pre-script-panel"]').attributes('style') || '').not.toContain('display: none')
+    expect(wrapper.find('[data-test="post-script-panel"]').attributes('style') || '').toContain('display: none')
+
+    await select.setValue('post_response')
+    expect(wrapper.find('[data-test="pre-script-panel"]').attributes('style') || '').toContain('display: none')
+    expect(wrapper.find('[data-test="post-script-panel"]').attributes('style') || '').not.toContain('display: none')
+    expect(wrapper.find('[data-test="post-script-syntax-overlay"]').exists()).toBe(true)
+
     expect(wrapper.find('[data-test="script-execution-output"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Chưa có log thực thi')
   })
@@ -62,7 +74,9 @@ describe('ScriptEditor.vue', () => {
 
     expect(reqStore.current.scripts?.pre_request).toContain("ha.environment.set('token', 'value');")
 
-    // Insert post-response snippets
+    // Switch to post-response and insert snippets
+    await wrapper.find('[data-test="script-phase-select"]').setValue('post_response')
+
     const postJsonBtn = wrapper.find('[data-test="snippet-post-json"]')
     expect(postJsonBtn.exists()).toBe(true)
     await postJsonBtn.trigger('click')
@@ -138,6 +152,7 @@ describe('ScriptEditor.vue', () => {
     reqStore.current = createMockRequest()
 
     const wrapper = mount(ScriptEditor)
+    await wrapper.find('[data-test="script-phase-select"]').setValue('post_response')
     const postJsonBtn = wrapper.find('[data-test="snippet-post-json"]')
 
     // Click snippet twice
@@ -167,5 +182,62 @@ describe('ScriptEditor.vue', () => {
     expect(result.success).toBe(true)
     expect(result.error).toBeUndefined()
     expect(result.envUpdates['auth_token']).toBe('test-token')
+  })
+
+  it('supports setting environment variables across all scopes (Global, Collection, Folder, Folder-Env) and mutating request params/query/pathParams', async () => {
+    const { executeScript } = await import('@/utils/scriptRunner')
+    const result = executeScript(
+      `
+      ha.environment.set('active_var', 'v1');
+      ha.environment.set('prod_var', 'v2', 'Production');
+      ha.collectionVariables.set('col_var', 'v3');
+      ha.folderVariables.set('folder_var', 'v4');
+      ha.folderEnv.set('folder_env_var', 'v5', 'Production');
+      ha.request.query.set('page', '2');
+      ha.request.pathParams.set('api_key', 'k-999');
+      ha.request.headers.set('X-Trace', 'trace-1');
+      console.info('Params & scopes updated');
+      `,
+      {
+        variables: new Map(),
+        request: createMockRequest({
+          url: 'https://api.example.com/:api_key/list',
+          params: [{ key: 'page', value: '1', enabled: true }],
+          path_params: [{ key: 'api_key', value: 'old', enabled: true }],
+          headers: [],
+        }),
+        environments: [{ id: 'env-prod', name: 'Production', variables: [] }],
+        activeEnvId: 'env-dev',
+      }
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.envUpdates['active_var']).toBe('v1')
+    expect(result.scopedEnvUpdates).toEqual({
+      collection: { col_var: 'v3' },
+      globalEnvs: { Production: { prod_var: 'v2' } },
+      folderGlobals: { __nearest__: { folder_var: 'v4' } },
+      folderEnvs: [{ folder: '__nearest__', env: 'Production', key: 'folder_env_var', value: 'v5' }],
+    })
+    expect(result.requestMutations.params).toEqual([{ key: 'page', value: '2', enabled: true }])
+    expect(result.requestMutations.path_params).toEqual([{ key: 'api_key', value: 'k-999', enabled: true }])
+    expect(result.requestMutations.headers).toEqual([{ key: 'X-Trace', value: 'trace-1', enabled: true }])
+    expect(result.logEntries[0]?.level).toBe('info')
+  })
+
+  it('tokenizes JavaScript syntax for highlight overlay and provides code completion suggestions', async () => {
+    const { tokenizeJavaScript, getScriptSuggestions } = await import('@/utils/jsHighlight')
+    const tokens = tokenizeJavaScript("const data = ha.response.json(); // comment\nha.environment.set('k', 123);")
+    const types = tokens.map(t => t.type)
+    expect(types).toContain('keyword')
+    expect(types).toContain('builtin')
+    expect(types).toContain('method')
+    expect(types).toContain('comment')
+    expect(types).toContain('string')
+    expect(types).toContain('number')
+
+    const suggestions = getScriptSuggestions('ha.request.', 'pre_request')
+    expect(suggestions.length).toBeGreaterThan(0)
+    expect(suggestions.some(s => s.label.includes('ha.request.query.set'))).toBe(true)
   })
 })

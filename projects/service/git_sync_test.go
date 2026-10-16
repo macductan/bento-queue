@@ -393,4 +393,77 @@ func TestGitSyncService_ListLocalBranchesAndPushToBranch(t *testing.T) {
 	}
 }
 
+func TestGitSyncService_InitialPushAndPullWithUnrelatedHistoryAndCollectionMeta(t *testing.T) {
+	gitSvc, collSvc, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+
+	// Validate SCP-style custom SSH URL format
+	if !isValidGitRemoteURL("git@github_home.com:macductan/hecto-api-data.git") {
+		t.Fatalf("expected git@github_home.com:macductan/hecto-api-data.git to be valid")
+	}
+	if !isValidGitRemoteURL("deploy@gitlab.internal.corp:team/api-collection.git") {
+		t.Fatalf("expected deploy@gitlab.internal.corp:team/api-collection.git to be valid")
+	}
+
+	// Simulate remote initialized on GitHub with README.md and a different collection.json
+	seedDir := filepath.Join(filepath.Dir(collectionsRoot), "seed-remote")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, seedDir)
+	runTestGit(t, seedDir, "config", "user.name", "GitHub Web")
+	runTestGit(t, seedDir, "config", "user.email", "noreply@github.com")
+	if err := os.WriteFile(filepath.Join(seedDir, "README.md"), []byte("# Hecto API Collection\n"), 0644); err != nil {
+		t.Fatalf("write README.md failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(seedDir, "collection.json"), []byte("{\n  \"id\": \"remote-id\",\n  \"name\": \"Remote Collection\",\n  \"description\": \"Seeded on remote\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write remote collection.json failed: %v", err)
+	}
+	runTestGit(t, seedDir, "add", "-A")
+	runTestGit(t, seedDir, "commit", "-m", "Initial commit")
+	runTestGit(t, seedDir, "branch", "-M", "main")
+	runTestGit(t, seedDir, "push", "-u", "origin", "main")
+
+	// Local collection adds a request and configures remote URL
+	collDir := filepath.Join(collectionsRoot, collID)
+	if err := os.WriteFile(filepath.Join(collDir, "local-req.json"), []byte(`{"id":"lr-1","name":"Local Request"}`), 0644); err != nil {
+		t.Fatalf("write local-req.json failed: %v", err)
+	}
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	// Initial Push should automatically fetch, merge unrelated history, auto-resolve collection.json conflict, and push!
+	pushRes := gitSvc.Push(collectionsRoot, collID)
+	if !pushRes.Success {
+		t.Fatalf("expected initial Push to auto-merge README.md & collection.json and succeed, got: %+v", pushRes.Error)
+	}
+
+	// Verify both README.md and local-req.json exist locally and on remote
+	if _, err := os.Stat(filepath.Join(collDir, "README.md")); err != nil {
+		t.Errorf("expected README.md to be merged locally after Push, got: %v", err)
+	}
+	remoteFiles := runTestGit(t, bareRepoDir, "ls-tree", "--name-only", "main")
+	if !strings.Contains(remoteFiles, "local-req.json") || !strings.Contains(remoteFiles, "README.md") {
+		t.Fatalf("expected both local-req.json and README.md on remote main, got: %s", remoteFiles)
+	}
+
+	// Also verify another fresh collection pulling from this remote auto-resolves collection.json conflict cleanly
+	coll2Res := collSvc.CreateCollection(collectionsRoot, "Second-Local-Collection")
+	if !coll2Res.Success {
+		t.Fatalf("CreateCollection 2 failed: %+v", coll2Res.Error)
+	}
+	coll2 := coll2Res.Data.(model.Collection)
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, coll2.ID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL 2 failed: %+v", res.Error)
+	}
+	pullRes := gitSvc.Pull(collectionsRoot, coll2.ID)
+	if !pullRes.Success {
+		t.Fatalf("expected Pull on fresh collection to auto-resolve collection.json conflict and succeed, got: %+v", pullRes.Error)
+	}
+	coll2Dir := filepath.Join(collectionsRoot, coll2.ID)
+	if _, err := os.Stat(filepath.Join(coll2Dir, "local-req.json")); err != nil {
+		t.Errorf("expected local-req.json in second collection after Pull, got: %v", err)
+	}
+}
+
+
 

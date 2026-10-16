@@ -3,7 +3,7 @@ import type { TreeNode } from '../stores/collectionStore';
 import { resolveVariables } from './variables';
 import { mergeHeaders } from './headers';
 import { resolveEffectiveAuth, getAuthArtifacts, type ResolveEffectiveAuthOptions } from './auth';
-import { parseUrl, encodeQueryComponent, splitPreservingVars } from './urlParams';
+import { parseUrl, encodeQueryComponent, splitPreservingVars, resolvePathParamsInUrl } from './urlParams';
 import { stripJsoncToJson } from './jsonEditor';
 
 export interface ExecuteRequest {
@@ -96,7 +96,32 @@ export function buildExecuteRequest(
     }))
     .filter(p => p.key.trim() !== '');
 
-  let url = resolveVariables(req.url || '', vars);
+  // Resolve :param path variables from req.path_params and fallback to environment vars
+  const resolvedPathParams: KVPair[] = [];
+  const seenPathKeys = new Set<string>();
+  const disabledPathKeys = new Set<string>();
+  for (const pp of req.path_params || []) {
+    if (!pp || typeof pp.key !== 'string' || pp.key.trim() === '') continue;
+    const k = pp.key.trim();
+    if (!pp.enabled) {
+      disabledPathKeys.add(k);
+      continue;
+    }
+    const rawVal = pp.value || '';
+    const resolvedVal = rawVal !== '' ? resolveVariables(rawVal, vars) : (vars.get(k) ?? '');
+    if (resolvedVal !== '') {
+      resolvedPathParams.push({ key: k, value: resolvedVal, enabled: true });
+      seenPathKeys.add(k);
+    }
+  }
+  for (const [k, v] of vars.entries()) {
+    if (!seenPathKeys.has(k) && !disabledPathKeys.has(k) && v !== '') {
+      resolvedPathParams.push({ key: k, value: v, enabled: true });
+    }
+  }
+
+  const urlWithPathParams = resolvePathParamsInUrl(req.url || '', resolvedPathParams);
+  let url = resolveVariables(urlWithPathParams, vars);
   
   if (params.length > 0) {
     const { params: existingUrlParams } = parseUrl(url);

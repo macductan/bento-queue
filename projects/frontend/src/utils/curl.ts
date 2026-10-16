@@ -2,11 +2,13 @@ import type { Request, KVPair } from '../stores/requestStore';
 import type { TreeNode, AuthConfig } from '../stores/collectionStore';
 import { buildExecuteRequest } from './buildExecuteRequest';
 import { getInheritedHeaders } from './headers';
+import { reconcilePathParamsFromUrl } from './urlParams';
 
 export interface ParsedCurlResult {
   method: string;
   url: string;
   params: KVPair[];
+  path_params?: KVPair[];
   headers: KVPair[];
   body: {
     type: 'none' | 'json' | 'text' | 'xml' | 'urlencoded' | 'formdata';
@@ -509,11 +511,13 @@ export function parseCurlCommand(text: string): ParsedCurlResult {
   }
 
   const params = extractQueryParamsFromUrl(url);
+  const path_params = reconcilePathParamsFromUrl(url, []);
 
   return {
     method,
     url,
     params,
+    ...(path_params.length > 0 ? { path_params } : {}),
     headers,
     body: {
       type: bodyType,

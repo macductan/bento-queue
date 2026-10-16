@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { ListEnvironments, SaveEnvironment, DeleteEnvironment } from '../../wailsjs/go/main/App'
+import { ListEnvironments, SaveEnvironment, DeleteEnvironment, LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
 import { model } from '../../wailsjs/go/models'
 import { useUiStore } from './uiStore'
-import { useCollectionStore } from './collectionStore'
+import { useCollectionStore, type TreeNode } from './collectionStore'
+import type { ScopedEnvUpdates } from '../utils/scriptRunner'
+import type { FolderNodeLike } from '../utils/resolveHierarchyVariables'
 
 export const useEnvironmentStore = defineStore('environment', () => {
   const environments = ref<model.Environment[]>([])
@@ -167,6 +169,184 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
+  async function applyScopedVariableUpdates(
+    scoped: ScopedEnvUpdates | undefined,
+    pathFolders: FolderNodeLike[] = []
+  ): Promise<void> {
+    if (!scoped) return
+    const collectionStore = useCollectionStore()
+
+    // 1. Collection Env updates (ha.globals.set / ha.collectionVariables.set)
+    const collEntries = Object.entries(scoped.collection || {})
+    if (collEntries.length > 0 && collectionStore.activeCollection) {
+      const activeColl = collectionStore.activeCollection
+      const nextVars = Array.isArray(activeColl.variables)
+        ? activeColl.variables.map(v => ({ ...v }))
+        : []
+      for (const [key, val] of collEntries) {
+        const existing = nextVars.find(v => v.key === key)
+        if (existing) {
+          existing.value = val
+          existing.enabled = true
+        } else {
+          nextVars.push({ key, value: val, enabled: true })
+        }
+      }
+      activeColl.variables = nextVars
+      if (activeColl.id) {
+        await collectionStore.updateCollectionVariables(activeColl.id, nextVars)
+      }
+    }
+
+    // 2. Specific Global Env updates (ha.environment.set(key, val, envNameOrId))
+    for (const [envKey, varsMap] of Object.entries(scoped.globalEnvs || {})) {
+      const entries = Object.entries(varsMap)
+      if (entries.length === 0) continue
+      const lower = envKey.trim().toLowerCase()
+      const targetEnv = environments.value.find(
+        e => e.id.toLowerCase() === lower || e.name.trim().toLowerCase() === lower
+      )
+      if (targetEnv) {
+        if (!targetEnv.variables) targetEnv.variables = []
+        for (const [key, val] of entries) {
+          const existing = targetEnv.variables.find(v => v.key === key)
+          if (existing) {
+            existing.value = val
+            existing.enabled = true
+          } else {
+            targetEnv.variables.push({ key, value: val, enabled: true } as any)
+          }
+        }
+        await SaveEnvironment(targetEnv)
+      }
+    }
+
+    // Helper to resolve folder ID from folderNameOrId or '__nearest__'
+    const resolveFolderId = (folderSelector: string): string | null => {
+      if (!folderSelector || folderSelector === '__nearest__') {
+        const nearest = pathFolders.length > 0 ? pathFolders[pathFolders.length - 1] : null
+        return nearest?.id || null
+      }
+      const lower = folderSelector.trim().toLowerCase()
+      const fromPath = pathFolders.find(
+        f => f && (f.id?.toLowerCase() === lower || f.name?.trim().toLowerCase() === lower)
+      )
+      if (fromPath?.id) return fromPath.id
+
+      let foundId: string | null = null
+      const walk = (nodes: TreeNode[] | undefined) => {
+        if (!Array.isArray(nodes) || foundId) return
+        for (const n of nodes) {
+          if (n.type === 'folder') {
+            if (n.id.toLowerCase() === lower || n.name.trim().toLowerCase() === lower) {
+              foundId = n.id
+              return
+            }
+            if (n.children) walk(n.children)
+          }
+        }
+      }
+      walk(collectionStore.tree)
+      return foundId
+    }
+
+    // Group folder updates by folderId so we only LoadFolder/UpdateFolder once per folder
+    const folderMutations = new Map<
+      string,
+      {
+        globals: Record<string, string>
+        envs: Record<string, Record<string, string>>
+      }
+    >()
+
+    for (const [folderSel, kvMap] of Object.entries(scoped.folderGlobals || {})) {
+      const fId = resolveFolderId(folderSel)
+      if (!fId) continue
+      if (!folderMutations.has(fId)) {
+        folderMutations.set(fId, { globals: {}, envs: {} })
+      }
+      Object.assign(folderMutations.get(fId)!.globals, kvMap)
+    }
+
+    for (const item of scoped.folderEnvs || []) {
+      const fId = resolveFolderId(item.folder)
+      if (!fId) continue
+      let targetEnvId = activeEnvId.value
+      if (item.env && item.env !== '__active__') {
+        const lowerEnv = item.env.trim().toLowerCase()
+        const matched = environments.value.find(
+          e => e.id.toLowerCase() === lowerEnv || e.name.trim().toLowerCase() === lowerEnv
+        )
+        targetEnvId = matched?.id || item.env.trim()
+      }
+      if (!targetEnvId) continue
+      if (!folderMutations.has(fId)) {
+        folderMutations.set(fId, { globals: {}, envs: {} })
+      }
+      const fm = folderMutations.get(fId)!
+      if (!fm.envs[targetEnvId]) fm.envs[targetEnvId] = {}
+      fm.envs[targetEnvId][item.key] = item.value
+    }
+
+    let anyFolderUpdated = false
+    for (const [folderId, mut] of folderMutations.entries()) {
+      try {
+        const loadRes = await LoadFolder(folderId)
+        if (!loadRes?.success || !loadRes.data) continue
+        const folderData = JSON.parse(JSON.stringify(loadRes.data))
+        folderData.id = folderData.id || folderId
+
+        if (!Array.isArray(folderData.variables)) folderData.variables = []
+        for (const [k, v] of Object.entries(mut.globals)) {
+          const existing = folderData.variables.find((item: any) => item.key === k)
+          if (existing) {
+            existing.value = v
+            existing.enabled = true
+          } else {
+            folderData.variables.push({ key: k, value: v, enabled: true })
+          }
+        }
+
+        if (!folderData.folder_envs || typeof folderData.folder_envs !== 'object') {
+          folderData.folder_envs = {}
+        }
+        for (const [envId, envVarsMap] of Object.entries(mut.envs)) {
+          if (!Array.isArray(folderData.folder_envs[envId])) {
+            folderData.folder_envs[envId] = []
+          }
+          for (const [k, v] of Object.entries(envVarsMap)) {
+            const existing = folderData.folder_envs[envId].find((item: any) => item.key === k)
+            if (existing) {
+              existing.value = v
+              existing.enabled = true
+            } else {
+              folderData.folder_envs[envId].push({ key: k, value: v, enabled: true })
+            }
+          }
+        }
+
+        const updateRes = await UpdateFolder(folderData)
+        if (updateRes?.success) {
+          anyFolderUpdated = true
+          const treeNode = collectionStore.findNode(collectionStore.tree, folderId)
+          if (treeNode) {
+            treeNode.variables = folderData.variables
+            treeNode.folder_envs = folderData.folder_envs
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('hecto:folder-updated', { detail: folderData }))
+          }
+        }
+      } catch {
+        // ignore folder update errors in script runner
+      }
+    }
+
+    if (anyFolderUpdated) {
+      await collectionStore.loadTree()
+    }
+  }
+
   return {
     environments,
     activeEnvId,
@@ -178,6 +358,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     save,
     remove,
     setActive,
-    applyVariableUpdates
+    applyVariableUpdates,
+    applyScopedVariableUpdates
   }
 })

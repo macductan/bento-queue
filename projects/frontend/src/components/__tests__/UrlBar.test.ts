@@ -40,7 +40,7 @@ describe('UrlBar.vue', () => {
     })
   })
 
-  it('renders Copy as cURL button alongside Send button', () => {
+  it('does not render Copy as cURL button and renders Send icon button', () => {
     const requestStore = useRequestStore()
     requestStore.current = {
       id: 'req-1',
@@ -56,163 +56,43 @@ describe('UrlBar.vue', () => {
 
     const wrapper = mount(UrlBar)
     const curlBtn = wrapper.find('#copy-curl-btn')
-    expect(curlBtn.exists()).toBe(true)
-    expect(curlBtn.attributes('title')).toBe('Copy as cURL')
-    expect(curlBtn.text()).toContain('cURL')
+    expect(curlBtn.exists()).toBe(false)
 
-    const sendBtn = wrapper.findAll('button').find(b => b.text().includes('Gửi'))
-    expect(sendBtn?.exists()).toBe(true)
+    const sendBtn = wrapper.find('[data-test="send-request-btn"]')
+    expect(sendBtn.exists()).toBe(true)
+    expect(sendBtn.attributes('aria-label')).toBe('Gửi')
+    expect(sendBtn.find('svg').exists()).toBe(true)
   })
 
-  it('shows warning toast and sets urlInvalid when copying cURL with empty URL', async () => {
+  it('extracts :param path variables from URL into path_params and highlights them in VariableHighlighter', async () => {
     const requestStore = useRequestStore()
-    const responseStore = useResponseStore()
-    const uiStore = useUiStore()
-    const toastSpy = vi.spyOn(uiStore, 'showToast')
-
     requestStore.current = {
-      id: 'req-1',
-      name: 'Empty URL Req',
+      id: 'req-path-vars',
+      name: 'Path Var Req',
       method: 'GET',
-      url: '',
+      url: 'https://api.example.com/v1/:api_key/items/:item_id',
       headers: [],
       params: [],
+      path_params: [{ key: 'api_key', value: 'my-secret-key', enabled: true }],
       body: { type: 'none', content: '' },
-      created_at: '2026-10-13',
-      updated_at: '2026-10-13'
+      created_at: '2026-10-16',
+      updated_at: '2026-10-16'
     }
 
     const wrapper = mount(UrlBar)
-    const curlBtn = wrapper.find('#copy-curl-btn')
-    await curlBtn.trigger('click')
+    const highlighter = wrapper.findComponent({ name: 'VariableHighlighter' })
+    expect(highlighter.exists()).toBe(true)
 
-    expect(toastSpy).toHaveBeenCalledWith('Vui lòng nhập URL')
-    expect(responseStore.urlInvalid).toBe(true)
-    expect(writeTextMock).not.toHaveBeenCalled()
-  })
-
-  it('copies cURL command to clipboard and shows success toast when valid', async () => {
-    const requestStore = useRequestStore()
-    const uiStore = useUiStore()
-    const toastSpy = vi.spyOn(uiStore, 'showToast')
-
-    requestStore.current = {
-      id: 'req-1',
-      name: 'Get Users',
-      method: 'POST',
-      url: 'https://api.example.com/users',
-      headers: [{ key: 'X-Custom', value: 'value', enabled: true }],
-      params: [{ key: 'page', value: '1', enabled: true }],
-      body: { type: 'json', content: '{"name":"Alice"}' },
-      created_at: '2026-10-13',
-      updated_at: '2026-10-13'
-    }
-
-    const wrapper = mount(UrlBar)
-    const curlBtn = wrapper.find('#copy-curl-btn')
-    await curlBtn.trigger('click')
-
-    expect(writeTextMock).toHaveBeenCalledTimes(1)
-    const copiedCommand = writeTextMock.mock.calls[0][0]
-    expect(copiedCommand).toContain("curl -X POST 'https://api.example.com/users?page=1'")
-    expect(copiedCommand).toContain("-H 'Content-Type: application/json'")
-    expect(copiedCommand).toContain("-H 'X-Custom: value'")
-    expect(copiedCommand).toContain("--data-raw '{\"name\":\"Alice\"}'")
-
-    expect(toastSpy).toHaveBeenCalledWith('Đã sao chép cURL vào clipboard')
-  })
-
-  it('resolves active environment variables from envStore during copyAsCurl', async () => {
-    const requestStore = useRequestStore()
-    const envStore = useEnvironmentStore()
-    envStore.environments = [
-      new model.Environment({
-        id: 'env-prod',
-        name: 'Production',
-        variables: [
-          { key: 'baseUrl', value: 'https://prod.api.com', enabled: true },
-          { key: 'token', value: 'secret123', enabled: true }
-        ]
-      })
-    ]
-    envStore.activeEnvId = 'env-prod'
-
-    requestStore.current = {
-      id: 'req-1',
-      name: 'Env Request',
-      method: 'GET',
-      url: '{{baseUrl}}/users',
-      headers: [{ key: 'X-Token', value: '{{token}}', enabled: true }],
-      params: [],
-      body: { type: 'none', content: '' },
-      created_at: '2026-10-13',
-      updated_at: '2026-10-13'
-    }
-
-    const wrapper = mount(UrlBar)
-    const curlBtn = wrapper.find('#copy-curl-btn')
-    await curlBtn.trigger('click')
-
-    expect(writeTextMock).toHaveBeenCalledTimes(1)
-    const copiedCommand = writeTextMock.mock.calls[0][0]
-    expect(copiedCommand).toBe("curl -X GET 'https://prod.api.com/users' -H 'X-Token: secret123'")
-  })
-
-  it('successfully falls back to execCommand when writeText rejects', async () => {
-    writeTextMock.mockRejectedValue(new Error('Permission denied'))
-    const execCommandMock = vi.fn().mockReturnValue(true)
-    document.execCommand = execCommandMock
-
-    const requestStore = useRequestStore()
-    const uiStore = useUiStore()
-    const toastSpy = vi.spyOn(uiStore, 'showToast')
-
-    requestStore.current = {
-      id: 'req-1',
-      name: 'Fallback Request',
-      method: 'GET',
-      url: 'https://api.example.com/fallback',
-      headers: [],
-      params: [],
-      body: { type: 'none', content: '' },
-      created_at: '2026-10-13',
-      updated_at: '2026-10-13'
-    }
-
-    const wrapper = mount(UrlBar)
-    const curlBtn = wrapper.find('#copy-curl-btn')
-    await curlBtn.trigger('click')
-
-    expect(execCommandMock).toHaveBeenCalledWith('copy')
-    expect(toastSpy).toHaveBeenCalledWith('Đã sao chép cURL vào clipboard')
-  })
-
-  it('shows error toast if clipboard writeText throws and execCommand fallback returns false', async () => {
-    writeTextMock.mockRejectedValue(new Error('Permission denied'))
-    const execCommandMock = vi.fn().mockReturnValue(false)
-    document.execCommand = execCommandMock
-
-    const requestStore = useRequestStore()
-    const uiStore = useUiStore()
-    const toastSpy = vi.spyOn(uiStore, 'showToast')
-
-    requestStore.current = {
-      id: 'req-1',
-      name: 'Failed Fallback',
-      method: 'GET',
-      url: 'https://api.example.com/items',
-      headers: [],
-      params: [],
-      body: { type: 'none', content: '' },
-      created_at: '2026-10-13',
-      updated_at: '2026-10-13'
-    }
-
-    const wrapper = mount(UrlBar)
-    const curlBtn = wrapper.find('#copy-curl-btn')
-    await curlBtn.trigger('click')
-
-    expect(toastSpy).toHaveBeenCalledWith('Không thể sao chép vào clipboard')
+    const tokens = wrapper.findAll('[data-var-name]')
+    const varNames = tokens.map(t => t.attributes('data-var-name'))
+    expect(varNames).toContain('api_key')
+    expect(varNames).toContain('item_id')
+    const apiKeySpan = tokens.find(t => t.attributes('data-var-name') === 'api_key')
+    expect(apiKeySpan?.attributes('data-var-kind')).toBe('path')
+    expect(apiKeySpan?.classes()).toContain('text-variable-valid')
+    const itemIdSpan = tokens.find(t => t.attributes('data-var-name') === 'item_id')
+    expect(itemIdSpan?.attributes('data-var-kind')).toBe('path')
+    expect(itemIdSpan?.classes()).toContain('text-variable-missing')
   })
 
   it('applies text-sm typography to url input and highlighter overlay', () => {
@@ -241,7 +121,7 @@ describe('UrlBar.vue', () => {
     expect(highlighter.props('overlayClass')).not.toContain('text-base')
   })
 
-  it('resolves 4-tier variable hierarchy (Collection Env and Folder-Env) during copyAsCurl', async () => {
+  it('resolves 4-tier variable hierarchy (Collection Env, Folder-Env, and :param path_params) in UrlBar highlighter', async () => {
     const { useCollectionStore } = await import('@/stores/collectionStore')
     const collectionStore = useCollectionStore()
     const envStore = useEnvironmentStore()
@@ -258,6 +138,7 @@ describe('UrlBar.vue', () => {
       } as any
     ]
     collectionStore.activeCollectionId = 'col-1'
+    collectionStore.activeRequestId = 'req-4tier'
 
     envStore.environments = [
       {
@@ -301,21 +182,21 @@ describe('UrlBar.vue', () => {
       id: 'req-4tier',
       name: 'Login',
       method: 'POST',
-      url: '{{base_url}}/{{api_ver}}/login',
+      url: '{{base_url}}/{{api_ver}}/login/:api_key',
       headers: [],
       params: [],
+      path_params: [{ key: 'api_key', value: 'key-999', enabled: true }],
       body: { type: 'none', content: '' },
       created_at: '2026-10-13',
       updated_at: '2026-10-13'
     }
 
     const wrapper = mount(UrlBar)
-    const curlBtn = wrapper.find('#copy-curl-btn')
-    await curlBtn.trigger('click')
-
-    expect(writeTextMock).toHaveBeenCalledTimes(1)
-    const copiedCommand = writeTextMock.mock.calls[0][0]
-    expect(copiedCommand).toContain("'http://localhost:9001/v1/login'")
+    const spans = wrapper.findAll('[data-var-name]')
+    expect(spans.length).toBe(3)
+    for (const s of spans) {
+      expect(s.classes()).toContain('text-variable-valid')
+    }
   })
 
   it('supports selecting HEAD and OPTIONS or entering a Custom HTTP Method (e.g., PURGE, PROPFIND)', async () => {

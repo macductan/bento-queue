@@ -311,4 +311,68 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     expect(uiStore.gitSyncModalOpen).toBe(false)
     wrapper.unmount()
   })
+
+  it('saves first-time remote URL directly without confirm dialog and supports git-save-only-remote-btn when changing URL', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    getStatusMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: false,
+        remote_url: '',
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+    saveRemoteMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/first-remote.git',
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        description: '',
+        git_remote_url: '',
+        is_active: true,
+        created_at: '',
+        updated_at: ''
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+    uiStore.gitSyncModalOpen = true
+
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    const input = wrapper.find('[data-test="git-remote-input"]')
+    await input.setValue('https://github.com/org/first-remote.git')
+    await wrapper.find('[data-test="save-git-remote-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 15))
+
+    expect(wrapper.find('[data-test="git-remote-confirm-dialog"]').exists()).toBe(false)
+    expect(saveRemoteMock).toHaveBeenCalledWith('Test-Collection', 'https://github.com/org/first-remote.git')
+
+    // Now collection has an existing remote URL; changing it opens confirm dialog where git-save-only-remote-btn saves without pulling
+    collectionStore.collections[0].git_remote_url = 'https://github.com/org/first-remote.git'
+    await input.setValue('https://github.com/org/second-remote.git')
+    await wrapper.find('[data-test="save-git-remote-btn"]').trigger('click')
+    expect(wrapper.find('[data-test="git-remote-confirm-dialog"]').exists()).toBe(true)
+
+    const saveOnlyBtn = wrapper.find('[data-test="git-save-only-remote-btn"]')
+    expect(saveOnlyBtn.exists()).toBe(true)
+    await saveOnlyBtn.trigger('click')
+    await new Promise(r => setTimeout(r, 15))
+
+    expect(saveRemoteMock).toHaveBeenCalledWith('Test-Collection', 'https://github.com/org/second-remote.git')
+  })
 })

@@ -590,6 +590,26 @@ describe('buildExecuteRequest', () => {
       { key: 'title', value: 'Report 2026', enabled: true }
     ])
   })
+
+  it('should substitute :param path parameters from req.path_params and fallback vars while respecting disabled flags', () => {
+    const req = createMockRequest({
+      method: 'GET',
+      url: '{{base_url}}:8080/v1/:api_key/users/:user_id/disabled/:skip_me?filter=role:admin',
+      path_params: [
+        { key: 'api_key', value: 'key-{{env_suffix}}', enabled: true },
+        { key: 'user_id', value: '', enabled: true },
+        { key: 'skip_me', value: 'should-not-use', enabled: false }
+      ]
+    })
+    const vars = new Map([
+      ['base_url', 'https://api.test.com'],
+      ['env_suffix', 'prod'],
+      ['user_id', '42'],
+      ['skip_me', 'env-skip']
+    ])
+    const exec = buildExecuteRequest(req, vars)
+    expect(exec.url).toBe('https://api.test.com:8080/v1/key-prod/users/42/disabled/:skip_me?filter=role:admin')
+  })
 })
 
 

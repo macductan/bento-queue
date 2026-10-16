@@ -200,7 +200,8 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
 
     log.step('Create root folder and verify depth 0');
     const parentFolder = await createTestFolder(page, parentFolderName);
-    await expect(parentFolder.locator('[title="Cấp độ thư mục"]')).toHaveText('0');
+    await expect(parentFolder).toHaveAttribute('data-depth', '0');
+    await expect(parentFolder.locator('[title="Cấp độ thư mục"]')).toHaveCount(0);
 
     log.step('Create nested subfolder via context menu and verify depth 1');
     await parentFolder.click({ button: 'right' });
@@ -218,7 +219,8 @@ test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
 
     const childFolder = page.locator('[data-tree-row]').filter({ hasText: childFolderName }).first();
     await expect(childFolder).toBeVisible();
-    await expect(childFolder.locator('[title="Cấp độ thư mục"]')).toHaveText('1');
+    await expect(childFolder).toHaveAttribute('data-depth', '1');
+    await expect(childFolder.locator('[title="Cấp độ thư mục"]')).toHaveCount(0);
 
     log.step('Create nested request inside child folder');
     await childFolder.click({ button: 'right' });

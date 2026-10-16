@@ -41,9 +41,10 @@ func NewError(code, message string) Result {
 
 // KVPair represents a key-value pair used in headers and query parameters.
 type KVPair struct {
-	Key     string `json:"key"`
-	Value   string `json:"value"`
-	Enabled bool   `json:"enabled"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Enabled     bool   `json:"enabled"`
+	Description string `json:"description,omitempty"`
 }
 
 // Body represents the request body with a type selector (none, json, text, xml, urlencoded, formdata).
@@ -89,18 +90,19 @@ type Scripts struct {
 // Request represents an API request entity stored as a JSON file on disk.
 // Identity is UUID v4, stored as <uuid>.json on disk.
 type Request struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	Method    string                 `json:"method"`
-	URL       string                 `json:"url"`
-	Headers   []KVPair               `json:"headers"`
-	Params    []KVPair               `json:"params"`
-	Body      Body                   `json:"body"`
-	Auth      *AuthConfig            `json:"auth,omitempty"`
-	AuthEnvs  map[string]*AuthConfig `json:"auth_envs,omitempty"`
-	Scripts   *Scripts               `json:"scripts,omitempty"`
-	CreatedAt time.Time              `json:"created_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Method     string                 `json:"method"`
+	URL        string                 `json:"url"`
+	Headers    []KVPair               `json:"headers"`
+	Params     []KVPair               `json:"params"`
+	PathParams []KVPair               `json:"path_params,omitempty"`
+	Body       Body                   `json:"body"`
+	Auth       *AuthConfig            `json:"auth,omitempty"`
+	AuthEnvs   map[string]*AuthConfig `json:"auth_envs,omitempty"`
+	Scripts    *Scripts               `json:"scripts,omitempty"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
 }
 
 // TreeNode represents a node in the collection tree (folder or request) (Story 2.1).

@@ -268,3 +268,163 @@ export function reconcileParamsFromUrl(url: string, currentParams: KVPair[] = []
 }
 
 export const formatUrl = updateUrlWithParams
+
+export interface PathParamTokenMatch {
+  name: string
+  raw: string
+  startIndex: number
+  endIndex: number
+}
+
+/**
+ * Finds all `:param` tokens in a URL string (excluding scheme://, user:pass@ authority, :port, and {{...}} blocks).
+ */
+export function findPathParamTokens(url: string): PathParamTokenMatch[] {
+  if (!url) return []
+
+  // Mask {{...}} blocks with spaces of identical length so indices stay exact
+  const masked = url.replace(/\{\{[^}]*\}\}/g, m => ' '.repeat(m.length))
+
+  // Only scan the pathname (stop before query '?' or hash '#')
+  const queryOrHashIdx = masked.search(/[?#]/)
+  const scanEnd = queryOrHashIdx === -1 ? masked.length : queryOrHashIdx
+
+  // Determine start offset after scheme://authority or host:port authority
+  let scanStart = 0
+  const schemeMatch = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.exec(masked)
+  if (schemeMatch) {
+    const afterScheme = schemeMatch[0].length
+    const slashIdx = masked.indexOf('/', afterScheme)
+    if (slashIdx === -1 || slashIdx >= scanEnd) {
+      return []
+    }
+    scanStart = slashIdx
+  } else if (!masked.startsWith('/') && !masked.startsWith(':')) {
+    const slashIdx = masked.indexOf('/')
+    if (slashIdx === -1 || slashIdx >= scanEnd) {
+      return []
+    }
+    scanStart = slashIdx
+  }
+
+  const matches: PathParamTokenMatch[] = []
+  const regex = /:([a-zA-Z_][a-zA-Z0-9_-]*)/g
+  regex.lastIndex = scanStart
+
+  let m: RegExpExecArray | null
+  while ((m = regex.exec(masked)) !== null) {
+    if (m.index >= scanEnd) {
+      break
+    }
+    const afterIdx = m.index + m[0].length
+    if (afterIdx > scanEnd) {
+      break
+    }
+    // Ensure not followed by '//' (like https://)
+    if (masked.slice(afterIdx, afterIdx + 2) === '//') {
+      continue
+    }
+    matches.push({
+      name: m[1],
+      raw: m[0],
+      startIndex: m.index,
+      endIndex: afterIdx
+    })
+  }
+
+  return matches
+}
+
+/**
+ * Extracts unique `:param` variable names from a URL in order of appearance.
+ */
+export function extractPathParamKeys(url: string): string[] {
+  const tokens = findPathParamTokens(url)
+  const seen = new Set<string>()
+  const keys: string[] = []
+  for (const t of tokens) {
+    if (!seen.has(t.name)) {
+      seen.add(t.name)
+      keys.push(t.name)
+    }
+  }
+  return keys
+}
+
+/**
+ * Reconciles `:param` path variables extracted from URL with existing `path_params` array.
+ * Preserves existing values, enabled state, and descriptions for matching keys.
+ */
+export function reconcilePathParamsFromUrl(url: string, currentPathParams: KVPair[] = []): KVPair[] {
+  const keys = extractPathParamKeys(url)
+  if (keys.length === 0) {
+    return []
+  }
+
+  const existingByKey = new Map<string, KVPair>()
+  for (const item of currentPathParams || []) {
+    if (item && item.key && !existingByKey.has(item.key)) {
+      existingByKey.set(item.key, item)
+    }
+  }
+
+  return keys.map(key => {
+    const existing = existingByKey.get(key)
+    if (existing) {
+      return {
+        ...existing,
+        key,
+        value: existing.value ?? '',
+        enabled: existing.enabled !== undefined ? existing.enabled : true
+      }
+    }
+    return {
+      key,
+      value: '',
+      enabled: true
+    }
+  })
+}
+
+/**
+ * Substitutes `:param` tokens in `url` using enabled `pathParams` (or `fallbackVars` when pathParam value is empty).
+ */
+export function resolvePathParamsInUrl(
+  url: string,
+  pathParams: KVPair[] = [],
+  fallbackVars?: Map<string, string>
+): string {
+  if (!url) return ''
+  const tokens = findPathParamTokens(url)
+  if (tokens.length === 0) return url
+
+  const paramMap = new Map<string, { value: string; enabled: boolean }>()
+  for (const item of pathParams || []) {
+    if (item && item.key) {
+      paramMap.set(item.key, { value: item.value ?? '', enabled: item.enabled !== false })
+    }
+  }
+
+  let result = ''
+  let lastIndex = 0
+  for (const token of tokens) {
+    result += url.slice(lastIndex, token.startIndex)
+    const entry = paramMap.get(token.name)
+    let replacement: string | undefined
+    if (entry && entry.enabled && entry.value !== '') {
+      replacement = entry.value
+    } else if ((!entry || entry.enabled) && fallbackVars?.has(token.name)) {
+      replacement = fallbackVars.get(token.name)
+    }
+
+    if (replacement !== undefined) {
+      result += replacement
+    } else {
+      result += token.raw
+    }
+    lastIndex = token.endIndex
+  }
+  result += url.slice(lastIndex)
+  return result
+}
+

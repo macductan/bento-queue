@@ -3,17 +3,12 @@ import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
 import { useUiStore } from '@/stores/uiStore'
-import { useEnvironmentStore } from '@/stores/environmentStore'
-import { useCollectionStore } from '@/stores/collectionStore'
-import { generateCurlCommand, isCurlCommand, parseCurlCommand } from '@/utils/curl'
-import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
+import { isCurlCommand, parseCurlCommand } from '@/utils/curl'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const uiStore = useUiStore()
-const collectionStore = useCollectionStore()
-const envStore = useEnvironmentStore()
 
 const req = computed(() => requestStore.current)
 const urlInputRef = ref<HTMLTextAreaElement | null>(null)
@@ -174,63 +169,6 @@ const initResize = (el: any) => {
   }
 };
 
-const copyToClipboard = async (text: string): Promise<boolean> => {
-  if (navigator?.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text)
-      return true
-    } catch {
-      // Fallback to execCommand if clipboard API fails
-    }
-  }
-
-  try {
-    const textArea = document.createElement('textarea')
-    textArea.value = text
-    textArea.style.position = 'fixed'
-    textArea.style.opacity = '0'
-    document.body.appendChild(textArea)
-    textArea.focus()
-    textArea.select()
-    const successful = document.execCommand('copy')
-    document.body.removeChild(textArea)
-    return successful
-  } catch {
-    return false
-  }
-}
-
-const copyAsCurl = async () => {
-  if (!req.value) return
-  if (!req.value.url || req.value.url.trim() === '') {
-    responseStore.urlInvalid = true
-    uiStore.showToast('Vui lòng nhập URL')
-    return
-  }
-
-  const pathNodes = (collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []).filter(n => n.type === 'folder')
-  const vars = resolveHierarchyVariables({
-    collectionVariables: collectionStore.activeCollection?.variables,
-    activeEnvVariables: envStore.variablesMap,
-    pathFolders: pathNodes,
-    activeEnvId: envStore.activeEnvId
-  })
-
-  const curlCmd = generateCurlCommand(req.value, {
-    vars,
-    pathNodes,
-    activeEnvId: envStore.activeEnvId,
-    collection: collectionStore.activeCollection as any
-  })
-
-  const success = await copyToClipboard(curlCmd)
-  if (success) {
-    uiStore.showToast('Đã sao chép cURL vào clipboard')
-  } else {
-    uiStore.showToast('Không thể sao chép vào clipboard')
-  }
-}
-
 const onUrlPaste = (e: ClipboardEvent) => {
   if (!req.value) return
   const pasted = e.clipboardData?.getData('text/plain') || e.clipboardData?.getData('text') || ''
@@ -243,6 +181,9 @@ const onUrlPaste = (e: ClipboardEvent) => {
   req.value.method = parsed.method || 'GET'
   req.value.url = parsed.url
   req.value.params = parsed.params
+  if (parsed.path_params) {
+    req.value.path_params = parsed.path_params
+  }
   req.value.headers = parsed.headers
   req.value.body = {
     type: parsed.body.type,
@@ -339,8 +280,9 @@ const onUrlPaste = (e: ClipboardEvent) => {
         ref="highlighterRef"
         :wrap="true"
         :single-line="false"
+        :enable-path-params="true"
         :value="req.url" 
-                style="font-variant-ligatures: none;"
+        style="font-variant-ligatures: none;"
         overlay-class="px-3 pt-2 pb-3 font-mono text-sm w-full h-full"
       >
         <textarea
@@ -364,26 +306,11 @@ const onUrlPaste = (e: ClipboardEvent) => {
       </div>
     </div>
 
-    <!-- Copy as cURL Button -->
-    <button
-      type="button"
-      id="copy-curl-btn"
-      title="Copy as cURL"
-      aria-label="Copy as cURL"
-      class="h-full px-3 flex items-center justify-center gap-1.5 text-text-secondary hover:text-text-primary hover:bg-surface-hover border-l border-border-default outline-none focus-visible:ring-1 focus-visible:ring-brand-primary text-xs font-semibold shrink-0 transition-colors"
-      @click="copyAsCurl"
-    >
-      <svg class="w-3.5 h-3.5 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="4 17 10 11 4 5"></polyline>
-        <line x1="12" y1="19" x2="20" y2="19"></line>
-      </svg>
-      <span>cURL</span>
-    </button>
-
     <!-- Send/Abort Button -->
     <button
       v-if="responseStore.loading"
       type="button"
+      data-test="abort-request-btn"
       class="h-full px-4 py-2 flex items-center justify-center font-semibold shrink-0 rounded-r bg-error-bg text-error-text border-l border-error-border outline-none"
       @click="responseStore.abort"
     >
@@ -392,10 +319,16 @@ const onUrlPaste = (e: ClipboardEvent) => {
     <button
       v-else
       type="button"
-      class="h-full px-4 py-2 flex items-center justify-center bg-brand-primary text-white font-semibold shrink-0 rounded-r border-l border-brand-primary hover:opacity-90 outline-none"
+      data-test="send-request-btn"
+      title="Gửi (Ctrl+Enter)"
+      aria-label="Gửi"
+      class="h-full px-4 py-2 flex items-center justify-center bg-brand-primary text-white font-semibold shrink-0 rounded-r border-l border-brand-primary hover:opacity-90 outline-none cursor-pointer transition-opacity"
       @click="responseStore.send"
     >
-      Gửi
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+      </svg>
     </button>
   </div>
 </template>

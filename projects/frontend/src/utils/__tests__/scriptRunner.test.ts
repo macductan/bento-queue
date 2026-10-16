@@ -185,7 +185,62 @@ describe('scriptRunner', () => {
       expect(envStore.variablesMap.get('NONCE')).toBe('pre-123')
       expect(envStore.variablesMap.get('SAVED_TOKEN')).toBe('post-jwt-777')
       expect(responseStore.scriptLogs).toEqual(['[Pre-request] pre done', '[Post-response] post done'])
+      expect(responseStore.executionLogs.map(l => l.phase)).toEqual(['pre-request', 'http', 'post-response'])
+      expect(responseStore.executionLogs[1]?.detail?.statusCode).toBe(200)
       expect(responseStore.scriptError).toBeNull()
+    })
+
+    it('applies pre-request ha.request / pm.request mutations (query, pathParams, headers, body) to outgoing SendRequest', async () => {
+      const requestStore = useRequestStore()
+      const responseStore = useResponseStore()
+
+      let capturedExecReq: any = null
+      vi.mocked(AppBinding.SendRequest).mockImplementation((async (execReq: any) => {
+        capturedExecReq = execReq
+        return {
+          success: true,
+          data: {
+            status_code: 201,
+            status_text: '201 Created',
+            headers: {},
+            body: '{"ok":true}',
+            size_bytes: 11,
+            time_ms: 8,
+            timestamp: '2026-10-16T00:00:00Z',
+            truncated: false,
+            is_binary: false,
+          },
+        }
+      }) as any)
+
+      requestStore.current = {
+        id: 'req-mut-1',
+        name: 'Mutated Request',
+        method: 'POST',
+        url: 'https://api.example.com/v1/:api_key/orders',
+        headers: [],
+        params: [{ key: 'page', value: '1', enabled: true }],
+        path_params: [{ key: 'api_key', value: 'initial-key', enabled: true }],
+        body: { type: 'json', content: '{}' },
+        scripts: {
+          pre_request: `
+            pm.request.query.set('page', '5');
+            ha.request.pathParams.set('api_key', 'dynamic-key-99');
+            pm.request.headers.set('X-Request-Id', 'req-abc');
+            ha.request.body.set({ updated: true });
+          `,
+          post_response: '',
+        },
+        created_at: '2026-10-16',
+        updated_at: '2026-10-16',
+      }
+
+      await responseStore.send()
+
+      expect(capturedExecReq).toBeTruthy()
+      expect(capturedExecReq.url).toBe('https://api.example.com/v1/dynamic-key-99/orders?page=5')
+      expect(capturedExecReq.headers).toContainEqual({ key: 'X-Request-Id', value: 'req-abc', enabled: true })
+      expect(JSON.parse(capturedExecReq.body)).toEqual({ updated: true })
     })
   })
 })

@@ -867,6 +867,14 @@ func TestCollection_List(t *testing.T) {
 	}
 	collA := resA.Data.(model.Collection)
 
+	// Create hidden and .backup directories containing collection.json — should be ignored
+	hiddenDir := filepath.Join(collectionsRoot, ".hidden-coll")
+	fs.MakeDir(hiddenDir)
+	fs.WriteJSON(filepath.Join(hiddenDir, "collection.json"), model.Collection{ID: "hidden", Name: "Hidden"})
+	backupDir := filepath.Join(collectionsRoot, "default.backup-123456")
+	fs.MakeDir(backupDir)
+	fs.WriteJSON(filepath.Join(backupDir, "collection.json"), model.Collection{ID: "default", Name: "Backup"})
+
 	// List with active = collA.ID
 	resList := svc.ListCollections(collectionsRoot, collA.ID)
 	if !resList.Success {
