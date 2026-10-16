@@ -35,7 +35,7 @@ const selectedEnvScope = ref<string>(resolveDefaultEnvScope())
 const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
 const auth_envs = ref<Record<string, AuthConfig>>({})
-const activeTab = ref<'headers' | 'variables' | 'auth'>('headers')
+const activeTab = ref<'variables' | 'auth' | 'headers'>('variables')
 
 watch(selectedEnvScope, (scope) => {
   if (scope !== '__folder_global__' && !folder_envs.value[scope]) {
@@ -566,18 +566,18 @@ onBeforeUnmount(async () => {
       <div class="flex border-b border-border-default px-4 bg-surface-base" role="tablist">
         <button
           role="tab"
-          :aria-selected="activeTab === 'headers'"
-          @click="activeTab = 'headers'"
+          :aria-selected="activeTab === 'variables'"
+          @click="activeTab = 'variables'"
           class="flex items-center gap-2 px-4 h-10 border-b-2 outline-none font-medium ui-sm transition-colors"
-          :class="activeTab === 'headers' ? 'border-brand-primary text-blue-400' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'"
+          :class="activeTab === 'variables' ? 'border-brand-primary text-blue-400' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'"
         >
-          Headers
+          Variables
           <span 
-            v-if="headersCount > 0" 
+            v-if="totalVariablesCount > 0" 
             class="flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[9px] font-bold"
-            :class="activeTab === 'headers' ? 'bg-brand-primary text-white' : 'bg-surface-raised text-text-secondary'"
+            :class="activeTab === 'variables' ? 'bg-brand-primary text-white' : 'bg-surface-raised text-text-secondary'"
           >
-            {{ headersCount }}
+            {{ totalVariablesCount }}
           </span>
         </button>
         <button
@@ -598,32 +598,32 @@ onBeforeUnmount(async () => {
         </button>
         <button
           role="tab"
-          :aria-selected="activeTab === 'variables'"
-          @click="activeTab = 'variables'"
+          :aria-selected="activeTab === 'headers'"
+          @click="activeTab = 'headers'"
           class="flex items-center gap-2 px-4 h-10 border-b-2 outline-none font-medium ui-sm transition-colors"
-          :class="activeTab === 'variables' ? 'border-brand-primary text-blue-400' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'"
+          :class="activeTab === 'headers' ? 'border-brand-primary text-blue-400' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'"
         >
-          Variables
+          Headers
           <span 
-            v-if="totalVariablesCount > 0" 
+            v-if="headersCount > 0" 
             class="flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[9px] font-bold"
-            :class="activeTab === 'variables' ? 'bg-brand-primary text-white' : 'bg-surface-raised text-text-secondary'"
+            :class="activeTab === 'headers' ? 'bg-brand-primary text-white' : 'bg-surface-raised text-text-secondary'"
           >
-            {{ totalVariablesCount }}
+            {{ headersCount }}
           </span>
         </button>
       </div>
 
       <!-- Tab Content -->
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        <div v-show="activeTab === 'headers'">
+        <div v-show="activeTab === 'headers'" role="tabpanel">
           <DefaultHeadersTable :items="defaultHeaders" @toggle="toggleDefaultHeader" />
           <KvpEditor v-model="headers" />
         </div>
-        <div v-show="activeTab === 'auth'">
+        <div v-show="activeTab === 'auth'" role="tabpanel">
           <AuthEditor v-model="auth" v-model:authEnvs="auth_envs" :path-nodes="parentNodes" :is-folder="true" />
         </div>
-        <div v-show="activeTab === 'variables'" class="flex flex-col gap-3">
+        <div v-show="activeTab === 'variables'" role="tabpanel" class="flex flex-col gap-3">
           <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
             <div class="flex items-center gap-2">
               <label for="folder-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">

@@ -347,4 +347,41 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
 
     wrapper.unmount()
   })
+
+  it('scrolls tabs horizontally when mouse wheel events occur', async () => {
+    const tabStore = useTabStore()
+    tabStore.tabs = [
+      { id: 'request:req-1', entityId: 'req-1', type: 'request', name: 'Req 1', method: 'GET', isDirty: false },
+      { id: 'request:req-2', entityId: 'req-2', type: 'request', name: 'Req 2', method: 'GET', isDirty: false },
+      { id: 'request:req-3', entityId: 'req-3', type: 'request', name: 'Req 3', method: 'GET', isDirty: false }
+    ]
+    tabStore.activeTabId = 'request:req-1'
+
+    const wrapper = mount(AppTabBar, { attachTo: document.body })
+    await nextTick()
+
+    const tabBar = wrapper.find('[data-test="app-tab-bar"]')
+    expect(tabBar.exists()).toBe(true)
+    const el = tabBar.element as HTMLElement
+
+    // Mock scrollLeft, scrollWidth, clientWidth
+    let scrollLeft = 0
+    Object.defineProperty(el, 'scrollLeft', {
+      get: () => scrollLeft,
+      set: (val: number) => { scrollLeft = val },
+      configurable: true
+    })
+    Object.defineProperty(el, 'scrollWidth', { value: 1000, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: 400, configurable: true })
+
+    // Wheel event with deltaY and pixel mode (deltaMode = 0)
+    await tabBar.trigger('wheel', { deltaY: 60, deltaX: 0, deltaMode: 0 })
+    expect(el.scrollLeft).toBe(60)
+
+    // Wheel event with deltaMode = 1 (lines, e.g. 2 lines * 24px)
+    await tabBar.trigger('wheel', { deltaY: 2, deltaX: 0, deltaMode: 1 })
+    expect(el.scrollLeft).toBe(60 + 48)
+
+    wrapper.unmount()
+  })
 })

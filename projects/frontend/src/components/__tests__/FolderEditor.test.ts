@@ -651,6 +651,38 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     expect(popover?.textContent).toContain('Global Env (Dev)')
     expect(popover?.textContent).toContain('Collection Env (Dùng chung)')
   })
+
+  it('renders tabs in order Variables -> Auth -> Headers and defaults activeTab to variables', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    const vm = wrapper.vm as any
+    expect(vm.activeTab).toBe('variables')
+
+    const tabButtons = wrapper.findAll('div[role="tablist"] button[role="tab"]')
+    expect(tabButtons.length).toBe(3)
+    expect(tabButtons[0].text()).toContain('Variables')
+    expect(tabButtons[0].attributes('aria-selected')).toBe('true')
+    expect(tabButtons[1].text()).toContain('Auth')
+    expect(tabButtons[1].attributes('aria-selected')).toBe('false')
+    expect(tabButtons[2].text()).toContain('Headers')
+    expect(tabButtons[2].attributes('aria-selected')).toBe('false')
+
+    await tabButtons[1].trigger('click')
+    await nextTick()
+    expect(vm.activeTab).toBe('auth')
+    expect(tabButtons[1].attributes('aria-selected')).toBe('true')
+
+    await tabButtons[2].trigger('click')
+    await nextTick()
+    expect(vm.activeTab).toBe('headers')
+    expect(tabButtons[2].attributes('aria-selected')).toBe('true')
+  })
 })
 
 

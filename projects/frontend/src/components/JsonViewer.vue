@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import type { ExecuteResponse } from '@/stores/responseStore'
-import { isJsonContentType, tryParseJson, formatJsonHtml } from '@/utils/jsonHighlight'
+import { tryParseJson, formatJsonHtml } from '@/utils/jsonHighlight'
+import { tryParseXml, formatXmlHtml, escapeHtml } from '@/utils/xmlUtils'
 
 const props = defineProps<{
   response: ExecuteResponse
@@ -12,20 +13,11 @@ const hasRenderedPretty = ref(false)
 const prettyEl = ref<HTMLElement | null>(null)
 const rawEl = ref<HTMLElement | null>(null)
 
-
-const PRETTY_DEFAULT_MAX_BYTES = 15 * 1024 * 1024 // 15MB — xem Implementation Notes spec 3.8
-
-const isOversized = computed(() => props.response.size_bytes > PRETTY_DEFAULT_MAX_BYTES)
 const isValidJson = computed(() => tryParseJson(props.response.body))
+const isValidXml = computed(() => tryParseXml(props.response.body))
 
-watch(() => props.response, (newRes) => {
+watch(() => props.response, () => {
   hasRenderedPretty.value = false
-  if (!isOversized.value && isJsonContentType(newRes.headers) && isValidJson.value) {
-    // mode is now a prop: 'pretty'
-  } else {
-    // mode is now a prop: 'raw'
-  }
-  
   if (props.mode === 'pretty') {
     hasRenderedPretty.value = true
   }
@@ -40,10 +32,22 @@ watch(() => props.response, (newRes) => {
   })
 }, { immediate: true })
 
+watch(() => props.mode, (newMode) => {
+  if (newMode === 'pretty') {
+    hasRenderedPretty.value = true
+  }
+})
 
 const formatted = computed(() => {
   if (!hasRenderedPretty.value) return { html: '', lines: 0, lineNumbers: '' }
-  const res = formatJsonHtml(props.response.body)
+  let res: { html: string; lines: number }
+  if (isValidJson.value) {
+    res = formatJsonHtml(props.response.body)
+  } else if (isValidXml.value) {
+    res = formatXmlHtml(props.response.body)
+  } else {
+    res = { html: escapeHtml(props.response.body), lines: props.response.body.split('\n').length }
+  }
   const lineNumbers = Array.from({ length: res.lines }, (_, i) => i + 1).join('\n')
   return { ...res, lineNumbers }
 })

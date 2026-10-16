@@ -160,13 +160,13 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col p-4 overflow-y-auto">
+  <div class="h-full flex flex-col p-3 pb-2 overflow-y-auto">
     <div v-if="loading" class="animate-pulse space-y-4">
       <div class="h-8 bg-surface-hover rounded w-1/3"></div>
       <div class="h-10 bg-surface-hover rounded w-full"></div>
       <div class="h-32 bg-surface-hover rounded w-full"></div>
     </div>
-    <div v-else-if="req" class="flex-1 flex flex-col min-h-0 space-y-6">
+    <div v-else-if="req" class="flex-1 flex flex-col min-h-0 space-y-3">
       <!-- Name and Breadcrumb -->
       <div class="shrink-0">
         <div v-if="requestPath.length > 1" class="flex items-center gap-1.5 text-text-muted text-xs font-medium mb-1.5 opacity-80">
@@ -220,10 +220,10 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
       <WarningBanner />
 
       <!-- Request Tabs and Content -->
-      <div class="flex-1 flex flex-col min-h-0 mt-2">
+      <div class="flex-1 flex flex-col min-h-0">
         <RequestTabs />
         
-        <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-4 pb-4">
+        <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-2">
           <div v-show="uiStore.activeRequestTab === 'params'" role="tabpanel" id="panel-params" aria-labelledby="tab-params" class="space-y-5">
             <div class="space-y-2" data-test="query-params-section">
               <div class="flex items-center justify-between px-1">

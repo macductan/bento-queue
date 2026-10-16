@@ -9,6 +9,7 @@ import HeadersTable from './HeadersTable.vue'
 import { formatSize } from '@/utils/responseMeta'
 import { flattenHeaders } from '@/utils/responseHeaders'
 import { isJsonContentType, tryParseJson, formatJsonText } from '@/utils/jsonHighlight'
+import { isXmlContentType, tryParseXml, formatXmlText } from '@/utils/xmlUtils'
 import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
 import { useUiStore } from '@/stores/uiStore'
 
@@ -35,10 +36,11 @@ const copyStatus = ref<'idle' | 'copied'>('idle')
 const PRETTY_DEFAULT_MAX_BYTES = 15 * 1024 * 1024
 const isOversized = computed(() => (responseStore.response?.size_bytes || 0) > PRETTY_DEFAULT_MAX_BYTES)
 const isValidJson = computed(() => tryParseJson(responseStore.response?.body || ''))
-const canBePretty = computed(() => isValidJson.value)
+const isValidXml = computed(() => tryParseXml(responseStore.response?.body || ''))
+const canBePretty = computed(() => !isOversized.value && (isValidJson.value || isValidXml.value))
 
 watch(() => responseStore.response, (newRes: any) => {
-  if (newRes && !isOversized.value && isJsonContentType(newRes.headers) && isValidJson.value) {
+  if (newRes && canBePretty.value) {
     mode.value = 'pretty'
   } else {
     mode.value = 'raw'
@@ -49,7 +51,14 @@ const copyBody = async () => {
   const res = responseStore.response
   if (!res) return
   try {
-    const textToCopy = mode.value === 'pretty' ? formatJsonText(res.body) : res.body
+    let textToCopy = res.body
+    if (mode.value === 'pretty') {
+      if (isValidJson.value) {
+        textToCopy = formatJsonText(res.body)
+      } else if (isValidXml.value) {
+        textToCopy = formatXmlText(res.body)
+      }
+    }
     const success = await ClipboardSetText(textToCopy)
     if (success) {
       copyStatus.value = 'copied'
@@ -133,7 +142,7 @@ const levelBadgeClass = (level: string) => {
     <div v-else-if="responseStore.response || responseStore.error || logsCount > 0 || responseStore.scriptError" class="flex-1 flex flex-col overflow-hidden">
       
       <div class="flex items-center justify-between border-b border-border-default shrink-0 h-10 pr-4">
-        <!-- Left: Tabs + Format -->
+        <!-- Left: Tabs -->
         <div class="flex items-center h-full">
           <div class="flex h-full" role="tablist" aria-label="Response tabs">
             <button
@@ -197,55 +206,64 @@ const levelBadgeClass = (level: string) => {
               </span>
             </button>
           </div>
-          
-          <div v-if="activeTab === 'body' && responseStore.response && !isEmptyResponse && !isBinaryResponse" class="ml-4 flex items-center">
-            <div class="flex bg-surface-base border border-border-default rounded-md overflow-hidden" role="radiogroup" aria-label="View mode">
-              <button 
-                role="radio" 
-                :aria-checked="mode === 'pretty'"
-                @click="canBePretty && (mode = 'pretty')"
-                class="ui-xs px-[10px] py-[4px] min-h-[28px] min-w-[60px] transition-colors outline-none"
-                :class="[
-                  mode === 'pretty' ? 'bg-surface-overlay text-white' : 'text-text-secondary hover:text-text-primary',
-                  !canBePretty ? 'opacity-50 cursor-not-allowed' : ''
-                ]"
-                :disabled="!canBePretty"
-                :title="!isValidJson ? 'Không phải JSON hợp lệ' : ''"
-              >
-                Pretty
-              </button>
-              <div class="w-px bg-border-default"></div>
-              <button 
-                role="radio" 
-                :aria-checked="mode === 'raw'"
-                @click="mode = 'raw'"
-                class="ui-xs px-[10px] py-[4px] min-h-[28px] min-w-[60px] transition-colors outline-none"
-                :class="mode === 'raw' ? 'bg-surface-overlay text-white' : 'text-text-secondary hover:text-text-primary'"
-              >
-                Raw
-              </button>
-            </div>
+        </div>
+
+        <!-- Right: Meta -->
+        <div v-if="responseStore.response" class="flex items-center">
+          <ResponseMetaBar :response="responseStore.response" />
+        </div>
+      </div>
+
+      <!-- Sub-toolbar for Body Tab: Pretty/Raw & Copy -->
+      <div 
+        v-if="activeTab === 'body' && responseStore.response && !isEmptyResponse && !isBinaryResponse" 
+        data-test="response-body-subtoolbar"
+        class="flex items-center justify-between px-4 py-1.5 border-b border-border-default bg-surface-base/60 shrink-0 min-h-[36px]"
+      >
+        <!-- Left: Pretty | Raw -->
+        <div class="flex items-center gap-2">
+          <div class="flex bg-surface-base border border-border-default rounded-md overflow-hidden" role="radiogroup" aria-label="View mode">
+            <button 
+              role="radio" 
+              :aria-checked="mode === 'pretty'"
+              @click="canBePretty && (mode = 'pretty')"
+              class="ui-xs px-[10px] py-[4px] min-h-[26px] min-w-[56px] transition-colors outline-none"
+              :class="[
+                mode === 'pretty' ? 'bg-surface-overlay text-white' : 'text-text-secondary hover:text-text-primary',
+                !canBePretty ? 'opacity-50 cursor-not-allowed' : ''
+              ]"
+              :disabled="!canBePretty"
+              :title="!canBePretty ? 'Không phải JSON hoặc XML hợp lệ' : ''"
+            >
+              Pretty
+            </button>
+            <div class="w-px bg-border-default"></div>
+            <button 
+              role="radio" 
+              :aria-checked="mode === 'raw'"
+              @click="mode = 'raw'"
+              class="ui-xs px-[10px] py-[4px] min-h-[26px] min-w-[56px] transition-colors outline-none"
+              :class="mode === 'raw' ? 'bg-surface-overlay text-white' : 'text-text-secondary hover:text-text-primary'"
+            >
+              Raw
+            </button>
           </div>
         </div>
 
-        <!-- Right: Meta + Copy -->
-        <div v-if="responseStore.response" class="flex items-center gap-4">
-          <ResponseMetaBar :response="responseStore.response" />
-          
-          <button 
-            v-if="activeTab === 'body' && !isEmptyResponse && !isBinaryResponse"
-            @click="copyBody" 
-            class="flex items-center gap-2 ui-sm text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-hover outline-none"
-          >
-            <svg v-if="copyStatus === 'idle'" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z" />
-            </svg>
-            <svg v-else class="w-4 h-4 text-status-2xx" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z" />
-            </svg>
-            Sao chép
-          </button>
-        </div>
+        <!-- Right: Copy -->
+        <button 
+          data-test="copy-response-btn"
+          @click="copyBody" 
+          class="flex items-center gap-1.5 ui-xs text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-hover outline-none"
+        >
+          <svg v-if="copyStatus === 'idle'" class="w-3.5 h-3.5" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z" />
+          </svg>
+          <svg v-else class="w-3.5 h-3.5 text-status-2xx" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z" />
+          </svg>
+          Sao chép
+        </button>
       </div>
 
       <div class="flex-1 flex flex-col min-h-0 relative">

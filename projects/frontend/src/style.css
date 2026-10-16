@@ -310,3 +310,14 @@ body {
   -webkit-text-fill-color: var(--color-text-primary) !important;
 }
 
+/* Global utility to hide scrollbars while maintaining scrollability */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+

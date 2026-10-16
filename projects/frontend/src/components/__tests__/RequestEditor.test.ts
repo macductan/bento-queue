@@ -535,6 +535,21 @@ describe('RequestEditor.vue - Save State Indicator', () => {
     expect(errSpan.classes()).toContain('text-amber-400/70')
     expect(wrapper.html()).toContain('border-amber-500/40')
   })
+
+  it('applies compact vertical spacing classes to maximize Body Editor area', () => {
+    const store = useRequestStore()
+    store.current = createMockRequest()
+
+    const wrapper = mountEditor()
+    const root = wrapper.find('.h-full.flex.flex-col')
+    expect(root.classes()).toContain('p-3')
+    expect(root.classes()).toContain('pb-2')
+    expect(root.classes()).not.toContain('p-4')
+
+    const reqCol = wrapper.find('.flex-1.flex.flex-col.min-h-0')
+    expect(reqCol.classes()).toContain('space-y-3')
+    expect(reqCol.classes()).not.toContain('space-y-6')
+  })
 })
 
 

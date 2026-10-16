@@ -237,7 +237,7 @@ const initResize = (el: any) => {
           <VariableHighlighter
             :ref="el => { if (el) highlighterRefs[index] = el }"
             :value="row.value"
-            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent"
+            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent rounded"
           >
             <textarea 
               rows="1"
@@ -247,9 +247,10 @@ const initResize = (el: any) => {
               @compositionstart="ensureRealRow(index)"
               @input="e => { autoResize(e); onCellInput(index, 'value', e) }"
               @compositionend="e => { autoResize(e); onCellInput(index, 'value', e) }"
+              @paste="e => { nextTick(() => autoResize(e)) }"
               @scroll="e => highlighterRefs[index]?.syncScroll(e)"
               placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block"
+              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block whitespace-pre-wrap break-all"
               :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
               spellcheck="false"
               autocomplete="off"

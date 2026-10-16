@@ -42,6 +42,15 @@ const handleAuxClick = (e: MouseEvent, tabId: string) => {
     void tabStore.closeTab(tabId)
   }
 }
+
+const handleWheel = (e: WheelEvent) => {
+  const container = e.currentTarget as HTMLElement | null
+  if (!container || container.scrollWidth <= container.clientWidth) return
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+    const factor = e.deltaMode === 1 ? 24 : e.deltaMode === 2 ? container.clientWidth : 1
+    container.scrollLeft += e.deltaY * factor
+  }
+}
 </script>
 
 <template>
@@ -50,6 +59,7 @@ const handleAuxClick = (e: MouseEvent, tabId: string) => {
     data-test="app-tab-bar"
     role="tablist"
     aria-label="Danh sách các tab đang mở"
+    @wheel.passive="handleWheel"
     class="h-9 shrink-0 bg-surface-base border-b border-border-default flex items-center overflow-x-auto hide-scrollbar select-none"
   >
     <div
