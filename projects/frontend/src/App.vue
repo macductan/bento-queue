@@ -9,6 +9,7 @@ import TreeContextMenu from '@/components/TreeContextMenu.vue'
 import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import EnvModal from '@/components/environment/EnvModal.vue'
 import GitSyncModal from '@/components/GitSyncModal.vue'
+import GitConflictResolverModal from '@/components/GitConflictResolverModal.vue'
 import HistoryModal from '@/components/HistoryModal.vue'
 import MockServerModal from '@/components/MockServerModal.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
@@ -60,7 +61,7 @@ const handleWindowResize = () => {
 const handleKeyDown = (e: KeyboardEvent) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
     e.preventDefault()
-    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
+    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
       return
     }
     if (tabStore.activeTabId) {
@@ -69,7 +70,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
     return
   }
 
-  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
+  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
     return
   }
 
@@ -172,6 +173,7 @@ onUnmounted(() => {
     <UnsavedChangesDialog />
     <EnvModal />
     <GitSyncModal />
+    <GitConflictResolverModal />
     <HistoryModal />
     <MockServerModal />
   </div>

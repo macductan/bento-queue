@@ -162,15 +162,37 @@ type Collection struct {
 	UpdatedAt    time.Time              `json:"updated_at"`
 }
 
+// GitFieldConflict biểu diễn xung đột trên một trường cụ thể, một trường con trong JSON body, hoặc một phần tử KVPair khi cả OURS và THEIRS cùng sửa khác nhau so với BASE.
+type GitFieldConflict struct {
+	FieldPath   string      `json:"field_path"`             // VD: "url", "method", "body.content.userId", "headers.Authorization#0", "variables.API_URL#0"
+	Label       string      `json:"label"`                  // Nhãn hiển thị thân thiện trên UI (VD: "URL", "Body JSON: userId", "Header: Authorization")
+	BaseValue   interface{} `json:"base_value,omitempty"`   // Giá trị tại commit tổ tiên chung (:1:), nil nếu mới thêm ở cả 2 bên
+	OursValue   interface{} `json:"ours_value,omitempty"`   // Giá trị bản của bạn (Local)
+	TheirsValue interface{} `json:"theirs_value,omitempty"` // Giá trị bản từ xa (Remote)
+}
+
+// GitFileConflict biểu diễn trạng thái xung đột của một file JSON trong Collection sau khi đã chạy bước 3-Way Auto-Merge.
+type GitFileConflict struct {
+	FilePath      string                 `json:"file_path"`                // Đường dẫn tương đối từ gốc Collection (VD: "users/123e4567.json", "_folder.json", "environments/dev.json")
+	EntityType    string                 `json:"entity_type"`              // "request" | "folder" | "environment" | "collection" | "raw"
+	EntityName    string                 `json:"entity_name"`              // Tên hiển thị của Request / Folder / Environment
+	ConflictType  string                 `json:"conflict_type"`            // "field_conflict" | "delete_edit" (Local xoá, Remote sửa) | "edit_delete" (Local sửa, Remote xoá)
+	Fields        []GitFieldConflict     `json:"fields,omitempty"`         // Danh sách các trường bị xung đột thực sự
+	MergedPreview map[string]interface{} `json:"merged_preview,omitempty"` // Bản JSON đã tự động gộp các trường KHÔNG xung đột (tạm giữ giá trị Ours cho các trường đang xung đột làm nền để Frontend cập nhật theo lựa chọn của user)
+	OursData      map[string]interface{} `json:"ours_data,omitempty"`      // Toàn bộ JSON object của bản Local
+	TheirsData    map[string]interface{} `json:"theirs_data,omitempty"`    // Toàn bộ JSON object của bản Remote
+}
+
 // GitSyncStatus represents the current Git synchronization status for a collection.
 type GitSyncStatus struct {
-	HasGitRepo    bool     `json:"has_git_repo"`
-	RemoteURL     string   `json:"remote_url"`
-	Branch        string   `json:"branch"`
-	HasChanges    bool     `json:"has_changes"`
-	HasConflicts  bool     `json:"has_conflicts"`
-	ConflictFiles []string `json:"conflict_files,omitempty"`
-	Output        string   `json:"output,omitempty"`
+	HasGitRepo    bool              `json:"has_git_repo"`
+	RemoteURL     string            `json:"remote_url"`
+	Branch        string            `json:"branch"`
+	HasChanges    bool              `json:"has_changes"`
+	HasConflicts  bool              `json:"has_conflicts"`
+	ConflictFiles []string          `json:"conflict_files,omitempty"`
+	Conflicts     []GitFileConflict `json:"conflicts,omitempty"`
+	Output        string            `json:"output,omitempty"`
 }
 
 // ExecuteRequest is the data sent from Vue to Go for HTTP execution (AD-1).

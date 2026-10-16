@@ -295,40 +295,48 @@ func (s *GitSyncService) getCurrentBranch(collDir string) string {
 }
 
 func (s *GitSyncService) getConflictFiles(collDir string) []string {
+	seen := make(map[string]bool)
+	var files []string
+	addFile := func(f string) {
+		clean := strings.TrimSpace(filepath.ToSlash(f))
+		if clean != "" && !seen[clean] {
+			seen[clean] = true
+			files = append(files, clean)
+		}
+	}
+
 	out, err := s.runGit(collDir, "diff", "--name-only", "--diff-filter=U")
 	if err == nil && strings.TrimSpace(out) != "" {
-		lines := strings.Split(strings.TrimSpace(out), "\n")
-		files := make([]string, 0, len(lines))
-		for _, l := range lines {
-			trimmed := strings.TrimSpace(l)
-			if trimmed != "" {
-				files = append(files, trimmed)
-			}
-		}
-		if len(files) > 0 {
-			return files
+		for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+			addFile(l)
 		}
 	}
 
 	// Fallback check on git status --porcelain for unmerged prefixes
-	statusOut, err := s.runGit(collDir, "status", "--porcelain")
-	if err != nil || strings.TrimSpace(statusOut) == "" {
-		return nil
-	}
-	var conflictFiles []string
-	for _, line := range strings.Split(statusOut, "\n") {
-		if len(line) < 3 {
-			continue
-		}
-		prefix := line[:2]
-		if prefix == "UU" || prefix == "AA" || prefix == "DD" || prefix == "AU" || prefix == "UA" || prefix == "DU" || prefix == "UD" {
-			file := strings.TrimSpace(line[3:])
-			if file != "" {
-				conflictFiles = append(conflictFiles, file)
+	if len(files) == 0 {
+		statusOut, err := s.runGit(collDir, "status", "--porcelain")
+		if err == nil && strings.TrimSpace(statusOut) != "" {
+			for _, line := range strings.Split(statusOut, "\n") {
+				if len(line) < 3 {
+					continue
+				}
+				prefix := line[:2]
+				if prefix == "UU" || prefix == "AA" || prefix == "DD" || prefix == "AU" || prefix == "UA" || prefix == "DU" || prefix == "UD" {
+					addFile(line[3:])
+				}
 			}
 		}
 	}
-	return conflictFiles
+
+	// Include untracked stash pop collision files if HECTO_STASH_CONFLICT exists
+	if s.isStashConflict(collDir) {
+		_, extraFiles := s.readStashConflictMarker(collDir)
+		for _, f := range extraFiles {
+			addFile(f)
+		}
+	}
+
+	return files
 }
 
 func (s *GitSyncService) inspectStatus(collDir string, configuredRemote string) model.GitSyncStatus {
@@ -358,6 +366,18 @@ func (s *GitSyncService) inspectStatus(collDir string, configuredRemote string) 
 	if len(conflicts) > 0 {
 		status.HasConflicts = true
 		status.ConflictFiles = conflicts
+		isStash := s.isStashConflict(collDir)
+		var localColl model.Collection
+		var localCollPtr *model.Collection
+		if err := s.fs.ReadJSON(filepath.Join(collDir, collectionFileName), &localColl); err == nil {
+			localCollPtr = &localColl
+		}
+		detailedConflicts := make([]model.GitFileConflict, 0, len(conflicts))
+		for _, f := range conflicts {
+			fc, _ := s.buildFileConflict(collDir, f, localCollPtr, status.RemoteURL, isStash)
+			detailedConflicts = append(detailedConflicts, fc)
+		}
+		status.Conflicts = detailedConflicts
 	}
 
 	return status
@@ -406,7 +426,7 @@ func (s *GitSyncService) GetStatus(collectionsRoot, collectionID string) model.R
 	return model.NewSuccess(status)
 }
 
-// Pull executes git pull inside the collection folder and reports any merge conflicts clearly for manual resolution.
+// Pull executes git pull inside the collection folder, runs 3-Way JSON Auto-Merge, and reports any remaining merge conflicts for resolution.
 func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result {
 	s.logger.Info("GitSyncService.Pull called", "collectionID", collectionID)
 
@@ -429,17 +449,21 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result
 		return model.NewError(model.ErrGitError, err.Error())
 	}
 
-	// Auto-resolve if only collection.json was previously left in conflict
+	// Attempt 3-Way Auto-Merge if conflicts were previously left in the working tree
 	if existingConflicts := s.getConflictFiles(collDir); len(existingConflicts) > 0 {
-		s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, remoteURL)
-		if remaining := s.getConflictFiles(collDir); len(remaining) > 0 {
+		unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, remoteURL, s.isStashConflict(collDir))
+		if !allResolved || len(unresolved) > 0 {
 			status := s.inspectStatus(collDir, remoteURL)
+			if len(unresolved) > 0 {
+				status.Conflicts = unresolved
+			}
+			remaining := s.getConflictFiles(collDir)
 			return model.Result{
 				Success: false,
 				Data:    status,
 				Error: &model.AppError{
 					Code:    model.ErrGitConflict,
-					Message: fmt.Sprintf("Phát hiện xung đột Git (Merge Conflict) chưa được xử lý tại: %s. Vui lòng mở thư mục Collection và xử lý conflict thủ công.", strings.Join(remaining, ", ")),
+					Message: fmt.Sprintf("Phát hiện xung đột Git (Merge Conflict) chưa được xử lý tại: %s. Vui lòng giải quyết xung đột trước khi tiếp tục.", strings.Join(remaining, ", ")),
 				},
 			}
 		}
@@ -466,9 +490,9 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result
 	}
 
 	pullOut, pullErr := s.runGit(collDir, "pull", "--no-rebase", "--no-edit", "--allow-unrelated-histories", "origin", targetBranch)
-	resolved := s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, remoteURL)
+	unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, remoteURL, false)
 	conflicts := s.getConflictFiles(collDir)
-	if len(conflicts) > 0 || (pullErr != nil && strings.Contains(pullOut, "CONFLICT") && !resolved) {
+	if len(conflicts) > 0 || len(unresolved) > 0 || (pullErr != nil && strings.Contains(pullOut, "CONFLICT") && !allResolved) {
 		if s.fs != nil {
 			_ = s.fs.IndexRebuild(collDir)
 		}
@@ -476,6 +500,9 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result
 		status.HasConflicts = true
 		if len(conflicts) > 0 {
 			status.ConflictFiles = conflicts
+		}
+		if len(unresolved) > 0 {
+			status.Conflicts = unresolved
 		}
 		status.Output = pullOut
 		conflictList := strings.Join(status.ConflictFiles, ", ")
@@ -487,7 +514,7 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result
 			Data:    status,
 			Error: &model.AppError{
 				Code:    model.ErrGitConflict,
-				Message: fmt.Sprintf("Xung đột Git (Merge Conflict) khi Pull tại: %s. Vui lòng mở thư mục Collection và xử lý conflict thủ công bằng Git.", conflictList),
+				Message: fmt.Sprintf("Xung đột Git (Merge Conflict) khi Pull tại: %s. Vui lòng chọn phương án giải quyết xung đột.", conflictList),
 			},
 		}
 	}
@@ -565,10 +592,11 @@ func (s *GitSyncService) ClearAndPull(collectionsRoot, collectionID string, remo
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể kết nối tới Git Remote khi fetch: %s", fetchOut))
 	}
 
-	// Abort any ongoing merge before hard reset
+	// Abort any ongoing merge or stash conflict before hard reset
 	if s.fs.Exists(filepath.Join(collDir, ".git", "MERGE_HEAD")) {
 		_, _ = s.runGit(collDir, "merge", "--abort")
 	}
+	s.clearStashConflictMarker(collDir)
 
 	// Discard local working tree changes and untracked files when HEAD exists
 	if _, headErr := s.runGit(collDir, "rev-parse", "--verify", "HEAD"); headErr == nil {
@@ -620,7 +648,7 @@ func (s *GitSyncService) ClearAndPull(collectionsRoot, collectionID string, remo
 }
 
 // StashAndPull saves the remote URL, stashes local changes, pulls from origin/<branch> with --allow-unrelated-histories,
-// pops the stash, and reports ErrGitConflict with conflict files if any conflicts arise.
+// pops the stash, runs 3-Way JSON Auto-Merge, and reports ErrGitConflict with conflict details if any conflicts remain.
 func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remoteURL ...string) model.Result {
 	s.logger.Info("GitSyncService.StashAndPull called", "collectionID", collectionID)
 
@@ -647,13 +675,32 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 		return model.NewError(model.ErrGitError, err.Error())
 	}
 
+	if existingConflicts := s.getConflictFiles(collDir); len(existingConflicts) > 0 {
+		unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, targetRemote, s.isStashConflict(collDir))
+		if !allResolved || len(unresolved) > 0 {
+			status := s.inspectStatus(collDir, targetRemote)
+			if len(unresolved) > 0 {
+				status.Conflicts = unresolved
+			}
+			remaining := s.getConflictFiles(collDir)
+			return model.Result{
+				Success: false,
+				Data:    status,
+				Error: &model.AppError{
+					Code:    model.ErrGitConflict,
+					Message: fmt.Sprintf("Phát hiện xung đột Git (Merge Conflict) chưa được xử lý tại: %s. Vui lòng giải quyết xung đột trước khi tiếp tục.", strings.Join(remaining, ", ")),
+				},
+			}
+		}
+	}
+
 	// Ensure at least an initial commit exists before git stash push -u (git stash requires HEAD)
 	if _, headErr := s.runGit(collDir, "rev-parse", "--verify", "HEAD"); headErr != nil {
 		_, _ = s.runGit(collDir, "commit", "--allow-empty", "-m", "chore(hecto): initial commit")
 	}
 
 	restoreCollectionMeta := func() {
-		s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, targetRemote)
+		s.ensureCollectionMetaConsistent(metaPath, coll, targetRemote)
 	}
 
 	// Prevent collection.json metadata edit from colliding during stash/pull/pop
@@ -663,9 +710,11 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 		_, _ = s.runGit(collDir, "checkout", "HEAD", "--", "collection.json")
 	}
 
+	prePullHead, _ := s.runGit(collDir, "rev-parse", "--verify", "HEAD")
+
 	stashed := false
 	if porcelain, err := s.runGit(collDir, "status", "--porcelain"); err == nil && strings.TrimSpace(porcelain) != "" {
-		stashOut, stashErr := s.runGit(collDir, "stash", "push", "-u", "-m", "hecto-stash-before-pull")
+		stashOut, stashErr := s.runGit(collDir, "stash", "push", "-u", "-m", hectoStashMessage)
 		if stashErr != nil {
 			restoreCollectionMeta()
 			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể git stash trước khi pull: %s", stashOut))
@@ -688,14 +737,15 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 	var pullErr error
 	if hasRemoteBranch {
 		combinedOut, pullErr = s.runGit(collDir, "pull", "--no-rebase", "--no-edit", "--allow-unrelated-histories", "origin", targetBranch)
-		s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, targetRemote)
+		s.processConflictsAndAutoMerge(collDir, metaPath, coll, targetRemote, false)
 	} else {
 		combinedOut = "Remote repository chưa có nhánh nào để pull."
 	}
 
 	var popOut string
 	var popErr error
-	if stashed {
+	var extraStashConflictFiles []string
+	if stashed && len(s.getConflictFiles(collDir)) == 0 && !s.fs.Exists(filepath.Join(collDir, ".git", "MERGE_HEAD")) {
 		popOut, popErr = s.runGit(collDir, "stash", "pop")
 		if popOut != "" {
 			if combinedOut != "" {
@@ -704,21 +754,30 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 				combinedOut = popOut
 			}
 		}
-	}
-
-	resolved := s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, targetRemote)
-	conflicts := s.getConflictFiles(collDir)
-	if popErr != nil && strings.Contains(popOut, "already exists, no checkout") {
-		for _, line := range strings.Split(popOut, "\n") {
-			if idx := strings.Index(line, " already exists, no checkout"); idx > 0 {
-				file := strings.TrimSpace(line[:idx])
-				if file != "" && file != collectionFileName {
-					conflicts = append(conflicts, file)
+		if popErr != nil && strings.Contains(popOut, "already exists, no checkout") {
+			for _, line := range strings.Split(popOut, "\n") {
+				if idx := strings.Index(line, " already exists, no checkout"); idx > 0 {
+					file := strings.TrimSpace(line[:idx])
+					if file != "" && file != collectionFileName {
+						extraStashConflictFiles = append(extraStashConflictFiles, file)
+					}
 				}
 			}
 		}
 	}
-	if len(conflicts) > 0 || (!resolved && ((pullErr != nil && strings.Contains(combinedOut, "CONFLICT")) || (popErr != nil && strings.Contains(popOut, "CONFLICT")))) {
+
+	stashPopConflicted := stashed && !s.fs.Exists(filepath.Join(collDir, ".git", "MERGE_HEAD")) &&
+		(len(s.getConflictFiles(collDir)) > 0 || len(extraStashConflictFiles) > 0 || (popErr != nil && strings.Contains(popOut, "CONFLICT")))
+
+	if stashPopConflicted {
+		s.writeStashConflictMarker(collDir, prePullHead, extraStashConflictFiles)
+	}
+
+	unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, targetRemote, stashPopConflicted)
+	s.ensureCollectionMetaConsistent(metaPath, coll, targetRemote)
+
+	conflicts := s.getConflictFiles(collDir)
+	if len(conflicts) > 0 || len(unresolved) > 0 || (!allResolved && ((pullErr != nil && strings.Contains(combinedOut, "CONFLICT")) || (popErr != nil && strings.Contains(popOut, "CONFLICT")))) {
 		if s.fs != nil {
 			_ = s.fs.IndexRebuild(collDir)
 		}
@@ -726,6 +785,9 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 		status.HasConflicts = true
 		if len(conflicts) > 0 {
 			status.ConflictFiles = conflicts
+		}
+		if len(unresolved) > 0 {
+			status.Conflicts = unresolved
 		}
 		status.Output = combinedOut
 		conflictList := strings.Join(status.ConflictFiles, ", ")
@@ -737,7 +799,7 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 			Data:    status,
 			Error: &model.AppError{
 				Code:    model.ErrGitConflict,
-				Message: fmt.Sprintf("Xung đột Git (Merge Conflict) khi Stash & Pull tại: %s. Vui lòng mở thư mục Collection và xử lý conflict thủ công bằng Git.", conflictList),
+				Message: fmt.Sprintf("Xung đột Git (Merge Conflict) khi Stash & Pull tại: %s. Vui lòng chọn phương án giải quyết xung đột.", conflictList),
 			},
 		}
 	}
@@ -745,7 +807,7 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 	if pullErr != nil && !strings.Contains(combinedOut, "CONFLICT") {
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Lỗi khi thực thi git pull: %s", combinedOut))
 	}
-	if popErr != nil && !strings.Contains(popOut, "CONFLICT") {
+	if popErr != nil && !strings.Contains(popOut, "CONFLICT") && len(extraStashConflictFiles) == 0 {
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Lỗi khi thực thi git stash pop: %s", popOut))
 	}
 
@@ -835,17 +897,21 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 		return model.NewError(model.ErrGitError, err.Error())
 	}
 
-	// Auto-resolve if only collection.json was previously left in conflict
+	// Attempt 3-Way Auto-Merge if conflicts were previously left in the working tree
 	if existingConflicts := s.getConflictFiles(collDir); len(existingConflicts) > 0 {
-		s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, remoteURL)
-		if remaining := s.getConflictFiles(collDir); len(remaining) > 0 {
+		unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, remoteURL, s.isStashConflict(collDir))
+		if !allResolved || len(unresolved) > 0 {
 			status := s.inspectStatus(collDir, remoteURL)
+			if len(unresolved) > 0 {
+				status.Conflicts = unresolved
+			}
+			remaining := s.getConflictFiles(collDir)
 			return model.Result{
 				Success: false,
 				Data:    status,
 				Error: &model.AppError{
 					Code:    model.ErrGitConflict,
-					Message: fmt.Sprintf("Không thể Push khi còn xung đột Git (Merge Conflict) tại: %s. Vui lòng xử lý conflict thủ công trước.", strings.Join(remaining, ", ")),
+					Message: fmt.Sprintf("Không thể Push khi còn xung đột Git (Merge Conflict) tại: %s. Vui lòng giải quyết xung đột trước.", strings.Join(remaining, ", ")),
 				},
 			}
 		}
@@ -895,7 +961,7 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 	pushOut, pushErr := s.runGit(collDir, "push", "-u", "origin", refSpec)
 	if pushErr != nil {
 		if strings.Contains(pushOut, "rejected") || strings.Contains(pushOut, "fetch first") || strings.Contains(pushOut, "non-fast-forward") {
-			// Auto-fetch and attempt to merge unrelated/upstream changes (e.g. README.md or non-conflicting commits on remote)
+			// Auto-fetch and attempt 3-Way JSON Auto-Merge on upstream changes
 			if _, fetchErr := s.runGit(collDir, "fetch", "--prune", "origin"); fetchErr == nil {
 				remoteBranch := targetBranch
 				if _, revErr := s.runGit(collDir, "rev-parse", "--verify", "origin/"+remoteBranch); revErr != nil {
@@ -907,14 +973,21 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 				}
 				if remoteBranch != "" {
 					mergeOut, mergeErr := s.runGit(collDir, "merge", "--no-edit", "--allow-unrelated-histories", "origin/"+remoteBranch)
-					resolved := s.autoResolveCollectionMetaConflict(collDir, metaPath, coll, remoteURL)
+					unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, remoteURL, false)
 					conflicts := s.getConflictFiles(collDir)
-					if len(conflicts) > 0 || (mergeErr != nil && strings.Contains(mergeOut, "CONFLICT") && !resolved) {
-						_, _ = s.runGit(collDir, "merge", "--abort")
+					if len(conflicts) > 0 || len(unresolved) > 0 || (mergeErr != nil && strings.Contains(mergeOut, "CONFLICT") && !allResolved) {
+						if s.fs != nil {
+							_ = s.fs.IndexRebuild(collDir)
+						}
 						status := s.inspectStatus(collDir, remoteURL)
 						status.HasConflicts = true
-						status.ConflictFiles = conflicts
-						conflictList := strings.Join(conflicts, ", ")
+						if len(conflicts) > 0 {
+							status.ConflictFiles = conflicts
+						}
+						if len(unresolved) > 0 {
+							status.Conflicts = unresolved
+						}
+						conflictList := strings.Join(status.ConflictFiles, ", ")
 						if conflictList == "" {
 							conflictList = "các file trong collection"
 						}
@@ -923,11 +996,11 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 							Data:    status,
 							Error: &model.AppError{
 								Code:    model.ErrGitConflict,
-								Message: fmt.Sprintf("Không thể Push do Remote có thay đổi xung đột tại: %s. Vui lòng thực hiện Git Pull và xử lý xung đột trước khi Push.", conflictList),
+								Message: fmt.Sprintf("Không thể Push do Remote có thay đổi xung đột tại: %s. Vui lòng chọn phương án giải quyết xung đột.", conflictList),
 							},
 						}
 					}
-					if mergeErr == nil || resolved {
+					if mergeErr == nil || allResolved {
 						if targetBranch != currentBranch {
 							_, _ = s.runGit(collDir, "branch", "-f", targetBranch, "HEAD")
 						}

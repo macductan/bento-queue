@@ -571,6 +571,36 @@ func (a *App) GitPushCollection(collectionID string) model.Result {
 	return a.GitPushCollectionToBranch(collectionID, "")
 }
 
+// ResolveGitConflict writes user-resolved conflict files, stages them, completes the merge commit, and rebuilds the index.
+func (a *App) ResolveGitConflict(collectionID string, resolvedFiles map[string]interface{}) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	res := a.gitSyncSvc.ResolveConflict(cRoot, id, resolvedFiles)
+	if res.Success {
+		a.mu.RLock()
+		root := a.collRoot
+		a.mu.RUnlock()
+		if root != "" {
+			_ = a.fs.IndexRebuild(root)
+		}
+	}
+	return res
+}
+
+// AbortGitMerge aborts an in-progress git merge or stash conflict and restores the collection to its pre-pull state.
+func (a *App) AbortGitMerge(collectionID string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	res := a.gitSyncSvc.AbortMerge(cRoot, id)
+	if res.Success {
+		a.mu.RLock()
+		root := a.collRoot
+		a.mu.RUnlock()
+		if root != "" {
+			_ = a.fs.IndexRebuild(root)
+		}
+	}
+	return res
+}
+
 // ListExecutionHistory returns execution history entries for the active collection.
 func (a *App) ListExecutionHistory() model.Result {
 	a.mu.RLock()
