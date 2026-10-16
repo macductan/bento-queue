@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,9 +40,35 @@ type postmanHeader struct {
 	Disabled bool   `json:"disabled,omitempty"`
 }
 
+type postmanBodyOptionsRaw struct {
+	Language string `json:"language"`
+}
+
+type postmanBodyOptions struct {
+	Raw *postmanBodyOptionsRaw `json:"raw,omitempty"`
+}
+
+type postmanFormDataParam struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Disabled    bool   `json:"disabled,omitempty"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"`
+}
+
+type postmanUrlencodedParam struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Disabled    bool   `json:"disabled,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 type postmanBody struct {
-	Mode string `json:"mode"`
-	Raw  string `json:"raw"`
+	Mode       string                   `json:"mode"`
+	Raw        string                   `json:"raw"`
+	Options    *postmanBodyOptions      `json:"options,omitempty"`
+	Urlencoded []postmanUrlencodedParam `json:"urlencoded,omitempty"`
+	FormData   []postmanFormDataParam   `json:"formdata,omitempty"`
 }
 
 type postmanAuthParam struct {
@@ -333,17 +360,7 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 			}
 		}
 
-		body := model.Body{Type: "none", Content: ""}
-		if item.Request.Body != nil {
-			if item.Request.Body.Mode == "raw" || (item.Request.Body.Mode == "" && item.Request.Body.Raw != "") {
-				body.Type = "raw"
-				body.Content = item.Request.Body.Raw
-			} else if item.Request.Body.Mode != "" {
-				s.logger.Warn("Unsupported postman body mode converted to raw", "mode", item.Request.Body.Mode)
-				body.Type = "raw"
-				body.Content = "" 
-			}
-		}
+		body := parsePostmanBody(item.Request.Body, item.Request.Header, s.logger)
 
 		reqMeta := model.Request{
 			ID:        reqID,
@@ -384,3 +401,144 @@ func (s *ImporterService) processItem(currentDir string, item postmanItem, inher
 
 	return count, firstReqID
 }
+
+func isLikelyXML(s string) bool {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "<") {
+		return false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(s))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		if _, ok := token.(xml.StartElement); ok {
+			return true
+		}
+	}
+}
+
+func parsePostmanBody(pBody *postmanBody, headers []postmanHeader, logger *slog.Logger) model.Body {
+	if pBody == nil {
+		return model.Body{Type: "none", Content: ""}
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(pBody.Mode))
+
+	switch mode {
+	case "urlencoded":
+		var urlencoded []model.KVPair
+		for _, p := range pBody.Urlencoded {
+			urlencoded = append(urlencoded, model.KVPair{
+				Key:         p.Key,
+				Value:       p.Value,
+				Enabled:     !p.Disabled,
+				Description: p.Description,
+			})
+		}
+		return model.Body{
+			Type:       "urlencoded",
+			Content:    "",
+			URLEncoded: urlencoded,
+		}
+
+	case "formdata":
+		var formData []model.KVPair
+		for _, p := range pBody.FormData {
+			formData = append(formData, model.KVPair{
+				Key:         p.Key,
+				Value:       p.Value,
+				Enabled:     !p.Disabled,
+				Description: p.Description,
+			})
+		}
+		return model.Body{
+			Type:     "formdata",
+			Content:  "",
+			FormData: formData,
+		}
+
+	case "raw", "":
+		if mode == "" && pBody.Raw == "" && len(pBody.Urlencoded) == 0 && len(pBody.FormData) == 0 {
+			return model.Body{Type: "none", Content: ""}
+		}
+
+		rawContent := pBody.Raw
+		detectedType := ""
+
+		// 1. Check item.Request.Body.Options.Raw.Language
+		if pBody.Options != nil && pBody.Options.Raw != nil {
+			lang := strings.ToLower(strings.TrimSpace(pBody.Options.Raw.Language))
+			switch lang {
+			case "json":
+				detectedType = "json"
+			case "xml":
+				detectedType = "xml"
+			case "text":
+				detectedType = "text"
+			}
+		}
+
+		// 2. Check Content-Type header in request
+		if detectedType == "" {
+			for _, h := range headers {
+				if strings.EqualFold(h.Key, "Content-Type") {
+					ct := strings.ToLower(h.Value)
+					if strings.Contains(ct, "application/json") || strings.Contains(ct, "+json") {
+						detectedType = "json"
+						break
+					} else if strings.Contains(ct, "application/xml") || strings.Contains(ct, "text/xml") || strings.Contains(ct, "+xml") {
+						detectedType = "xml"
+						break
+					} else if strings.Contains(ct, "text/plain") {
+						detectedType = "text"
+						break
+					}
+				}
+			}
+		}
+
+		// 3. Sniffing content fallback
+		if detectedType == "" {
+			trimmed := strings.TrimSpace(rawContent)
+			if trimmed != "" {
+				if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(trimmed)) {
+					detectedType = "json"
+				} else if strings.HasPrefix(trimmed, "<") && isLikelyXML(trimmed) {
+					detectedType = "xml"
+				} else {
+					detectedType = "text"
+				}
+			} else {
+				detectedType = "text"
+			}
+		}
+
+		return model.Body{
+			Type:    detectedType,
+			Content: rawContent,
+		}
+
+	case "none":
+		return model.Body{Type: "none", Content: ""}
+
+	default:
+		if logger != nil {
+			logger.Warn("Unsupported postman body mode converted to text", "mode", pBody.Mode)
+		}
+		rawContent := pBody.Raw
+		detectedType := "text"
+		trimmed := strings.TrimSpace(rawContent)
+		if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && json.Valid([]byte(trimmed)) {
+			detectedType = "json"
+		} else if strings.HasPrefix(trimmed, "<") && isLikelyXML(trimmed) {
+			detectedType = "xml"
+		}
+		return model.Body{
+			Type:    detectedType,
+			Content: rawContent,
+		}
+	}
+}
+

@@ -136,4 +136,44 @@ describe('BodyEditor.vue', () => {
 </root>`
     )
   })
+
+  it('auto-indents on Enter and toggles comments with Ctrl+/ in JSON mode', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = {
+      id: 'req-json',
+      name: 'JSON Test',
+      method: 'POST',
+      url: 'https://api.example.com',
+      headers: [],
+      params: [],
+      body: {
+        type: 'json',
+        content: '{\n  "name": "hecto"\n}'
+      },
+      created_at: '',
+      updated_at: ''
+    } as any
+
+    const wrapper = mount(BodyEditor)
+    await nextTick()
+
+    const textarea = wrapper.find('textarea')
+    const el = textarea.element as HTMLTextAreaElement
+
+    // Test Ctrl+/ comment toggle
+    el.selectionStart = 4
+    el.selectionEnd = 15
+    await textarea.trigger('keydown', { key: '/', ctrlKey: true })
+    await nextTick()
+
+    expect(reqStore.current?.body?.content).toContain('// "name": "hecto"')
+
+    // Test Enter auto-indent
+    const contentLen = reqStore.current?.body?.content?.length || 0
+    el.selectionStart = el.selectionEnd = contentLen - 2
+    await textarea.trigger('keydown', { key: 'Enter' })
+    await nextTick()
+
+    expect(reqStore.current?.body?.content).toContain('\n')
+  })
 })

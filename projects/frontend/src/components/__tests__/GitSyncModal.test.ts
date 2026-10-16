@@ -576,5 +576,48 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     expect(abortGitMergeMock).toHaveBeenCalledWith('Test-Collection')
     expect(collectionStore.gitConflictError).toBeNull()
   })
+
+  it('toggles custom branch dropdown, selects branch, and closes dropdown on option click', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    const customSelectBtn = wrapper.find('[data-test="custom-branch-select-btn"]')
+    expect(customSelectBtn.exists()).toBe(true)
+    expect(customSelectBtn.text()).toContain('main')
+    expect(wrapper.find('[data-test="branch-select-dropdown"]').exists()).toBe(false)
+
+    // Open dropdown
+    await customSelectBtn.trigger('click')
+    expect(wrapper.find('[data-test="branch-select-dropdown"]').exists()).toBe(true)
+
+    const options = wrapper.findAll('[data-test="branch-select-option"]')
+    expect(options.length).toBe(3)
+    expect(options[0].text()).toContain('main')
+    expect(options[1].text()).toContain('develop')
+    expect(options[2].text()).toContain('feature/auth')
+
+    // Click 'develop' option
+    await options[1].trigger('click')
+    expect(wrapper.find('[data-test="branch-select-dropdown"]').exists()).toBe(false)
+    expect(customSelectBtn.text()).toContain('develop')
+
+    // Verify hidden select was also updated
+    const hiddenSelect = wrapper.find('[data-test="git-push-branch-select"]').element as HTMLSelectElement
+    expect(hiddenSelect.value).toBe('develop')
+  })
 })
 

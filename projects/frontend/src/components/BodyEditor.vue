@@ -14,6 +14,10 @@ import {
   validateXmlWithPlaceholders,
   formatXmlText
 } from '@/utils/xmlUtils'
+import {
+  applyEditorEnter,
+  applyEditorToggleComment
+} from '@/utils/editorShortcuts'
 
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
@@ -139,7 +143,6 @@ const handleScroll = (e: Event) => {
 
 const handleTab = (e: KeyboardEvent) => {
   e.preventDefault()
-  
   if (!textareaRef.value) return
   const el = textareaRef.value
   recordInputSnapshot(el)
@@ -151,6 +154,34 @@ const handleTab = (e: KeyboardEvent) => {
   el.selectionStart = el.selectionEnd = start + 2
   bodyContent.value = el.value
   recordInputSnapshot(el)
+}
+
+const handleKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Tab' || e.key === 'tab') {
+    return
+  }
+
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    if (!textareaRef.value) return
+    e.preventDefault()
+    const lang = bodyType.value === 'xml' ? 'xml' : bodyType.value === 'json' ? 'json' : 'text'
+    const nextVal = applyEditorEnter(textareaRef.value, lang)
+    if (nextVal !== null) {
+      bodyContent.value = nextVal
+    }
+    return
+  }
+
+  if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.code === 'Slash')) {
+    if (!textareaRef.value) return
+    e.preventDefault()
+    const lang = bodyType.value === 'xml' ? 'xml' : bodyType.value === 'json' ? 'json' : 'text'
+    const nextVal = applyEditorToggleComment(textareaRef.value, lang)
+    if (nextVal !== null) {
+      bodyContent.value = nextVal
+    }
+    return
+  }
 }
 </script>
 
@@ -258,7 +289,7 @@ const handleTab = (e: KeyboardEvent) => {
           :value="bodyContent"
           :wrap="false"
           :syntax="bodyType === 'json' ? 'json' : bodyType === 'xml' ? 'xml' : 'plain'"
-          overlay-class="p-2 pb-8 mono-base w-full h-full" style="line-height: 21px; font-size: 13px;"
+          overlay-class="p-2 pb-2 mono-base w-full h-full" style="line-height: 21px; font-size: 13px;"
           class="flex-1 w-full h-full min-w-0 min-h-0"
         >
           <textarea 
@@ -268,7 +299,8 @@ const handleTab = (e: KeyboardEvent) => {
             @compositionend="handleTextareaInput"
             @scroll="handleScroll"
             @keydown.tab="handleTab"
-            class="flex-1 w-full h-full min-h-0 bg-transparent border-none outline-none resize-none p-2 pb-8 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto" style="line-height: 21px; font-size: 13px;"
+            @keydown="handleKeydown"
+            class="flex-1 w-full h-full min-h-0 bg-transparent border-none outline-none resize-none p-2 pb-2 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto" style="line-height: 21px; font-size: 13px;"
             spellcheck="false"
             autocomplete="off"
             autocorrect="off"

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
+import { nextTick } from 'vue'
 import ScriptEditor from '../ScriptEditor.vue'
 import { useRequestStore, type Request } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
@@ -239,5 +240,39 @@ describe('ScriptEditor.vue', () => {
     const suggestions = getScriptSuggestions('ha.request.', 'pre_request')
     expect(suggestions.length).toBeGreaterThan(0)
     expect(suggestions.some(s => s.label.includes('ha.request.query.set'))).toBe(true)
+  })
+
+  it('supports Enter auto-indent and Ctrl+/ comment toggle in script editor textarea', async () => {
+    const store = useRequestStore()
+    store.current = {
+      id: 'req-1',
+      name: 'Req Script Test',
+      scripts: {
+        pre_request: 'function test() {\n  const x = 1;\n}',
+        post_response: ''
+      }
+    } as any
+
+    const wrapper = mount(ScriptEditor)
+    await nextTick()
+
+    const textarea = wrapper.find('[data-test="pre-request-script-input"]')
+    const el = textarea.element as HTMLTextAreaElement
+
+    // Select "const x = 1;"
+    el.selectionStart = 20
+    el.selectionEnd = 32
+    await textarea.trigger('keydown', { key: '/', ctrlKey: true })
+    await nextTick()
+
+    expect(store.current?.scripts?.pre_request).toContain('// const x = 1;')
+
+    // Enter auto-indent
+    const scriptLen = store.current?.scripts?.pre_request?.length || 0
+    el.selectionStart = el.selectionEnd = scriptLen - 2
+    await textarea.trigger('keydown', { key: 'Enter' })
+    await nextTick()
+
+    expect(store.current?.scripts?.pre_request).toContain('\n')
   })
 })

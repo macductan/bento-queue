@@ -275,6 +275,20 @@ export const useUiStore = defineStore('ui', () => {
     writeStoredValue(REQUEST_PANE_RATIO_STORAGE_KEY, String(REQUEST_PANE_DEFAULT_RATIO))
   }
 
+  const responsePaneCollapsed = ref<boolean>(false)
+  const responsePaneExplicitlyOpened = ref<boolean>(false)
+
+  function setResponsePaneCollapsed(collapsed: boolean) {
+    responsePaneCollapsed.value = collapsed
+    if (!collapsed) {
+      responsePaneExplicitlyOpened.value = true
+    }
+  }
+
+  function toggleResponsePaneCollapse() {
+    setResponsePaneCollapsed(!responsePaneCollapsed.value)
+  }
+
   return {
     toast,
     showToast,
@@ -315,6 +329,10 @@ export const useUiStore = defineStore('ui', () => {
     resetSidebarWidth,
     requestPaneRatio,
     setRequestPaneRatio,
-    resetRequestPaneRatio
+    resetRequestPaneRatio,
+    responsePaneCollapsed,
+    responsePaneExplicitlyOpened,
+    setResponsePaneCollapsed,
+    toggleResponsePaneCollapse
   }
 })

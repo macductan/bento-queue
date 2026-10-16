@@ -46,6 +46,12 @@ export interface TreeNode {
   type: string
   method?: string
   path: string
+  url?: string
+  body?: {
+    type: string
+    content?: string
+    [key: string]: any
+  }
   children?: TreeNode[]
   variables?: { key: string; value: string; enabled: boolean }[]
   folder_envs?: Record<string, { key: string; value: string; enabled: boolean }[]>

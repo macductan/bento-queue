@@ -111,6 +111,8 @@ type TreeNode struct {
 	Name       string                 `json:"name"`
 	Type       string                 `json:"type"` // "folder" or "request"
 	Method     string                 `json:"method,omitempty"`
+	URL        string                 `json:"url,omitempty"`
+	Body       *Body                  `json:"body,omitempty"`
 	Path       string                 `json:"path"`
 	Children   []TreeNode             `json:"children,omitempty"`
 	Variables  []KVPair               `json:"variables,omitempty"`

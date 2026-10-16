@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useMockServerStore } from '@/stores/mockServerStore'
 import EnvSelector from '@/components/environment/EnvSelector.vue'
+import CollectionSwitcher from '@/components/CollectionSwitcher.vue'
 import ImportErrorModal from '@/components/ImportErrorModal.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
 
@@ -65,6 +66,7 @@ onUnmounted(() => {
     </div>
 
     <div class="flex items-center gap-2">
+      <CollectionSwitcher />
       <button @click="triggerImport" :disabled="isImporting" class="text-sm text-text-primary hover:text-text-inverse hover:bg-text-primary px-3 py-1.5 rounded border border-border-default transition-colors disabled:opacity-50 flex items-center gap-2" title="Import Postman (Ctrl+I)">
         <svg v-if="isImporting" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>

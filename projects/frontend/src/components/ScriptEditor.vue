@@ -13,6 +13,10 @@ import {
   getScriptSuggestions,
   type ScriptSuggestionItem
 } from '@/utils/jsHighlight'
+import {
+  applyEditorEnter,
+  applyEditorToggleComment
+} from '@/utils/editorShortcuts'
 
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
@@ -241,6 +245,33 @@ function onEditorKeydown(e: KeyboardEvent, phase: 'pre_request' | 'post_response
     nextTick(() => {
       el.selectionStart = el.selectionEnd = start + 2
     })
+    return
+  }
+
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && el) {
+    e.preventDefault()
+    const nextVal = applyEditorEnter(el, 'javascript')
+    if (nextVal !== null) {
+      if (phase === 'pre_request') {
+        preRequestCode.value = nextVal
+      } else {
+        postResponseCode.value = nextVal
+      }
+    }
+    return
+  }
+
+  if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.code === 'Slash') && el) {
+    e.preventDefault()
+    const nextVal = applyEditorToggleComment(el, 'javascript')
+    if (nextVal !== null) {
+      if (phase === 'pre_request') {
+        preRequestCode.value = nextVal
+      } else {
+        postResponseCode.value = nextVal
+      }
+    }
+    return
   }
 }
 

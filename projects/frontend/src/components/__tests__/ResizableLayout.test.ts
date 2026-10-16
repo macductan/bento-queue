@@ -8,6 +8,7 @@ import ContentArea from '@/components/ContentArea.vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useResponseStore } from '@/stores/responseStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   ListCollections: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -284,7 +285,12 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
   })
 
   describe('ContentArea.vue Horizontal Splitter', () => {
-    const mountContentArea = (containerHeight = 600, topOffset = 0) => {
+    const mountContentArea = (containerHeight = 600, topOffset = 0, explicitlyOpened = true) => {
+      const uiStore = useUiStore()
+      if (explicitlyOpened) {
+        uiStore.responsePaneExplicitlyOpened = true
+        uiStore.responsePaneCollapsed = false
+      }
       const wrapper = mount(ContentArea, {
         global: {
           stubs: {
@@ -486,6 +492,69 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       window.dispatchEvent(new MouseEvent('mousemove', { clientY: 180 }))
       expect(uiStore.requestPaneRatio).toBe(50)
+    })
+
+    it('collapses response pane by default when no response exists and expands on dock bar click', async () => {
+      const collectionStore = useCollectionStore()
+      const uiStore = useUiStore()
+      collectionStore.activeRequestId = 'req-1'
+
+      // mount without explicitlyOpened
+      const wrapper = mountContentArea(600, 0, false)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
+
+      const requestPane = wrapper.find('[data-test="request-pane"]')
+      expect(requestPane.classes()).toContain('flex-1')
+
+      // Click dock bar to uncollapse
+      await wrapper.find('[data-test="response-dock-bar"]').trigger('click')
+      expect(uiStore.responsePaneExplicitlyOpened).toBe(true)
+      expect(uiStore.responsePaneCollapsed).toBe(false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(true)
+
+      // Click toggle button on splitter to collapse again
+      const toggleBtn = wrapper.find('[data-test="toggle-response-collapse-btn"]')
+      expect(toggleBtn.exists()).toBe(true)
+      await toggleBtn.trigger('click')
+      expect(uiStore.responsePaneCollapsed).toBe(true)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    it('automatically uncollapses response pane when a new response arrives', async () => {
+      const collectionStore = useCollectionStore()
+      const responseStore = useResponseStore()
+      const uiStore = useUiStore()
+      collectionStore.activeRequestId = 'req-1'
+
+      // mount without explicitlyOpened, collapsed by default
+      const wrapper = mountContentArea(600, 0, false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)
+
+      // Simulate response arriving
+      responseStore.response = {
+        status_code: 200,
+        status_text: 'OK',
+        headers: {},
+        body: '{"message":"hello"}',
+        size_bytes: 19,
+        duration_ms: 45
+      } as any
+      await nextTick()
+
+      expect(uiStore.responsePaneCollapsed).toBe(false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(true)
+
+      wrapper.unmount()
     })
   })
 })

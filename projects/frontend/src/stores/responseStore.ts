@@ -206,6 +206,7 @@ export const useResponseStore = defineStore('response', {
         if (result.success) {
           nextResponse = result.data as ExecuteResponse
           updatedResponse = true
+          useUiStore().setResponsePaneCollapsed(false)
 
           this.appendExecutionLog({
             timestamp: nextResponse.timestamp || new Date().toISOString(),
@@ -283,6 +284,7 @@ export const useResponseStore = defineStore('response', {
             response: nextResponse
           })
         } else {
+          useUiStore().setResponsePaneCollapsed(false)
           const code = result.error?.code || 'UNKNOWN'
           const msg = result.error?.message || 'Lỗi không xác định'
 

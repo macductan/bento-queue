@@ -47,14 +47,40 @@ watch(
   { immediate: true }
 )
 
+const branchDropdownOpen = ref(false)
+const branchDropdownRef = ref<HTMLElement | null>(null)
+
+const toggleBranchDropdown = () => {
+  if (collectionStore.gitSyncLoading) return
+  branchDropdownOpen.value = !branchDropdownOpen.value
+}
+
+const selectBranch = (branch: string) => {
+  selectedBranch.value = branch
+  branchDropdownOpen.value = false
+}
+
+const handleClickOutside = (e: MouseEvent) => {
+  if (branchDropdownRef.value && !branchDropdownRef.value.contains(e.target as Node)) {
+    branchDropdownOpen.value = false
+  }
+}
+
 const closeModal = () => {
   showRemoteChangeConfirm.value = false
   pendingRemoteUrl.value = ''
+  branchDropdownOpen.value = false
   uiStore.gitSyncModalOpen = false
 }
 
 function handleKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape' && uiStore.gitSyncModalOpen) {
+    if (branchDropdownOpen.value) {
+      branchDropdownOpen.value = false
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     if (showRemoteChangeConfirm.value) {
@@ -68,10 +94,12 @@ function handleKeyDown(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
+  document.addEventListener('click', handleClickOutside)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown)
+  document.removeEventListener('click', handleClickOutside)
 })
 
 const onSaveRemote = async () => {
@@ -338,33 +366,104 @@ const onAbortMerge = async () => {
             type="button"
             data-test="git-pull-modal-btn"
             :disabled="collectionStore.gitSyncLoading"
-            class="px-3 py-1.5 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
+            class="h-8 px-3 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors"
             @click="onPull"
           >
-            ↓ Git Pull
+            <span>↓ Git Pull</span>
           </button>
-          <div class="flex items-center gap-1.5">
+
+          <!-- Custom Branch Select Dropdown -->
+          <div ref="branchDropdownRef" class="relative flex items-center">
+            <!-- Hidden native select for test compatibility and accessibility -->
             <select
               v-model="selectedBranch"
               data-test="git-push-branch-select"
               aria-label="Chọn nhánh để Push"
               :disabled="collectionStore.gitSyncLoading"
-              class="px-2 py-1.5 rounded bg-surface-input border border-border-default font-mono text-xs text-text-primary focus:border-brand-primary outline-none cursor-pointer"
+              class="sr-only"
             >
               <option v-for="b in availableBranches" :key="b" :value="b">
                 {{ b }}
               </option>
             </select>
+
+            <!-- Custom Dropdown Trigger Button -->
             <button
               type="button"
-              data-test="git-push-modal-btn"
+              data-test="custom-branch-select-btn"
               :disabled="collectionStore.gitSyncLoading"
-              class="px-3 py-1.5 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer"
-              @click="onPush"
+              aria-haspopup="listbox"
+              :aria-expanded="branchDropdownOpen"
+              class="h-8 px-2.5 rounded bg-surface-raised hover:bg-surface-hover border border-border-default hover:border-border-hover focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-colors cursor-pointer text-xs font-mono text-text-primary flex items-center gap-2 select-none disabled:opacity-50"
+              @click="toggleBranchDropdown"
             >
-              ↑ Git Push
+              <!-- Git Branch Icon -->
+              <svg class="w-3.5 h-3.5 text-text-secondary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="6" y1="3" x2="6" y2="15"></line>
+                <circle cx="18" cy="6" r="3"></circle>
+                <circle cx="6" cy="18" r="3"></circle>
+                <path d="M18 9a9 9 0 0 1-9 9"></path>
+              </svg>
+              <span class="truncate max-w-[130px]">{{ selectedBranch || 'main' }}</span>
+              <!-- Down Chevron Icon -->
+              <svg
+                class="w-3 h-3 text-text-muted transition-transform shrink-0"
+                :class="{ 'rotate-180': branchDropdownOpen }"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
             </button>
+
+            <!-- Custom Dropdown Menu -->
+            <div
+              v-if="branchDropdownOpen"
+              data-test="branch-select-dropdown"
+              role="listbox"
+              class="absolute left-0 bottom-full mb-1 z-50 min-w-[180px] max-h-48 overflow-y-auto rounded-md bg-surface-raised border border-border-default shadow-lg p-1 space-y-0.5"
+            >
+              <button
+                v-for="b in availableBranches"
+                :key="b"
+                type="button"
+                role="option"
+                :aria-selected="selectedBranch === b"
+                data-test="branch-select-option"
+                class="w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs font-mono text-left transition-colors cursor-pointer"
+                :class="selectedBranch === b ? 'bg-brand-primary/15 text-brand-primary font-medium' : 'text-text-primary hover:bg-surface-hover'"
+                @click="selectBranch(b)"
+              >
+                <span class="truncate">{{ b }}</span>
+                <svg
+                  v-if="selectedBranch === b"
+                  class="w-3.5 h-3.5 text-brand-primary shrink-0 ml-2"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </button>
+            </div>
           </div>
+
+          <button
+            type="button"
+            data-test="git-push-modal-btn"
+            :disabled="collectionStore.gitSyncLoading"
+            class="h-8 px-3 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors"
+            @click="onPush"
+          >
+            <span>↑ Git Push</span>
+          </button>
         </div>
         <button
           type="button"
