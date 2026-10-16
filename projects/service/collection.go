@@ -528,6 +528,9 @@ func (s *CollectionService) ListCollections(collectionsRoot, activeCollection st
 			continue
 		}
 		slugName := entry.Name()
+		if strings.HasPrefix(slugName, ".") || strings.Contains(slugName, ".backup") {
+			continue
+		}
 		collMetaPath := filepath.Join(collectionsRoot, slugName, collectionFileName)
 		if !s.fs.Exists(collMetaPath) {
 			continue

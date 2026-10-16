@@ -12,6 +12,7 @@ import {
 import { getActivePinia } from 'pinia'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useRequestStore } from '@/stores/requestStore'
 import { parseVariables } from '@/utils/variables'
 import {
   resolveHierarchyVariables,
@@ -29,12 +30,14 @@ const props = withDefaults(defineProps<{
   singleLine?: boolean;
   wrap?: boolean;
   syntax?: 'plain' | 'json' | 'xml';
+  enablePathParams?: boolean;
   variablesMap?: Map<string, string>;
   hierarchyFolders?: FolderNodeLike[];
 }>(), {
   singleLine: false,
   wrap: true,
-  syntax: 'plain'
+  syntax: 'plain',
+  enablePathParams: false
 })
 
 const getJsonTokensForSegment = (idx: number, textVal: string): JsonSyntaxToken[] => {
@@ -66,6 +69,7 @@ const instanceId = Symbol('variable-highlighter')
 const hasPinia = Boolean(getActivePinia())
 const envStore = hasPinia ? useEnvironmentStore() : null
 const collectionStore = hasPinia ? useCollectionStore() : null
+const requestStore = hasPinia ? useRequestStore() : null
 const injectedVars = inject<Ref<Map<string, string>> | ComputedRef<Map<string, string>> | Map<string, string> | null>('effectiveVariables', null)
 const injectedFolders = inject<Ref<FolderNodeLike[]> | ComputedRef<FolderNodeLike[]> | FolderNodeLike[] | null>('variableHierarchyFolders', null)
 
@@ -107,10 +111,12 @@ const fallbackVariablesMap = computed(() => {
 })
 
 const hoveredVarName = ref<string | null>(null)
+const hoveredVarKind = ref<'template' | 'path'>('template')
 const anchorRect = ref<AnchorRectLike | null>(null)
 const isMouseInPopover = ref(false)
 
 let pendingVarName: string | null = null
+let pendingVarKind: 'template' | 'path' = 'template'
 let pendingRect: AnchorRectLike | null = null
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
@@ -127,6 +133,7 @@ const clearHoverTimer = () => {
     hoverTimer = null
   }
   pendingVarName = null
+  pendingVarKind = 'template'
   pendingRect = null
 }
 
@@ -168,6 +175,7 @@ const closePopoverImmediately = () => {
   clearHoverTimer()
   clearCloseTimer()
   hoveredVarName.value = null
+  hoveredVarKind.value = 'template'
   anchorRect.value = null
   isMouseInPopover.value = false
   removeWindowListeners()
@@ -248,6 +256,12 @@ const effectiveValue = computed(() => {
 const segments = computed(() => {
   void localRevision.value
   const vars = props.variablesMap || unref(injectedVars) || fallbackVariablesMap.value
+  if (props.enablePathParams) {
+    return parseVariables(effectiveValue.value, vars, {
+      enablePathParams: true,
+      pathParams: requestStore?.current?.path_params || null
+    })
+  }
   return parseVariables(effectiveValue.value, vars)
 })
 
@@ -290,7 +304,7 @@ const toAnchorRect = (r: {
 
 const findHoveredVarSpan = (
   e: MouseEvent
-): { span: HTMLElement; varName: string; rect: AnchorRectLike } | null => {
+): { span: HTMLElement; varName: string; varKind: 'template' | 'path'; rect: AnchorRectLike } | null => {
   const container = overlayRef.value
   if (!container) return null
 
@@ -303,6 +317,7 @@ const findHoveredVarSpan = (
   for (const span of spans) {
     const varName = span.getAttribute('data-var-name')?.trim()
     if (!varName) continue
+    const varKind: 'template' | 'path' = span.getAttribute('data-var-kind') === 'path' ? 'path' : 'template'
 
     const clientRects =
       typeof span.getClientRects === 'function' ? Array.from(span.getClientRects()) : []
@@ -317,7 +332,7 @@ const findHoveredVarSpan = (
           clientY >= r.top &&
           clientY <= r.bottom
         ) {
-          return { span, varName, rect: toAnchorRect(r) }
+          return { span, varName, varKind, rect: toAnchorRect(r) }
         }
       }
     } else if (typeof span.getBoundingClientRect === 'function') {
@@ -330,7 +345,7 @@ const findHoveredVarSpan = (
           clientY >= bcr.top &&
           clientY <= bcr.bottom
         ) {
-          return { span, varName, rect: toAnchorRect(bcr) }
+          return { span, varName, varKind, rect: toAnchorRect(bcr) }
         }
       }
     }
@@ -342,12 +357,13 @@ const findHoveredVarSpan = (
     const targetSpan = targetEl?.closest?.('[data-var-name]') as HTMLElement | null
     if (targetSpan && container.contains(targetSpan)) {
       const varName = targetSpan.getAttribute('data-var-name')?.trim()
+      const varKind: 'template' | 'path' = targetSpan.getAttribute('data-var-kind') === 'path' ? 'path' : 'template'
       if (varName) {
         const bcr =
           typeof targetSpan.getBoundingClientRect === 'function'
             ? targetSpan.getBoundingClientRect()
             : { top: 0, left: 0, bottom: 0, right: 0, width: 0, height: 0 }
-        return { span: targetSpan, varName, rect: toAnchorRect(bcr) }
+        return { span: targetSpan, varName, varKind, rect: toAnchorRect(bcr) }
       }
     }
   }
@@ -361,23 +377,26 @@ const handleMouseMove = (e: MouseEvent) => {
   const hit = findHoveredVarSpan(e)
   if (hit) {
     clearCloseTimer()
-    if (hoveredVarName.value === hit.varName) {
+    if (hoveredVarName.value === hit.varName && hoveredVarKind.value === hit.varKind) {
       anchorRect.value = hit.rect
       return
     }
-    if (pendingVarName === hit.varName && hoverTimer !== null) {
+    if (pendingVarName === hit.varName && pendingVarKind === hit.varKind && hoverTimer !== null) {
       pendingRect = hit.rect
       return
     }
     clearHoverTimer()
     pendingVarName = hit.varName
+    pendingVarKind = hit.varKind
     pendingRect = hit.rect
     attachWindowListeners()
     hoverTimer = setTimeout(() => {
       hoverTimer = null
       const targetVar = pendingVarName
+      const targetKind = pendingVarKind
       const targetRect = pendingRect
       pendingVarName = null
+      pendingVarKind = 'template'
       pendingRect = null
       if (!targetVar) return
       if (typeof window !== 'undefined') {
@@ -386,6 +405,7 @@ const handleMouseMove = (e: MouseEvent) => {
         )
       }
       hoveredVarName.value = targetVar
+      hoveredVarKind.value = targetKind
       anchorRect.value = targetRect
     }, HOVER_OPEN_DELAY_MS)
   } else {
@@ -476,8 +496,20 @@ defineExpose({
         <span>
           <template v-for="(seg, idx) in segments" :key="idx">
             <span v-if="seg.type === 'text'">{{ seg.value }}</span>
-            <span v-else-if="seg.type === 'resolved'" :data-var-name="seg.key" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
-            <span v-else-if="seg.type === 'missing'" :data-var-name="seg.key" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
+            <span
+              v-else-if="seg.type === 'resolved'"
+              :data-var-name="seg.key"
+              :data-var-kind="seg.kind || undefined"
+              class="text-variable-valid"
+              style="color: var(--color-variable-valid)"
+            >{{ seg.original }}</span>
+            <span
+              v-else-if="seg.type === 'missing'"
+              :data-var-name="seg.key"
+              :data-var-kind="seg.kind || undefined"
+              style="color: var(--color-variable-missing)"
+              class="italic text-variable-missing"
+            >{{ seg.original || seg.value }}</span>
           </template>
         </span>
       </div>
@@ -494,8 +526,20 @@ defineExpose({
             </template>
             <span v-else>{{ seg.value }}</span>
           </template>
-          <span v-else-if="seg.type === 'resolved'" :data-var-name="seg.key" class="text-variable-valid" style="color: var(--color-variable-valid)">{{ seg.original }}</span>
-          <span v-else-if="seg.type === 'missing'" :data-var-name="seg.key" style="color: var(--color-variable-missing)" class="italic text-variable-missing">{{ seg.original || seg.value }}</span>
+          <span
+            v-else-if="seg.type === 'resolved'"
+            :data-var-name="seg.key"
+            :data-var-kind="seg.kind || undefined"
+            class="text-variable-valid"
+            style="color: var(--color-variable-valid)"
+          >{{ seg.original }}</span>
+          <span
+            v-else-if="seg.type === 'missing'"
+            :data-var-name="seg.key"
+            :data-var-kind="seg.kind || undefined"
+            style="color: var(--color-variable-missing)"
+            class="italic text-variable-missing"
+          >{{ seg.original || seg.value }}</span>
         </template>
       </template>
     </div>
@@ -507,6 +551,7 @@ defineExpose({
     <VariableHoverPopover
       v-if="hoveredVarName"
       :variable-name="hoveredVarName"
+      :variable-kind="hoveredVarKind"
       :anchor-rect="anchorRect"
       :hierarchy-folders="resolvedHierarchyFolders"
       @mouseenter="handlePopoverMouseEnter"

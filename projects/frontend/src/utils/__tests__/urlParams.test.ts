@@ -8,7 +8,11 @@ import {
   buildQueryString,
   updateUrlWithParams,
   areParamsEqual,
-  reconcileParamsFromUrl
+  reconcileParamsFromUrl,
+  findPathParamTokens,
+  extractPathParamKeys,
+  reconcilePathParamsFromUrl,
+  resolvePathParamsInUrl
 } from '../urlParams'
 import type { KVPair } from '../../stores/requestStore'
 
@@ -281,6 +285,46 @@ describe('urlParams utility', () => {
       expect(reconciled).toEqual([
         { key: 'debug', value: 'true', enabled: false }
       ])
+    })
+  })
+
+  describe('path parameter utilities (:param)', () => {
+    it('extracts :param tokens only from pathname, ignoring scheme, authority user:pass@host:port, query ?k=:v, and #hash:v', () => {
+      expect(
+        extractPathParamKeys(
+          'https://user:pass@api.example.com:8443/v1/:api_key/items/:item_id?filter=status:active#sec:intro'
+        )
+      ).toEqual(['api_key', 'item_id'])
+
+      expect(
+        extractPathParamKeys('{{base_url}}:8080/v1/:org_id/repos/:repo_id?tag=v1:latest')
+      ).toEqual(['org_id', 'repo_id'])
+
+      expect(extractPathParamKeys('user:pass@localhost:8080/users/:uid')).toEqual(['uid'])
+    })
+
+    it('reconciles path_params preserving existing values, enabled state, and descriptions', () => {
+      const current: KVPair[] = [
+        { key: 'api_key', value: 'sec-123', enabled: true, description: 'API Key' },
+        { key: 'removed', value: 'old', enabled: true }
+      ]
+      const next = reconcilePathParamsFromUrl(
+        'https://api.example.com/:api_key/orders/:order_id',
+        current
+      )
+      expect(next).toEqual([
+        { key: 'api_key', value: 'sec-123', enabled: true, description: 'API Key' },
+        { key: 'order_id', value: '', enabled: true }
+      ])
+    })
+
+    it('resolves :param tokens in URL pathname without touching query or hash colons', () => {
+      const resolved = resolvePathParamsInUrl(
+        'https://api.example.com/:api_key/items/:id?q=type:book#part:one',
+        [{ key: 'api_key', value: 'k-999', enabled: true }],
+        new Map([['id', '77']])
+      )
+      expect(resolved).toBe('https://api.example.com/k-999/items/77?q=type:book#part:one')
     })
   })
 })

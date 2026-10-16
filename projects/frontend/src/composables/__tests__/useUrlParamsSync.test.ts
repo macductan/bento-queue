@@ -212,4 +212,27 @@ describe('useUrlParamsSync', () => {
       { key: 'filter', value: 'active', enabled: true }
     ])
   })
+
+  it('should automatically extract and reconcile :param path variables into req.path_params when URL changes', async () => {
+    const req = ref<Request | null>(createMockRequest({
+      id: 'req-path-sync',
+      url: 'https://api.example.com/v1/:api_key/users',
+      params: [],
+      path_params: [{ key: 'api_key', value: 'secret-1', enabled: true }]
+    }))
+    useUrlParamsSync(req)
+    await nextTick()
+
+    expect(req.value!.path_params).toEqual([
+      { key: 'api_key', value: 'secret-1', enabled: true }
+    ])
+
+    req.value!.url = 'https://api.example.com/v1/:api_key/users/:user_id?filter=status:active'
+    await nextTick()
+
+    expect(req.value!.path_params).toEqual([
+      { key: 'api_key', value: 'secret-1', enabled: true },
+      { key: 'user_id', value: '', enabled: true }
+    ])
+  })
 })

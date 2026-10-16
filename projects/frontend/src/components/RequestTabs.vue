@@ -9,8 +9,9 @@ const requestStore = useRequestStore()
 const req = computed(() => requestStore.current)
 
 const paramsCount = computed(() => {
-  if (!req.value?.params) return 0
-  return req.value.params.filter(p => p.key.trim() !== '').length
+  const queryLen = req.value?.params ? req.value.params.filter(p => p.key.trim() !== '').length : 0
+  const pathLen = req.value?.path_params ? req.value.path_params.filter(p => p.key.trim() !== '').length : 0
+  return queryLen + pathLen
 })
 
 const headersCount = computed(() => {

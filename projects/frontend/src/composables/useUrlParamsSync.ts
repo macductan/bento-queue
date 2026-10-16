@@ -4,6 +4,7 @@ import {
   parseUrl,
   updateUrlWithParams,
   reconcileParamsFromUrl,
+  reconcilePathParamsFromUrl,
   areParamsEqual
 } from '../utils/urlParams'
 
@@ -29,6 +30,14 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
     const currentUrl = req.value.url || ''
     if (!req.value.params) {
       req.value.params = []
+    }
+    if (!req.value.path_params) {
+      req.value.path_params = []
+    }
+
+    const reconciledPathParams = reconcilePathParamsFromUrl(currentUrl, req.value.path_params)
+    if (!areParamsEqual(req.value.path_params, reconciledPathParams)) {
+      req.value.path_params = reconciledPathParams
     }
 
     const { params: parsedFromUrl } = parseUrl(currentUrl)
@@ -66,7 +75,7 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
     }
   )
 
-  // Watch URL -> Sync to Params
+  // Watch URL -> Sync to Params & Path Params
   watch(
     () => req.value?.url,
     (newUrl) => {
@@ -79,12 +88,24 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
       if (!req.value.params) {
         req.value.params = []
       }
+      if (!req.value.path_params) {
+        req.value.path_params = []
+      }
 
+      const newPathParams = reconcilePathParamsFromUrl(newUrl, req.value.path_params)
       const newParams = reconcileParamsFromUrl(newUrl, req.value.params)
-      if (!areParamsEqual(req.value.params, newParams)) {
+      const pathChanged = !areParamsEqual(req.value.path_params, newPathParams)
+      const queryChanged = !areParamsEqual(req.value.params, newParams)
+
+      if (pathChanged || queryChanged) {
         isSyncing = true
-        lastSyncedParams = JSON.parse(JSON.stringify(newParams))
-        req.value.params = newParams
+        if (pathChanged) {
+          req.value.path_params = newPathParams
+        }
+        if (queryChanged) {
+          lastSyncedParams = JSON.parse(JSON.stringify(newParams))
+          req.value.params = newParams
+        }
         nextTick(() => {
           isSyncing = false
         })

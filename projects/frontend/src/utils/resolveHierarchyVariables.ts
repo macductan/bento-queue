@@ -18,7 +18,7 @@ export interface ResolveHierarchyOptions {
   activeEnvId?: string | null
 }
 
-export type VariableScopeKind = 'collection' | 'global-env' | 'folder-global' | 'folder-env'
+export type VariableScopeKind = 'path-param' | 'collection' | 'global-env' | 'folder-global' | 'folder-env'
 
 export interface VariableScopeOption {
   id: string
@@ -35,6 +35,10 @@ export interface VariableScopeOption {
 export interface InspectVariableOptions extends ResolveHierarchyOptions {
   activeEnvName?: string | null
   environments?: { id: string; name: string; variables?: VariableKVPair[] }[] | null
+  includeAllEnvs?: boolean
+  allFolders?: FolderNodeLike[] | null
+  isPathParam?: boolean
+  pathParamValue?: string
 }
 
 export interface VariableInspectionResult {
@@ -129,16 +133,41 @@ function findEnabledVariableValue(
 
 /**
  * Builds the ordered list of scope options for VariableHoverPopover:
+ * - Optional Biến Path (:param) when isPathParam is true
  * - Ancestor folders from nearest parent (leaf) to top ancestor (root):
- *   - Folder-Env (only for the currently active environment when activeEnvId != null)
+ *   - Folder-Env (only for the currently active environment by default, or all environments when includeAllEnvs = true)
  *   - Folder Global (shared across environments)
- * - Global Env (only for the currently active environment when activeEnvId != null)
+ * - Global Env (only for the currently active environment by default, or all environments when includeAllEnvs = true)
  * - Collection Env (shared across environments)
  */
 export function buildVariableScopeOptions(params?: InspectVariableOptions | null): VariableScopeOption[] {
   const { activeEnvId, activeEnvName } = resolveActiveEnvContext(params)
   const folders = Array.isArray(params?.pathFolders) ? params!.pathFolders! : []
+  const includeAllEnvs = Boolean(params?.includeAllEnvs)
+  const allEnvs = Array.isArray(params?.environments) ? params!.environments!.filter(Boolean) : []
   const options: VariableScopeOption[] = []
+
+  if (params?.isPathParam) {
+    options.push({
+      id: 'path-param',
+      kind: 'path-param',
+      label: 'Biến Path (:param - Request này)'
+    })
+  }
+
+  const orderedEnvs: { id: string; name: string }[] = []
+  if (activeEnvId && activeEnvName) {
+    orderedEnvs.push({ id: activeEnvId, name: activeEnvName })
+  }
+  if (includeAllEnvs) {
+    for (const env of allEnvs) {
+      if (env.id && env.id !== activeEnvId) {
+        orderedEnvs.push({ id: env.id, name: env.name || env.id })
+      }
+    }
+  }
+
+  const seenFolderIds = new Set<string>()
 
   // Traverse from leaf folder (nearest parent) to root folder
   for (let i = folders.length - 1; i >= 0; i--) {
@@ -146,16 +175,17 @@ export function buildVariableScopeOptions(params?: InspectVariableOptions | null
     if (!folder) continue
     const folderId = folder.id || `folder-${i}`
     const folderName = folder.name || folderId
+    seenFolderIds.add(folderId)
 
-    if (activeEnvId && activeEnvName) {
+    for (const env of orderedEnvs) {
       options.push({
-        id: `folder-env:${folderId}:${activeEnvId}`,
+        id: `folder-env:${folderId}:${env.id}`,
         kind: 'folder-env',
-        label: `Folder: ${folderName} (${activeEnvName})`,
+        label: `Folder: ${folderName} (${env.name})`,
         folderId,
         folderName,
-        envId: activeEnvId,
-        envName: activeEnvName
+        envId: env.id,
+        envName: env.name
       })
     }
 
@@ -168,13 +198,43 @@ export function buildVariableScopeOptions(params?: InspectVariableOptions | null
     })
   }
 
-  if (activeEnvId && activeEnvName) {
+  // If includeAllEnvs is true and allFolders is provided, include other collection folders too
+  if (includeAllEnvs && Array.isArray(params?.allFolders)) {
+    for (const folder of params!.allFolders!) {
+      if (!folder || !folder.id || seenFolderIds.has(folder.id)) continue
+      const folderId = folder.id
+      const folderName = folder.name || folderId
+      seenFolderIds.add(folderId)
+
+      for (const env of orderedEnvs) {
+        options.push({
+          id: `folder-env:${folderId}:${env.id}`,
+          kind: 'folder-env',
+          label: `Folder: ${folderName} (${env.name})`,
+          folderId,
+          folderName,
+          envId: env.id,
+          envName: env.name
+        })
+      }
+
+      options.push({
+        id: `folder-global:${folderId}`,
+        kind: 'folder-global',
+        label: `Folder: ${folderName} (Dùng chung)`,
+        folderId,
+        folderName
+      })
+    }
+  }
+
+  for (const env of orderedEnvs) {
     options.push({
-      id: `global-env:${activeEnvId}`,
+      id: `global-env:${env.id}`,
       kind: 'global-env',
-      label: `Global Env (${activeEnvName})`,
-      envId: activeEnvId,
-      envName: activeEnvName
+      label: `Global Env (${env.name})`,
+      envId: env.id,
+      envName: env.name
     })
   }
 
@@ -188,11 +248,11 @@ export function buildVariableScopeOptions(params?: InspectVariableOptions | null
 }
 
 /**
- * Inspects a variable across the 4-tier hierarchy and determines:
- * - All valid scope options for the dropdown (filtering strictly to activeEnvId)
+ * Inspects a variable across the hierarchy and determines:
+ * - All valid scope options for the dropdown
  * - The value of the variable at each scope (if defined & enabled)
- * - The winning tier (winningScopeId) following Level 1 -> Level 2 -> Level 3 (Root..Leaf) -> Level 4 (Root..Leaf)
- * - The default selected scope (winningScopeId when resolved; Global Env (Active) or Collection Env when missing)
+ * - The winning tier (winningScopeId)
+ * - The default selected scope
  */
 export function inspectVariableHierarchy(
   keyOrOptions: string | (InspectVariableOptions & { key: string }),
@@ -226,6 +286,17 @@ export function inspectVariableHierarchy(
     effectiveValue = collVal
   }
 
+  // Populate non-active Global Envs when includeAllEnvs is true
+  if (params.includeAllEnvs && Array.isArray(params.environments)) {
+    for (const env of params.environments) {
+      if (!env || !env.id || env.id === activeEnvId) continue
+      const val = findEnabledVariableValue(env.variables, trimmedKey)
+      if (val !== undefined) {
+        valuesByScopeId[`global-env:${env.id}`] = val
+      }
+    }
+  }
+
   // Level 2: Global Env (Active Environment)
   if (activeEnvId) {
     const globalScopeId = `global-env:${activeEnvId}`
@@ -234,6 +305,25 @@ export function inspectVariableHierarchy(
       valuesByScopeId[globalScopeId] = globalVal
       winningScopeId = globalScopeId
       effectiveValue = globalVal
+    }
+  }
+
+  // Populate non-ancestor folders when includeAllEnvs is true
+  if (params.includeAllEnvs && Array.isArray(params.allFolders)) {
+    for (const folder of params.allFolders) {
+      if (!folder || !folder.id) continue
+      const fVal = findEnabledVariableValue(folder.variables, trimmedKey)
+      if (fVal !== undefined) {
+        valuesByScopeId[`folder-global:${folder.id}`] = fVal
+      }
+      if (folder.folder_envs && typeof folder.folder_envs === 'object') {
+        for (const [eId, eVars] of Object.entries(folder.folder_envs)) {
+          const evVal = findEnabledVariableValue(eVars, trimmedKey)
+          if (evVal !== undefined) {
+            valuesByScopeId[`folder-env:${folder.id}:${eId}`] = evVal
+          }
+        }
+      }
     }
   }
 
@@ -249,9 +339,18 @@ export function inspectVariableHierarchy(
       winningScopeId = scopeId
       effectiveValue = val
     }
+    if (params.includeAllEnvs && folder.folder_envs && typeof folder.folder_envs === 'object') {
+      for (const [eId, eVars] of Object.entries(folder.folder_envs)) {
+        if (eId === activeEnvId) continue
+        const evVal = findEnabledVariableValue(eVars, trimmedKey)
+        if (evVal !== undefined) {
+          valuesByScopeId[`folder-env:${folderId}:${eId}`] = evVal
+        }
+      }
+    }
   }
 
-  // Level 4: Folder-Env for Active Environment (Root -> Leaf, highest precedence)
+  // Level 4: Folder-Env for Active Environment (Root -> Leaf, highest env precedence)
   if (activeEnvId) {
     for (let i = 0; i < folders.length; i++) {
       const folder = folders[i]
@@ -271,6 +370,13 @@ export function inspectVariableHierarchy(
     }
   }
 
+  // Level 5 (for :param path variables): Request Path Param overrides if set
+  if (params.isPathParam && params.pathParamValue !== undefined && params.pathParamValue !== '') {
+    valuesByScopeId['path-param'] = params.pathParamValue
+    winningScopeId = 'path-param'
+    effectiveValue = params.pathParamValue
+  }
+
   const options: VariableScopeOption[] = baseOptions.map(opt => {
     const hasVariable = Object.prototype.hasOwnProperty.call(valuesByScopeId, opt.id)
     return {
@@ -281,11 +387,13 @@ export function inspectVariableHierarchy(
   })
 
   const isResolved = winningScopeId !== null
-  const defaultScopeId = isResolved
-    ? winningScopeId!
-    : activeEnvId
-      ? `global-env:${activeEnvId}`
-      : 'collection'
+  const defaultScopeId = params.isPathParam
+    ? 'path-param'
+    : isResolved
+      ? winningScopeId!
+      : activeEnvId
+        ? `global-env:${activeEnvId}`
+        : 'collection'
 
   const winningOption = winningScopeId ? options.find(o => o.id === winningScopeId) || null : null
   const defaultOption = options.find(o => o.id === defaultScopeId) || options[options.length - 1]

@@ -4,8 +4,10 @@ import { useRequestStore } from '@/stores/requestStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 
 const props = defineProps<{
-  field?: 'params' | 'headers'
+  field?: 'params' | 'headers' | 'path_params'
   modelValue?: any[]
+  readonlyKeys?: boolean
+  keyPrefix?: string
 }>()
 
 const emit = defineEmits<{
@@ -25,6 +27,9 @@ const rows = computed(() => {
 })
 
 const displayRows = computed(() => {
+  if (props.readonlyKeys) {
+    return rows.value
+  }
   return [...rows.value, { key: '', value: '', enabled: true, _isPhantom: true }]
 })
 
@@ -47,10 +52,11 @@ const getTargetArray = (): any[] | null => {
   if (!cur[props.field]) {
     cur[props.field] = []
   }
-  return cur[props.field]
+  return cur[props.field] || null
 }
 
 const ensureRealRow = (index: number) => {
+  if (props.readonlyKeys) return
   const arr = getTargetArray()
   if (!arr) return
   if (index >= rows.value.length) {
@@ -62,6 +68,7 @@ const ensureRealRow = (index: number) => {
 }
 
 const onCellInput = (index: number, part: 'key' | 'value', e: Event) => {
+  if (props.readonlyKeys && part === 'key') return
   const target = e.target as HTMLInputElement | HTMLTextAreaElement
   const v = target.value
   const arr = getTargetArray()
@@ -95,6 +102,7 @@ const toggleRowEnabled = (index: number) => {
 }
 
 const addRow = () => {
+  if (props.readonlyKeys) return
   const arr = getTargetArray()
   if (!arr) return
   arr.push({ key: '', value: '', enabled: true })
@@ -105,6 +113,7 @@ const addRow = () => {
 }
 
 const removeRow = (index: number) => {
+  if (props.readonlyKeys) return
   const arr = getTargetArray()
   if (!arr) return
   const targetRow = rows.value[index]
@@ -125,6 +134,7 @@ const removeRow = (index: number) => {
 }
 
 const onValueTab = (e: KeyboardEvent, index: number) => {
+  if (props.readonlyKeys) return
   // If not shift key, jump to the next row's key input
   if (!e.shiftKey) {
     e.preventDefault()
@@ -199,18 +209,25 @@ const initResize = (el: any) => {
           </button>
         </div>
         
-        <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded">
+        <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded flex items-center">
+          <span
+            v-if="keyPrefix"
+            class="pl-3 pr-0.5 mono-sm text-brand-primary font-semibold select-none shrink-0"
+          >{{ keyPrefix }}</span>
           <input 
             type="text" 
             :value="row.key"
-            :readonly="row._isAuto"
+            :readonly="row._isAuto || readonlyKeys"
             :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
             @compositionstart="ensureRealRow(index)"
             @input="e => onCellInput(index, 'key', e)"
             @compositionend="e => onCellInput(index, 'key', e)"
             placeholder="Key"
-            class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
-            :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
+            class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted caret-text-primary py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
+            :class="[
+              keyPrefix ? 'pl-0.5 pr-3' : 'px-3',
+              { 'opacity-50 cursor-not-allowed': row._isAuto, 'text-sky-300 font-medium cursor-default': readonlyKeys }
+            ]"
             spellcheck="false"
             autocomplete="off"
           />
@@ -243,7 +260,7 @@ const initResize = (el: any) => {
         
         <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
           <button 
-            v-if="!row._isPhantom && !row._isAuto"
+            v-if="!row._isPhantom && !row._isAuto && !readonlyKeys"
             @click="removeRow(index)" 
             class="text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-surface-hover rounded outline-none mt-0.5"
             aria-label="Xóa dòng"
@@ -256,7 +273,7 @@ const initResize = (el: any) => {
       </div>
     </div>
     
-    <div class="mt-2 ml-8">
+    <div v-if="!readonlyKeys" class="mt-2 ml-8">
       <button 
         @click="addRow" 
         class="ui-sm flex items-center font-medium text-text-secondary hover:text-text-primary gap-1 p-1 rounded hover:bg-surface-hover outline-none focus-visible:ring-1 focus-visible:ring-border-focus"

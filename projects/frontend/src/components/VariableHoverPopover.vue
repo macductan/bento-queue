@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue'
-import { useCollectionStore } from '@/stores/collectionStore'
+import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useRequestStore } from '@/stores/requestStore'
 import { useUiStore } from '@/stores/uiStore'
 import {
   inspectVariableHierarchy,
@@ -21,10 +22,12 @@ export interface AnchorRectLike {
 const props = withDefaults(
   defineProps<{
     variableName: string
+    variableKind?: 'template' | 'path'
     anchorRect?: AnchorRectLike | null
     hierarchyFolders?: FolderNodeLike[]
   }>(),
   {
+    variableKind: 'template',
     anchorRect: null,
     hierarchyFolders: () => []
   }
@@ -40,18 +43,54 @@ const emit = defineEmits<{
 
 const collectionStore = useCollectionStore()
 const envStore = useEnvironmentStore()
+const requestStore = useRequestStore()
 const uiStore = useUiStore()
 
 const saving = ref(false)
 const revision = ref(0)
+const showAllEnvs = ref(false)
 
 const activeEnvObj = computed(() => {
   if (!envStore.activeEnvId) return null
   return envStore.environments.find(e => e.id === envStore.activeEnvId) || null
 })
 
-const formattedVarToken = computed(() => `{{${props.variableName}}}`)
-const inputPlaceholder = computed(() => `Nhập giá trị cho {{${props.variableName}}}...`)
+const isPathParam = computed(() => props.variableKind === 'path')
+
+const formattedVarToken = computed(() =>
+  isPathParam.value ? `:${props.variableName}` : `{{${props.variableName}}}`
+)
+const inputPlaceholder = computed(() =>
+  isPathParam.value
+    ? `Nhập giá trị cho :${props.variableName}...`
+    : `Nhập giá trị cho {{${props.variableName}}}...`
+)
+
+const currentPathParamValue = computed(() => {
+  void revision.value
+  if (!isPathParam.value || !requestStore.current?.path_params) return undefined
+  const trimmed = props.variableName.trim()
+  const found = requestStore.current.path_params.find(
+    p => p && p.enabled && typeof p.key === 'string' && p.key.trim() === trimmed
+  )
+  return found && found.value !== '' ? found.value : undefined
+})
+
+const allTreeFolders = computed<FolderNodeLike[]>(() => {
+  void revision.value
+  const list: FolderNodeLike[] = []
+  const walk = (nodes: TreeNode[] | undefined) => {
+    if (!Array.isArray(nodes)) return
+    for (const n of nodes) {
+      if (n.type === 'folder') {
+        list.push(n)
+        if (n.children) walk(n.children)
+      }
+    }
+  }
+  walk(collectionStore.tree)
+  return list
+})
 
 const inspection = computed(() => {
   // Touch revision so local in-place folder updates trigger re-evaluation
@@ -62,7 +101,11 @@ const inspection = computed(() => {
     pathFolders: props.hierarchyFolders || [],
     activeEnvId: envStore.activeEnvId,
     activeEnvName: activeEnvObj.value?.name || null,
-    environments: envStore.environments as any
+    environments: envStore.environments as any,
+    includeAllEnvs: showAllEnvs.value,
+    allFolders: showAllEnvs.value ? allTreeFolders.value : null,
+    isPathParam: isPathParam.value,
+    pathParamValue: currentPathParamValue.value
   })
 })
 
@@ -72,7 +115,7 @@ const inputValue = ref<string>(
 )
 
 watch(
-  () => props.variableName,
+  () => [props.variableName, props.variableKind],
   () => {
     selectedScopeId.value = inspection.value.defaultScopeId
     inputValue.value = inspection.value.valuesByScopeId[selectedScopeId.value] ?? ''
@@ -140,15 +183,16 @@ const popoverStyle = computed(() => {
 })
 
 const upsertVariable = (
-  list: { key: string; value: string; enabled?: boolean }[] | null | undefined,
+  list: { key: string; value: string; enabled?: boolean; description?: string }[] | null | undefined,
   key: string,
   value: string
-): { key: string; value: string; enabled: boolean }[] => {
+): { key: string; value: string; enabled: boolean; description?: string }[] => {
   const items = Array.isArray(list)
     ? list.map(v => ({
         key: v.key,
         value: v.value ?? '',
-        enabled: Boolean(v.enabled)
+        enabled: Boolean(v.enabled),
+        ...(v.description !== undefined ? { description: v.description } : {})
       }))
     : []
   const matchingIndices: number[] = []
@@ -162,7 +206,12 @@ const upsertVariable = (
     return items
   }
   const lastIdx = matchingIndices[matchingIndices.length - 1]
-  items[lastIdx] = { key, value, enabled: true }
+  items[lastIdx] = {
+    ...items[lastIdx],
+    key,
+    value,
+    enabled: true
+  }
   const earlierIndices = new Set(matchingIndices.slice(0, -1))
   return items.filter((_, i) => !earlierIndices.has(i))
 }
@@ -181,6 +230,22 @@ const handleSave = async () => {
   saving.value = true
 
   try {
+    if (scopeOpt.kind === 'path-param') {
+      if (!requestStore.current) return
+      if (!Array.isArray(requestStore.current.path_params)) {
+        requestStore.current.path_params = []
+      }
+      requestStore.current.path_params = upsertVariable(
+        requestStore.current.path_params,
+        trimmedKey,
+        newVal
+      )
+      requestStore.scheduleAutoSave()
+      revision.value++
+      emit('saved', { key: trimmedKey, value: newVal, scopeId: scopeOpt.id })
+      return
+    }
+
     if (scopeOpt.kind === 'collection') {
       const activeColl = collectionStore.activeCollection
       if (!activeColl) return
@@ -319,9 +384,19 @@ const handleSave = async () => {
 
       <!-- Scope Dropdown -->
       <div class="flex flex-col gap-1">
-        <label class="text-[11px] font-medium text-text-secondary">
-          Phạm vi lưu trữ (Scope)
-        </label>
+        <div class="flex items-center justify-between gap-2">
+          <label class="text-[11px] font-medium text-text-secondary">
+            Phạm vi lưu trữ (Scope)
+          </label>
+          <button
+            type="button"
+            data-test="toggle-all-env-scopes"
+            class="text-[10px] font-medium text-brand-primary hover:underline cursor-pointer outline-none"
+            @click="showAllEnvs = !showAllEnvs"
+          >
+            {{ showAllEnvs ? 'Thu gọn' : 'Tất cả Env/Folder' }}
+          </button>
+        </div>
         <div class="relative flex items-center">
           <select
             v-model="selectedScopeId"

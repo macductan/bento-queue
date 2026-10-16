@@ -224,8 +224,31 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
         <RequestTabs />
         
         <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-4 pb-4">
-          <div v-show="uiStore.activeRequestTab === 'params'" role="tabpanel" id="panel-params" aria-labelledby="tab-params">
-            <KvpEditor field="params" />
+          <div v-show="uiStore.activeRequestTab === 'params'" role="tabpanel" id="panel-params" aria-labelledby="tab-params" class="space-y-5">
+            <div class="space-y-2" data-test="query-params-section">
+              <div class="flex items-center justify-between px-1">
+                <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                  Query Params (?key=value)
+                </span>
+              </div>
+              <KvpEditor field="params" />
+            </div>
+
+            <div
+              v-if="req.path_params && req.path_params.length > 0"
+              class="space-y-2 pt-3 border-t border-border-default"
+              data-test="path-params-section"
+            >
+              <div class="flex items-center justify-between px-1">
+                <span class="text-xs font-semibold uppercase tracking-wider text-sky-400">
+                  Biến Path (:param)
+                </span>
+                <span class="text-[11px] text-text-muted">
+                  Tự động trích xuất từ các tham số <code class="font-mono text-sky-300">:tên_biến</code> trên URL
+                </span>
+              </div>
+              <KvpEditor field="path_params" :readonly-keys="true" key-prefix=":" />
+            </div>
           </div>
 
           <div v-show="uiStore.activeRequestTab === 'auth'" role="tabpanel" id="panel-auth" aria-labelledby="tab-auth">

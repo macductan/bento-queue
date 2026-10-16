@@ -160,12 +160,21 @@ const methodColorClass = computed(() => {
   return methodColors[effectiveMethod.value.toLowerCase()] || 'text-text-secondary'
 })
 
+const INDENT_STEP = 14
+
 const paddingLeft = computed(() => {
   if (isFolder.value) {
-    return `${props.depth * 8 + 8}px`
+    return `${props.depth * INDENT_STEP + 8}px`
   }
-  // request indent 28px more than folder
-  return `${props.depth * 8 + 8 + 16}px`
+  return `${props.depth * INDENT_STEP + 8 + INDENT_STEP}px`
+})
+
+const guideOffsets = computed(() => {
+  const offsets: number[] = []
+  for (let i = 0; i < props.depth; i++) {
+    offsets.push(i * INDENT_STEP + 14)
+  }
+  return offsets
 })
 </script>
 
@@ -173,7 +182,7 @@ const paddingLeft = computed(() => {
   <div>
     <!-- The Row -->
     <div 
-      class="flex items-center py-1.5 pr-2 cursor-pointer transition-colors select-none group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
+      class="relative flex items-center py-1.5 pr-2 cursor-pointer transition-colors select-none group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
       data-tree-row="true"
       :data-active="isActive ? 'true' : undefined"
       :class="{
@@ -188,6 +197,16 @@ const paddingLeft = computed(() => {
       @contextmenu.prevent="handleContextMenu"
       tabindex="0"
     >
+      <!-- Vertical Hierarchy Guide Lines -->
+      <span
+        v-for="(leftPx, idx) in guideOffsets"
+        :key="idx"
+        data-test="tree-indent-guide"
+        aria-hidden="true"
+        class="pointer-events-none absolute top-0 bottom-0 w-px bg-white/25"
+        :style="{ left: `${leftPx}px` }"
+      ></span>
+
       <!-- Caret for folder -->
       <svg 
         v-if="isFolder"
@@ -226,9 +245,6 @@ const paddingLeft = computed(() => {
       <!-- Name -->
       <span v-if="!isEditing" class="truncate ui-sm min-w-0 flex items-center gap-2 flex-1" :class="{ 'italic text-text-tertiary': isUnnamed }">
         <span data-test="tree-row-name" class="truncate">{{ displayName }}</span>
-        <span v-if="isFolder" class="shrink-0 text-[10px] leading-none bg-surface-overlay text-text-muted px-1 py-0.5 rounded border border-border-default font-mono opacity-50" title="Cấp độ thư mục">
-          {{ depth }}
-        </span>
         <span
           v-if="!isFolder && isActive && requestStore.current?.id === props.node.id && requestStore.isDirty"
           data-test="tree-row-unsaved-dot"

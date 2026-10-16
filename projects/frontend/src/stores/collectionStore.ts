@@ -1185,6 +1185,9 @@ export const useCollectionStore = defineStore('collection', {
           : await GitPushCollection(targetId)
         if (res.success) {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          if (targetId === this.activeCollectionId) {
+            await this.loadTree()
+          }
           uiStore.showToast('Git Push thành công')
           return true
         } else {

@@ -5,6 +5,7 @@ export interface KVPair {
   key: string
   value: string
   enabled: boolean
+  description?: string
   _isAuto?: boolean
 }
 
@@ -39,6 +40,7 @@ export interface Request {
   url: string
   headers: KVPair[]
   params: KVPair[]
+  path_params?: KVPair[]
   body: Body
   auth?: AuthConfig
   auth_envs?: Record<string, AuthConfig>
@@ -65,6 +67,7 @@ import {
   parseUrl,
   updateUrlWithParams,
   reconcileParamsFromUrl,
+  reconcilePathParamsFromUrl,
   areParamsEqual
 } from '../utils/urlParams'
 
@@ -80,6 +83,9 @@ function stringifySorted(obj: any): string {
   const sortedObj: Record<string, any> = {}
   for (const key of keys) {
     if (key === '_isAuto') continue
+    if (key === 'path_params' && (!obj[key] || (Array.isArray(obj[key]) && obj[key].length === 0))) {
+      continue
+    }
     sortedObj[key] = stringifySorted(obj[key])
   }
   return JSON.stringify(sortedObj)
@@ -95,7 +101,14 @@ function normalizeLoadedRequest(req: Request): void {
   if (!Array.isArray(req.params)) {
     req.params = []
   }
+  if (!Array.isArray(req.path_params)) {
+    req.path_params = []
+  }
   const currentUrl = req.url || ''
+  const reconciledPathParams = reconcilePathParamsFromUrl(currentUrl, req.path_params)
+  if (!areParamsEqual(req.path_params, reconciledPathParams)) {
+    req.path_params = reconciledPathParams
+  }
   const { params: parsedFromUrl } = parseUrl(currentUrl)
   if (parsedFromUrl.length > 0) {
     const reconciled = reconcileParamsFromUrl(currentUrl, req.params)
