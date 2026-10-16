@@ -1,0 +1,23 @@
+- id: "1"
+  title: "3-Way JSON Auto-Merge Engine & Visual Conflict Resolver Modal for Git Sync"
+  description: >-
+    Xây dựng bộ máy 3-Way JSON Auto-Merge trên Go backend tự động trích xuất 3 mốc từ Git index (hỗ trợ cả git pull/merge lẫn git stash pop), gộp cấp trường dữ liệu, phần tử KVPair theo (Key, occurrenceIndex) và đệ quy JSON body.content (< 50ms/file) kèm Wails bindings ResolveGitConflict / AbortGitMerge (CAP-1, CAP-2, CAP-4).
+    Xây dựng giao diện GitConflictResolverModal.vue tích hợp với GitSyncModal.vue và collectionStore.ts (auto-flush dirty state trước Pull/Push, Diff 2 cột Local vs. Remote, chọn 1-click theo trường/file/toàn bộ và khóa nút Submit cho tới khi giải quyết đủ xung đột) (CAP-3, CAP-4).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trên Go backend (projects/model/types.go, projects/service/git_merge.go, projects/service/git_sync.go, projects/app.go):
+       - Thêm GitFieldConflict, GitFileConflict và mở rộng GitSyncStatus (thêm trường Conflicts []GitFileConflict) trong projects/model/types.go.
+       - Tạo projects/service/git_merge.go thực thi trích xuất 3 phiên bản từ Git index (:1:<path>, :2:<path>, :3:<path>; tự động đảo :3: là OURS/Local và :2: là THEIRS/Remote kèm cờ .git/HECTO_STASH_CONFLICT khi xung đột phát sinh từ git stash pop không có MERGE_HEAD).
+       - Cài đặt thuật toán 3-Way JSON Merge (< 50ms/file) cho model.Request (<uuid>.json), model.Folder (_folder.json), model.Environment (environments/*.json) và model.Collection (collection.json): tự động gộp các trường scalar/object không trùng, gộp đệ quy các key bên trong body.content khi body.type == "json" và parse được thành JSON Object, gộp danh sách KVPair (headers, params, path_params, variables, form_data, urlencoded) và folder_envs/auth_envs theo cặp (Key, occurrenceIndex) (<Key>#<idx>) bảo toàn các dòng trùng Key và enabled: false.
+       - Xử lý xung đột Delete vs. Edit (delete_edit khi Local xoá & Remote sửa; edit_delete khi Local sửa & Remote xoá).
+       - Tự động ghi file JSON hợp lệ (2 spaces indent), chạy git add -- <file>, và tự động hoàn tất merge commit (hoặc dọn stash) kèm IndexRebuild nếu không còn xung đột.
+       - Cung cấp Wails bindings ResolveGitConflict(collectionID string, resolvedFiles map[string]interface{}) model.Result (kiểm tra chống path traversal, ghi JSON hoặc git rm file chọn xoá, git add, commit, IndexRebuild) và AbortGitMerge(collectionID string) model.Result (chạy git merge --abort hoặc khôi phục từ .git/HECTO_STASH_CONFLICT, IndexRebuild).
+    2. Trên Vue 3 frontend (projects/frontend/src/stores/uiStore.ts, collectionStore.ts, GitConflictResolverModal.vue, GitSyncModal.vue, App.vue):
+       - Trong collectionStore.ts: tự động gọi requestStore.flush() và tabStore.flushActiveFolderIfNeeded() trước khi thực thi gitPull, gitStashAndPull, gitPush; tự động mở GitConflictResolverModal khi nhận mã lỗi GIT_CONFLICT có conflicts; bổ sung actions resolveGitConflicts và abortGitMerge.
+       - Tạo GitConflictResolverModal.vue hiển thị danh sách file xung đột, badge tiến độ 'Đã xử lý X/Y file', khung Diff 2 cột ('Bản của bạn (Local)' vs 'Bản từ xa (Remote)'), các nút chọn nhanh 1-click (Chọn từng trường, Chọn toàn bộ Local/Remote cho file hiện tại hoặc tất cả file, Giữ file / Xoá file cho Delete vs. Edit), nút 'Huỷ merge', và chỉ cho phép bấm 'Xác nhận & Hoàn tất Đồng bộ' khi đã chọn đủ phương án cho mọi xung đột.
+       - Tích hợp nút mở bộ giải quyết xung đột và nút Huỷ merge vào GitSyncModal.vue.
+    3. Kiểm thử & Xác minh:
+       - Viết đầy đủ Go unit & benchmark/integration tests trong projects/service/git_merge_test.go và git_sync_test.go (chỉ dùng t.TempDir(), xác minh thời gian merge < 50ms/file, kiểm thử đầy đủ non-overlapping merge, recursive JSON body merge, duplicate KVPair keys, stash pop stage swap, delete vs edit, ResolveGitConflict, AbortGitMerge).
+       - Viết đầy đủ Vitest tests cho GitConflictResolverModal.spec.ts, GitSyncModal.test.ts và collectionStore.
+       - Đảm bảo 'go test ./...', 'bun run type-check', 'bun run test' pass 100%.

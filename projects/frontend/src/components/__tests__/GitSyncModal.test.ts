@@ -4,6 +4,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import GitSyncModal from '../GitSyncModal.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useRequestStore } from '@/stores/requestStore'
+import { useTabStore } from '@/stores/tabStore'
 
 const saveRemoteMock = vi.fn()
 const getStatusMock = vi.fn()
@@ -13,6 +15,8 @@ const gitPushToBranchMock = vi.fn()
 const gitClearAndPullMock = vi.fn()
 const gitStashAndPullMock = vi.fn()
 const gitListLocalBranchesMock = vi.fn()
+const resolveGitConflictMock = vi.fn()
+const abortGitMergeMock = vi.fn()
 const listCollectionsMock = vi.fn()
 const getTreeMock = vi.fn()
 
@@ -25,8 +29,15 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GitClearAndPullCollection: (...args: any[]) => gitClearAndPullMock(...args),
   GitStashAndPullCollection: (...args: any[]) => gitStashAndPullMock(...args),
   GitListLocalBranches: (...args: any[]) => gitListLocalBranchesMock(...args),
+  ResolveGitConflict: (...args: any[]) => resolveGitConflictMock(...args),
+  AbortGitMerge: (...args: any[]) => abortGitMergeMock(...args),
   ListCollections: (...args: any[]) => listCollectionsMock(...args),
   GetCollectionTree: (...args: any[]) => getTreeMock(...args),
+  GetEnvironments: vi.fn().mockResolvedValue({ success: true, data: [] }),
+  GetActiveEnvironment: vi.fn().mockResolvedValue({ success: true, data: '' }),
+  GetRequest: vi.fn().mockResolvedValue({ success: true, data: null }),
+  SaveRequest: vi.fn().mockResolvedValue({ success: true }),
+  SaveFolderMeta: vi.fn().mockResolvedValue({ success: true }),
   CreateRequest: vi.fn(),
   CreateFolder: vi.fn(),
   RenameRequest: vi.fn(),
@@ -375,4 +386,195 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
 
     expect(saveRemoteMock).toHaveBeenCalledWith('Test-Collection', 'https://github.com/org/second-remote.git')
   })
+
+  it('auto-flushes requestStore and tabStore before gitPull, gitStashAndPull, and gitPush', async () => {
+    const collectionStore = useCollectionStore()
+    const requestStore = useRequestStore()
+    const tabStore = useTabStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    const flushReqSpy = vi.spyOn(requestStore, 'flush').mockResolvedValue(true)
+    const flushFolderSpy = vi.spyOn(tabStore, 'flushActiveFolderIfNeeded').mockResolvedValue(true)
+
+    gitPullMock.mockResolvedValue({
+      success: true,
+      data: { has_git_repo: true, branch: 'main', has_changes: false, has_conflicts: false }
+    })
+    gitStashAndPullMock.mockResolvedValue({
+      success: true,
+      data: { has_git_repo: true, branch: 'main', has_changes: false, has_conflicts: false }
+    })
+    gitPushToBranchMock.mockResolvedValue({
+      success: true,
+      data: { has_git_repo: true, branch: 'main', has_changes: false, has_conflicts: false }
+    })
+
+    await collectionStore.gitPull('Test-Collection')
+    expect(flushReqSpy).toHaveBeenCalledTimes(1)
+    expect(flushFolderSpy).toHaveBeenCalledTimes(1)
+
+    await collectionStore.gitStashAndPull('https://github.com/org/test-collection.git', 'Test-Collection')
+    expect(flushReqSpy).toHaveBeenCalledTimes(2)
+    expect(flushFolderSpy).toHaveBeenCalledTimes(2)
+
+    await collectionStore.gitPush('main', 'Test-Collection')
+    expect(flushReqSpy).toHaveBeenCalledTimes(3)
+    expect(flushFolderSpy).toHaveBeenCalledTimes(3)
+
+    // Verify gitPull / gitStashAndPull / gitPush abort when requestStore.flush() returns false
+    flushReqSpy.mockResolvedValueOnce(false)
+    expect(await collectionStore.gitPull('Test-Collection')).toBe(false)
+    expect(gitPullMock).toHaveBeenCalledTimes(1)
+
+    flushReqSpy.mockResolvedValueOnce(true)
+    flushFolderSpy.mockResolvedValueOnce(false)
+    expect(await collectionStore.gitStashAndPull('https://github.com/org/test-collection.git', 'Test-Collection')).toBe(false)
+    expect(gitStashAndPullMock).toHaveBeenCalledTimes(1)
+
+    flushReqSpy.mockResolvedValueOnce(false)
+    expect(await collectionStore.gitPush('main', 'Test-Collection')).toBe(false)
+    expect(gitPushToBranchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('auto-opens gitConflictModalOpen when gitPull, gitStashAndPull, or gitPush returns GIT_CONFLICT with conflicts and reloads/clears activeRequestId on gitPush', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+    const requestStore = useRequestStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    const conflictPayload = {
+      success: false,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'main',
+        has_changes: true,
+        has_conflicts: true,
+        conflict_files: ['req-1.json'],
+        conflicts: [
+          {
+            file_path: 'req-1.json',
+            entity_type: 'request',
+            entity_name: 'Req 1',
+            conflict_type: 'field_conflict',
+            fields: [{ field_path: 'url', label: 'URL', ours_value: 'a', theirs_value: 'b' }]
+          }
+        ]
+      },
+      error: { code: 'GIT_CONFLICT', message: 'Conflict' }
+    }
+
+    uiStore.gitConflictModalOpen = false
+    gitPullMock.mockResolvedValueOnce(conflictPayload)
+    expect(await collectionStore.gitPull('Test-Collection')).toBe(false)
+    expect(uiStore.gitConflictModalOpen).toBe(true)
+
+    uiStore.gitConflictModalOpen = false
+    gitStashAndPullMock.mockResolvedValueOnce(conflictPayload)
+    expect(await collectionStore.gitStashAndPull('https://github.com/org/test-collection.git', 'Test-Collection')).toBe(false)
+    expect(uiStore.gitConflictModalOpen).toBe(true)
+
+    uiStore.gitConflictModalOpen = false
+    gitPushToBranchMock.mockResolvedValueOnce(conflictPayload)
+    expect(await collectionStore.gitPush('main', 'Test-Collection')).toBe(false)
+    expect(uiStore.gitConflictModalOpen).toBe(true)
+
+    // Verify activeRequestId reload when present in tree, and clear when removed after gitPush
+    const loadReqSpy = vi.spyOn(requestStore, 'loadRequest').mockResolvedValue(undefined as any)
+    const clearReqSpy = vi.spyOn(requestStore, 'clearRequest').mockImplementation(() => {})
+
+    collectionStore.activeRequestId = 'req-active'
+    getTreeMock.mockResolvedValueOnce({
+      success: true,
+      data: [{ id: 'req-active', name: 'Active Req', type: 'request' }]
+    })
+    gitPushToBranchMock.mockResolvedValueOnce({
+      success: true,
+      data: { has_git_repo: true, branch: 'main', has_changes: false, has_conflicts: false }
+    })
+    expect(await collectionStore.gitPush('main', 'Test-Collection')).toBe(true)
+    expect(loadReqSpy).toHaveBeenCalledWith('req-active')
+
+    getTreeMock.mockResolvedValueOnce({
+      success: true,
+      data: []
+    })
+    gitPushToBranchMock.mockResolvedValueOnce({
+      success: true,
+      data: { has_git_repo: true, branch: 'main', has_changes: false, has_conflicts: false }
+    })
+    expect(await collectionStore.gitPush('main', 'Test-Collection')).toBe(true)
+    expect(clearReqSpy).toHaveBeenCalled()
+    expect(collectionStore.activeRequestId).toBeNull()
+  })
+
+  it('opens Visual Conflict Resolver and supports aborting merge from GitSyncModal conflict alert', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    getStatusMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'main',
+        has_changes: true,
+        has_conflicts: true,
+        conflict_files: ['req-1.json']
+      }
+    })
+
+    collectionStore.activeCollectionId = 'Test-Collection'
+    collectionStore.gitConflictError = {
+      message: 'Xung đột tại req-1.json',
+      files: ['req-1.json']
+    }
+    uiStore.gitSyncModalOpen = true
+
+    abortGitMergeMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    const openResolverBtn = wrapper.find('[data-test="open-conflict-resolver-btn"]')
+    expect(openResolverBtn.exists()).toBe(true)
+    await openResolverBtn.trigger('click')
+    expect(uiStore.gitConflictModalOpen).toBe(true)
+
+    const abortBtn = wrapper.find('[data-test="git-sync-abort-merge-btn"]')
+    expect(abortBtn.exists()).toBe(true)
+    await abortBtn.trigger('click')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(abortGitMergeMock).toHaveBeenCalledWith('Test-Collection')
+    expect(collectionStore.gitConflictError).toBeNull()
+  })
 })
+

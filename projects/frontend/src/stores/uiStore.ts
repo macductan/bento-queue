@@ -190,6 +190,9 @@ export const useUiStore = defineStore('ui', () => {
   // Git Sync modal state
   const gitSyncModalOpen = ref(false)
 
+  // Git Conflict Resolver modal state
+  const gitConflictModalOpen = ref(false)
+
   // History & Changelog modal state
   const historyModalOpen = ref(false)
   function openHistoryModal() {
@@ -295,6 +298,7 @@ export const useUiStore = defineStore('ui', () => {
     envModalOpen,
     settingsModalOpen,
     gitSyncModalOpen,
+    gitConflictModalOpen,
     historyModalOpen,
     openHistoryModal,
     closeHistoryModal,

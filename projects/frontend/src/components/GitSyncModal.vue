@@ -153,6 +153,14 @@ const onPush = async () => {
     selectedBranch.value = collectionStore.gitSyncStatus.branch
   }
 }
+
+const openConflictResolver = () => {
+  uiStore.gitConflictModalOpen = true
+}
+
+const onAbortMerge = async () => {
+  await collectionStore.abortGitMerge()
+}
 </script>
 
 <template>
@@ -191,7 +199,7 @@ const onPush = async () => {
         v-if="collectionStore.gitConflictError || collectionStore.gitSyncStatus?.has_conflicts"
         data-test="git-conflict-alert"
         role="alert"
-        class="p-3 rounded-md bg-red-950/50 border border-red-500/60 text-red-200 text-xs space-y-1.5"
+        class="p-3 rounded-md bg-red-950/50 border border-red-500/60 text-red-200 text-xs space-y-2"
       >
         <div class="font-semibold text-red-300 flex items-center gap-1.5">
           <span>⚠️ Phát hiện xung đột Git (Merge Conflict)</span>
@@ -211,6 +219,26 @@ const onPush = async () => {
             {{ file }}
           </li>
         </ul>
+        <div class="flex flex-wrap items-center gap-2 pt-1">
+          <button
+            type="button"
+            data-test="open-conflict-resolver-btn"
+            :disabled="collectionStore.gitSyncLoading"
+            class="px-2.5 py-1 rounded bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
+            @click="openConflictResolver"
+          >
+            Mở bộ giải quyết xung đột (Visual Resolver)
+          </button>
+          <button
+            type="button"
+            data-test="git-sync-abort-merge-btn"
+            :disabled="collectionStore.gitSyncLoading"
+            class="px-2.5 py-1 rounded bg-surface-raised border border-red-500/50 hover:bg-surface-hover text-red-200 text-xs font-semibold disabled:opacity-50 cursor-pointer"
+            @click="onAbortMerge"
+          >
+            Huỷ merge
+          </button>
+        </div>
       </div>
 
       <!-- Remote URL Input -->

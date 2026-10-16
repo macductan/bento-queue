@@ -27,7 +27,9 @@ import {
   GitClearAndPullCollection,
   GitStashAndPullCollection,
   GitListLocalBranches,
-  GitPushCollectionToBranch
+  GitPushCollectionToBranch,
+  ResolveGitConflict,
+  AbortGitMerge
 } from '../../wailsjs/go/main/App'
 import { useTabStore, type TabEntityType } from './tabStore'
 
@@ -986,6 +988,16 @@ export const useCollectionStore = defineStore('collection', {
         this.gitSyncLoading = false
       }
     },
+    async flushDirtyBeforeGitSync(): Promise<boolean> {
+      const { useRequestStore } = await import('./requestStore')
+      const reqStore = useRequestStore()
+      const saved = await reqStore.flush()
+      if (!saved) return false
+      const tabStore = useTabStore()
+      const folderSaved = await tabStore.flushActiveFolderIfNeeded()
+      if (!folderSaved) return false
+      return true
+    },
     async gitPull(collectionId?: string): Promise<boolean> {
       const targetId = collectionId || this.activeCollectionId || 'default'
       const { useUiStore } = await import('./uiStore')
@@ -994,6 +1006,10 @@ export const useCollectionStore = defineStore('collection', {
       if (!coll?.git_remote_url && !this.gitSyncStatus?.remote_url) {
         uiStore.gitSyncModalOpen = true
         uiStore.showToast('Vui lòng cấu hình Git Remote URL trước khi Pull')
+        return false
+      }
+
+      if (!(await this.flushDirtyBeforeGitSync())) {
         return false
       }
 
@@ -1018,15 +1034,19 @@ export const useCollectionStore = defineStore('collection', {
           uiStore.showToast('Git Pull thành công')
           return true
         } else {
-          if (res.data) {
-            this.gitSyncStatus = res.data as model.GitSyncStatus
+          const statusData = res.data as model.GitSyncStatus | undefined
+          if (statusData) {
+            this.gitSyncStatus = statusData
           }
           if (res.error?.code === 'GIT_CONFLICT') {
             this.gitConflictError = {
               message: res.error.message,
-              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+              files: statusData?.conflict_files || []
             }
             uiStore.gitSyncModalOpen = true
+            if (statusData?.conflicts && statusData.conflicts.length > 0) {
+              uiStore.gitConflictModalOpen = true
+            }
           }
           uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Pull')
           return false
@@ -1109,6 +1129,11 @@ export const useCollectionStore = defineStore('collection', {
       const targetId = collectionId || this.activeCollectionId || 'default'
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
+
+      if (!(await this.flushDirtyBeforeGitSync())) {
+        return false
+      }
+
       this.gitSyncLoading = true
       this.gitConflictError = null
       try {
@@ -1135,15 +1160,19 @@ export const useCollectionStore = defineStore('collection', {
           uiStore.showToast('Đã stash, pull và gộp thay đổi thành công')
           return true
         } else {
-          if (res.data) {
-            this.gitSyncStatus = res.data as model.GitSyncStatus
+          const statusData = res.data as model.GitSyncStatus | undefined
+          if (statusData) {
+            this.gitSyncStatus = statusData
           }
           if (res.error?.code === 'GIT_CONFLICT') {
             this.gitConflictError = {
               message: res.error.message,
-              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+              files: statusData?.conflict_files || []
             }
             uiStore.gitSyncModalOpen = true
+            if (statusData?.conflicts && statusData.conflicts.length > 0) {
+              uiStore.gitConflictModalOpen = true
+            }
           }
           uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Stash & Pull')
           return false
@@ -1178,6 +1207,10 @@ export const useCollectionStore = defineStore('collection', {
         return false
       }
 
+      if (!(await this.flushDirtyBeforeGitSync())) {
+        return false
+      }
+
       this.gitSyncLoading = true
       try {
         const res = targetBranch && typeof GitPushCollectionToBranch === 'function'
@@ -1186,22 +1219,129 @@ export const useCollectionStore = defineStore('collection', {
         if (res.success) {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           if (targetId === this.activeCollectionId) {
-            await this.loadTree()
+            const { useEnvironmentStore } = await import('./environmentStore')
+            const envStore = useEnvironmentStore()
+            await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+            if (this.activeRequestId) {
+              const { useRequestStore } = await import('./requestStore')
+              if (this.findNode(this.tree, this.activeRequestId)) {
+                await useRequestStore().loadRequest(this.activeRequestId)
+              } else {
+                this.activeRequestId = null
+                useRequestStore().clearRequest()
+              }
+            }
           }
           uiStore.showToast('Git Push thành công')
           return true
         } else {
-          if (res.data) {
-            this.gitSyncStatus = res.data as model.GitSyncStatus
+          const statusData = res.data as model.GitSyncStatus | undefined
+          if (statusData) {
+            this.gitSyncStatus = statusData
           }
           if (res.error?.code === 'GIT_CONFLICT') {
             this.gitConflictError = {
               message: res.error.message,
-              files: (res.data as model.GitSyncStatus | undefined)?.conflict_files || []
+              files: statusData?.conflict_files || []
             }
             uiStore.gitSyncModalOpen = true
+            if (statusData?.conflicts && statusData.conflicts.length > 0) {
+              uiStore.gitConflictModalOpen = true
+            }
           }
           uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Push')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async resolveGitConflicts(resolvedFiles: Record<string, any>, collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      this.gitSyncLoading = true
+      try {
+        const res = await ResolveGitConflict(targetId, resolvedFiles)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          this.gitConflictError = null
+          uiStore.gitConflictModalOpen = false
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          if (this.activeRequestId) {
+            const { useRequestStore } = await import('./requestStore')
+            if (this.findNode(this.tree, this.activeRequestId)) {
+              await useRequestStore().loadRequest(this.activeRequestId)
+            } else {
+              this.activeRequestId = null
+              useRequestStore().clearRequest()
+            }
+          }
+          uiStore.showToast('Đã giải quyết xung đột và hoàn tất đồng bộ Git')
+          return true
+        } else {
+          const statusData = res.data as model.GitSyncStatus | undefined
+          if (statusData) {
+            this.gitSyncStatus = statusData
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: statusData?.conflict_files || []
+            }
+          }
+          uiStore.showToast(res.error?.message || 'Không thể giải quyết xung đột Git')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async abortGitMerge(collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      this.gitSyncLoading = true
+      try {
+        const res = await AbortGitMerge(targetId)
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          this.gitConflictError = null
+          uiStore.gitConflictModalOpen = false
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          if (this.activeRequestId) {
+            const { useRequestStore } = await import('./requestStore')
+            if (this.findNode(this.tree, this.activeRequestId)) {
+              await useRequestStore().loadRequest(this.activeRequestId)
+            } else {
+              this.activeRequestId = null
+              useRequestStore().clearRequest()
+            }
+          }
+          uiStore.showToast('Đã huỷ merge và khôi phục trạng thái trước đó')
+          return true
+        } else {
+          const statusData = res.data as model.GitSyncStatus | undefined
+          if (statusData) {
+            this.gitSyncStatus = statusData
+          }
+          if (res.error?.code === 'GIT_CONFLICT') {
+            this.gitConflictError = {
+              message: res.error.message,
+              files: statusData?.conflict_files || []
+            }
+          }
+          uiStore.showToast(res.error?.message || 'Không thể huỷ merge Git')
           return false
         }
       } catch (err) {

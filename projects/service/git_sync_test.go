@@ -465,5 +465,70 @@ func TestGitSyncService_InitialPushAndPullWithUnrelatedHistoryAndCollectionMeta(
 	}
 }
 
+func TestGitSyncService_PushAutoMergesJsonFieldsAndAbortMerge(t *testing.T) {
+	gitSvc, _, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	collDir := filepath.Join(collectionsRoot, collID)
+	reqFile := filepath.Join(collDir, "push-merge.json")
+	if err := os.WriteFile(reqFile, []byte("{\n  \"id\": \"pm-1\",\n  \"name\": \"Push Merge\",\n  \"method\": \"GET\",\n  \"url\": \"https://api.example.com/items\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write push-merge.json failed: %v", err)
+	}
+	if res := gitSvc.Push(collectionsRoot, collID); !res.Success {
+		t.Fatalf("initial Push failed: %+v", res.Error)
+	}
+
+	// Peer updates method to POST and pushes
+	peerDir := filepath.Join(filepath.Dir(collectionsRoot), "peer-push-merge")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, peerDir)
+	runTestGit(t, peerDir, "config", "user.name", "Peer Dev")
+	runTestGit(t, peerDir, "config", "user.email", "peer@hecto.local")
+	if err := os.WriteFile(filepath.Join(peerDir, "push-merge.json"), []byte("{\n  \"id\": \"pm-1\",\n  \"name\": \"Push Merge\",\n  \"method\": \"POST\",\n  \"url\": \"https://api.example.com/items\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write peer push-merge.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "peer change method to POST")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	// Local updates url and calls Push directly without Pull -> Push should auto-merge and succeed!
+	if err := os.WriteFile(reqFile, []byte("{\n  \"id\": \"pm-1\",\n  \"name\": \"Push Merge\",\n  \"method\": \"GET\",\n  \"url\": \"https://api.example.com/v2/items\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write local push-merge.json failed: %v", err)
+	}
+	pushRes := gitSvc.Push(collectionsRoot, collID)
+	if !pushRes.Success {
+		t.Fatalf("expected Push to auto-merge non-overlapping fields and succeed, got: %+v", pushRes.Error)
+	}
+
+	// Now create a true conflict on url and verify AbortMerge cleanly aborts MERGE_HEAD
+	runTestGit(t, peerDir, "pull", "--no-rebase")
+	if err := os.WriteFile(filepath.Join(peerDir, "push-merge.json"), []byte("{\n  \"id\": \"pm-1\",\n  \"name\": \"Push Merge\",\n  \"method\": \"POST\",\n  \"url\": \"https://remote-conflict.example.com/items\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write peer conflict push-merge.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "peer conflict url")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	if err := os.WriteFile(reqFile, []byte("{\n  \"id\": \"pm-1\",\n  \"name\": \"Push Merge\",\n  \"method\": \"POST\",\n  \"url\": \"https://local-conflict.example.com/items\"\n}\n"), 0644); err != nil {
+		t.Fatalf("write local conflict push-merge.json failed: %v", err)
+	}
+	pullConflictRes := gitSvc.Pull(collectionsRoot, collID)
+	if pullConflictRes.Success || pullConflictRes.Error == nil || pullConflictRes.Error.Code != model.ErrGitConflict {
+		t.Fatalf("expected Pull to return ErrGitConflict, got %+v", pullConflictRes)
+	}
+	abortRes := gitSvc.AbortMerge(collectionsRoot, collID)
+	if !abortRes.Success {
+		t.Fatalf("expected AbortMerge to succeed, got %+v", abortRes.Error)
+	}
+	abortStatus := abortRes.Data.(model.GitSyncStatus)
+	if abortStatus.HasConflicts {
+		t.Errorf("expected HasConflicts=false after AbortMerge, got %+v", abortStatus)
+	}
+}
+
+
 
 
