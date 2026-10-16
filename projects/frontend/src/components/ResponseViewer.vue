@@ -211,18 +211,6 @@ const levelBadgeClass = (level: string) => {
         <!-- Right: Meta & Actions -->
         <div class="flex items-center gap-2">
           <ResponseMetaBar v-if="responseStore.response" :response="responseStore.response" />
-          <button
-            type="button"
-            data-test="collapse-response-btn"
-            @click="uiStore.setResponsePaneCollapsed(true)"
-            title="Thu gọn khung phản hồi"
-            aria-label="Thu gọn khung phản hồi"
-            class="flex items-center justify-center p-1.5 rounded hover:bg-surface-raised text-text-secondary hover:text-text-primary transition-colors"
-          >
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
         </div>
       </div>
 
@@ -431,18 +419,6 @@ const levelBadgeClass = (level: string) => {
     </div>
     
     <div v-else class="flex-1 p-4 relative">
-      <button
-        type="button"
-        data-test="collapse-response-btn"
-        @click="uiStore.setResponsePaneCollapsed(true)"
-        title="Thu gọn khung phản hồi"
-        aria-label="Thu gọn khung phản hồi"
-        class="absolute top-2 right-2 p-1.5 rounded hover:bg-surface-raised text-text-secondary hover:text-text-primary transition-colors"
-      >
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
       <EmptyStateResponse />
     </div>
   </div>

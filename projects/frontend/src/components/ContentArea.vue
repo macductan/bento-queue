@@ -143,38 +143,24 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <!-- Horizontal Splitter with Collapse Button -->
+    <!-- Horizontal Splitter -->
     <div
       v-if="collectionStore.activeRequestId && !isResponseCollapsed"
       data-test="content-splitter"
       role="separator"
       aria-orientation="horizontal"
       aria-label="Điều chỉnh tỷ lệ khung Request và Response"
-      class="group relative h-1.5 shrink-0 cursor-row-resize select-none transition-colors hover:bg-brand-primary flex items-center justify-center"
-      :class="isDraggingSplitter ? 'bg-brand-primary' : 'bg-transparent'"
+      class="h-1 shrink-0 cursor-row-resize select-none bg-border-default hover:bg-brand-primary transition-colors"
+      :class="isDraggingSplitter ? 'bg-brand-primary' : ''"
       @mousedown="startContentResize"
       @dblclick="uiStore.resetRequestPaneRatio()"
-    >
-      <button
-        type="button"
-        data-test="toggle-response-collapse-btn"
-        title="Thu gọn khung Response"
-        aria-label="Thu gọn khung Response"
-        class="absolute z-10 -top-2.5 px-2 py-0.5 rounded-full bg-surface-overlay border border-border-default text-text-muted hover:text-text-primary hover:bg-surface-hover text-[10px] font-medium flex items-center gap-1 shadow-sm opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
-        @click.stop="uiStore.setResponsePaneCollapsed(true)"
-      >
-        <span>Thu gọn Response</span>
-        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="6 9 12 15 18 9"></polyline>
-        </svg>
-      </button>
-    </div>
+    ></div>
 
     <!-- Expanded Response Pane -->
     <div
       v-if="collectionStore.activeRequestId && !isResponseCollapsed"
       data-test="response-pane"
-      class="flex-1 min-h-[120px] min-w-0 overflow-y-auto border-t border-border-default"
+      class="flex-1 min-h-[100px] min-w-0 overflow-y-auto"
     >
       <ResponseViewer />
     </div>

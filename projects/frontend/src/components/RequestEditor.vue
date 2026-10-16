@@ -160,13 +160,13 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col p-3 pb-2 overflow-y-auto">
+  <div class="h-full flex flex-col px-3 pt-2 pb-0 overflow-y-auto">
     <div v-if="loading" class="animate-pulse space-y-4">
       <div class="h-8 bg-surface-hover rounded w-1/3"></div>
       <div class="h-10 bg-surface-hover rounded w-full"></div>
       <div class="h-32 bg-surface-hover rounded w-full"></div>
     </div>
-    <div v-else-if="req" class="flex-1 flex flex-col min-h-0 space-y-3">
+    <div v-else-if="req" class="flex-1 flex flex-col min-h-0 space-y-2">
       <!-- Breadcrumb Header with Request Name & Save Status Indicator -->
       <div class="shrink-0 flex items-center justify-between gap-2 min-w-0 py-0.5">
         <div class="flex items-center gap-1.5 text-xs font-medium text-text-muted min-w-0 truncate">
@@ -174,7 +174,15 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             <span class="opacity-80 shrink-0">{{ part }}</span>
             <span class="opacity-40 shrink-0">/</span>
           </template>
-          <span class="font-semibold text-text-primary truncate" :title="req.name">{{ req.name }}</span>
+          <h1 class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-primary min-w-0 truncate m-0 p-0 leading-none" :title="req.name">
+            <span class="truncate">{{ req.name }}</span>
+            <span
+              v-if="requestStore.saveStatus === 'unsaved'"
+              class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"
+              title="Chưa lưu"
+              aria-label="Chưa lưu"
+            />
+          </h1>
         </div>
         <span
           data-test="save-state-indicator"
@@ -221,7 +229,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
       <div class="flex-1 flex flex-col min-h-0">
         <RequestTabs />
         
-        <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-2">
+        <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-1.5">
           <div v-show="uiStore.activeRequestTab === 'params'" role="tabpanel" id="panel-params" aria-labelledby="tab-params" class="space-y-5">
             <div class="space-y-2" data-test="query-params-section">
               <div class="flex items-center justify-between px-1">

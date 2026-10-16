@@ -542,12 +542,12 @@ describe('RequestEditor.vue - Save State Indicator', () => {
 
     const wrapper = mountEditor()
     const root = wrapper.find('.h-full.flex.flex-col')
-    expect(root.classes()).toContain('p-3')
-    expect(root.classes()).toContain('pb-2')
+    expect(root.classes()).toContain('px-3')
+    expect(root.classes()).toContain('pb-0')
     expect(root.classes()).not.toContain('p-4')
 
     const reqCol = wrapper.find('.flex-1.flex.flex-col.min-h-0')
-    expect(reqCol.classes()).toContain('space-y-3')
+    expect(reqCol.classes()).toContain('space-y-2')
     expect(reqCol.classes()).not.toContain('space-y-6')
   })
 })

@@ -100,7 +100,7 @@ describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
     return store
   }
 
-  it('renders tree filter input and collections header', () => {
+  it('renders tree filter input and actions header', () => {
     setupTree()
     const wrapper = mount(AppSidebar, {
       global: {
@@ -109,9 +109,30 @@ describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
     })
 
     expect(wrapper.find('[data-test="tree-filter-input"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('My API Collection')
+    expect(wrapper.attributes('aria-label')).toContain('My API Collection')
+    expect(wrapper.find('[data-test="tree-collapse-all-btn"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="tree-expand-all-btn"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="git-config-btn"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="sidebar-add-btn"]').exists()).toBe(true)
+  })
+
+  it('supports collapse all and expand all buttons', async () => {
+    const store = setupTree()
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: { TreeNodeRow: true }
+      }
+    })
+
+    // Click expand all
+    await wrapper.find('[data-test="tree-expand-all-btn"]').trigger('click')
+    expect(store.expandedFolders.has('f-auth')).toBe(true)
+    expect(store.expandedFolders.has('f-items')).toBe(true)
+    expect(store.expandedFolders.has('f-nested-inventory')).toBe(true)
+
+    // Click collapse all
+    await wrapper.find('[data-test="tree-collapse-all-btn"]').trigger('click')
+    expect(store.expandedFolders.size).toBe(0)
   })
 
   it('filters requests by name and auto-expands ancestor folders', async () => {

@@ -200,7 +200,7 @@ const handleKeydown = (e: KeyboardEvent) => {
       <KvpEditor v-model="formDataRows" />
     </div>
     
-    <div v-else class="flex-1 h-full px-3 pt-0 pb-1 flex flex-col min-h-0 gap-2">
+    <div v-else class="flex-1 h-full px-3 pt-0 pb-0 flex flex-col min-h-0 gap-1.5">
       <!-- Smart JSON Toolbar -->
       <div v-if="bodyType === 'json'" class="flex items-center justify-between gap-2 shrink-0">
         <div class="flex items-center gap-2 text-xs min-w-0 flex-wrap">

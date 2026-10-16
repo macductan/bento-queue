@@ -352,7 +352,7 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       const responsePane = wrapper.find('[data-test="response-pane"]')
 
       expect(splitter.exists()).toBe(true)
-      expect(splitter.classes()).toContain('h-1.5')
+      expect(splitter.classes()).toContain('h-1')
       expect(splitter.classes()).toContain('cursor-row-resize')
       expect(responsePane.exists()).toBe(true)
       expect(requestPane.classes()).not.toContain('shrink-0')
@@ -516,10 +516,9 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(true)
       expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(true)
 
-      // Click toggle button on splitter to collapse again
-      const toggleBtn = wrapper.find('[data-test="toggle-response-collapse-btn"]')
-      expect(toggleBtn.exists()).toBe(true)
-      await toggleBtn.trigger('click')
+      // Collapse via store action
+      uiStore.setResponsePaneCollapsed(true)
+      await nextTick()
       expect(uiStore.responsePaneCollapsed).toBe(true)
       expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
       expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)

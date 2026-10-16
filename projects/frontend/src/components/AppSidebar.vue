@@ -17,6 +17,36 @@ const clearFilter = () => {
   filterQuery.value = ''
 }
 
+const onFilterInput = (e: Event) => {
+  filterQuery.value = (e.target as HTMLInputElement).value
+}
+
+const collapseAll = () => {
+  store.expandedFolders = new Set<string>()
+  if (savedExpandedFolders.value) {
+    savedExpandedFolders.value = new Set<string>()
+  }
+}
+
+const expandAll = () => {
+  const nextExpanded = new Set(store.expandedFolders)
+  const collectFolderIds = (nodes: typeof store.tree) => {
+    for (const node of nodes) {
+      if (node.type === 'folder') {
+        nextExpanded.add(node.id)
+        if (node.children && node.children.length > 0) {
+          collectFolderIds(node.children)
+        }
+      }
+    }
+  }
+  collectFolderIds(store.tree)
+  store.expandedFolders = nextExpanded
+  if (savedExpandedFolders.value) {
+    savedExpandedFolders.value = new Set(nextExpanded)
+  }
+}
+
 const handleFilterKeydown = (e: KeyboardEvent) => {
   if (e.key === 'Escape' && filterQuery.value) {
     e.stopPropagation()
@@ -120,93 +150,11 @@ const handleRootContextMenu = (e: MouseEvent) => {
   <nav
     class="shrink-0 bg-surface-raised border-r border-border-default flex flex-col overflow-hidden"
     :style="{ width: `${uiStore.sidebarWidth}px`, minWidth: `${uiStore.sidebarWidth}px` }"
-    aria-label="Bộ sưu tập"
+    :aria-label="store.activeCollection?.name ? `Bộ sưu tập: ${store.activeCollection.name}` : 'Bộ sưu tập'"
   >
-    <div class="p-2 border-b border-border-default shrink-0 space-y-2">
-      <!-- Title & Sidebar Actions -->
-      <div class="flex items-center justify-between px-1">
-        <span class="text-xs font-bold uppercase tracking-wider text-text-secondary select-none">
-          {{ store.activeCollection?.name || 'Collection' }}
-        </span>
-        <div class="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            data-test="git-config-btn"
-            title="Cấu hình Git Remote"
-            aria-label="Cấu hình Git Remote"
-            class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-            :class="(store.gitConflictError || store.gitSyncStatus?.has_conflicts) ? 'text-red-400' : (store.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
-            @click="uiStore.gitSyncModalOpen = true"
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="18" cy="18" r="3"></circle>
-              <circle cx="6" cy="6" r="3"></circle>
-              <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
-              <line x1="6" y1="9" x2="6" y2="21"></line>
-            </svg>
-            <span
-              v-if="store.gitConflictError || store.gitSyncStatus?.has_conflicts"
-              data-test="git-status-badge-conflict"
-              class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-500"
-            />
-            <span
-              v-else-if="store.activeCollection?.git_remote_url"
-              data-test="git-status-badge-configured"
-              class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400"
-            />
-          </button>
-
-          <div ref="addMenuContainerRef" class="relative">
-            <button
-              type="button"
-              data-test="sidebar-add-btn"
-              title="Thêm mới (Request / Thư mục)"
-              aria-label="Thêm mới"
-              :aria-expanded="addDropdownOpen"
-              class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-              @click="toggleAddDropdown"
-            >
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </button>
-
-            <div
-              v-if="addDropdownOpen"
-              data-test="sidebar-add-dropdown"
-              role="menu"
-              class="absolute right-0 mt-1 w-44 rounded-md bg-surface-overlay border border-border-default shadow-lg py-1 z-50"
-            >
-              <button
-                type="button"
-                role="menuitem"
-                data-test="add-request-item"
-                aria-label="Request mới"
-                title="Request mới (Ctrl+N)"
-                class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
-                @click="handleCreateRequest"
-              >
-                <span>📄 New Request</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                data-test="add-folder-item"
-                aria-label="Thư mục mới"
-                title="Thư mục mới (Ctrl+Shift+N)"
-                class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
-                @click="handleCreateFolder"
-              >
-                <span>📁 New Folder</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
+    <div class="p-2 border-b border-border-default shrink-0 flex items-center gap-1.5">
       <!-- Tree Filter Search Input -->
-      <div class="relative flex items-center">
+      <div class="relative flex-1 min-w-0 flex items-center">
         <svg
           class="absolute left-2.5 w-3.5 h-3.5 text-text-muted pointer-events-none"
           viewBox="0 0 24 24"
@@ -220,10 +168,12 @@ const handleRootContextMenu = (e: MouseEvent) => {
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
         <input
-          v-model="filterQuery"
+          :value="filterQuery"
+          @input="onFilterInput"
           type="text"
           data-test="tree-filter-input"
-          placeholder="Lọc request (tên, url, body)..."
+          aria-label="Tìm kiếm trong bộ sưu tập"
+          placeholder="Tìm kiếm request..."
           class="w-full pl-8 pr-7 py-1 text-xs rounded bg-surface-base border border-border-default hover:border-border-hover focus:border-brand-primary focus:outline-none transition-colors text-text-primary placeholder:text-text-muted"
           @keydown="handleFilterKeydown"
         />
@@ -240,6 +190,115 @@ const handleRootContextMenu = (e: MouseEvent) => {
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-0.5 shrink-0">
+        <!-- Collapse All -->
+        <button
+          type="button"
+          data-test="tree-collapse-all-btn"
+          title="Thu gọn tất cả"
+          aria-label="Thu gọn tất cả"
+          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          @click="collapseAll"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m7 20 5-5 5 5"/>
+            <path d="m7 4 5 5 5-5"/>
+          </svg>
+        </button>
+
+        <!-- Expand All -->
+        <button
+          type="button"
+          data-test="tree-expand-all-btn"
+          title="Mở rộng tất cả"
+          aria-label="Mở rộng tất cả"
+          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          @click="expandAll"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m7 15 5 5 5-5"/>
+            <path d="m7 9 5-5 5 5"/>
+          </svg>
+        </button>
+
+        <!-- Git remote config button -->
+        <button
+          type="button"
+          data-test="git-config-btn"
+          title="Cấu hình Git Remote"
+          aria-label="Cấu hình Git Remote"
+          class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          :class="(store.gitConflictError || store.gitSyncStatus?.has_conflicts) ? 'text-red-400' : (store.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
+          @click="uiStore.gitSyncModalOpen = true"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="18" r="3"></circle>
+            <circle cx="6" cy="6" r="3"></circle>
+            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+            <line x1="6" y1="9" x2="6" y2="21"></line>
+          </svg>
+          <span
+            v-if="store.gitConflictError || store.gitSyncStatus?.has_conflicts"
+            data-test="git-status-badge-conflict"
+            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-500"
+          />
+          <span
+            v-else-if="store.activeCollection?.git_remote_url"
+            data-test="git-status-badge-configured"
+            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400"
+          />
+        </button>
+
+        <!-- Add Request / Folder -->
+        <div ref="addMenuContainerRef" class="relative">
+          <button
+            type="button"
+            data-test="sidebar-add-btn"
+            title="Thêm mới (Request / Thư mục)"
+            aria-label="Thêm mới"
+            :aria-expanded="addDropdownOpen"
+            class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+            @click="toggleAddDropdown"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+
+          <div
+            v-if="addDropdownOpen"
+            data-test="sidebar-add-dropdown"
+            role="menu"
+            class="absolute right-0 mt-1 w-44 rounded-md bg-surface-overlay border border-border-default shadow-lg py-1 z-50"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              data-test="add-request-item"
+              aria-label="Request mới"
+              title="Request mới (Ctrl+N)"
+              class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+              @click="handleCreateRequest"
+            >
+              <span>📄 New Request</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-test="add-folder-item"
+              aria-label="Thư mục mới"
+              title="Thư mục mới (Ctrl+Shift+N)"
+              class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+              @click="handleCreateFolder"
+            >
+              <span>📁 New Folder</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
