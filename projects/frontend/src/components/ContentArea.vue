@@ -31,18 +31,18 @@ const isResponseCollapsed = computed(() => {
 })
 
 const contentAreaRef = ref<HTMLElement | null>(null)
+const requestPaneRef = ref<HTMLElement | null>(null)
 const isDraggingSplitter = ref(false)
+let dragStartY = 0
+let dragStartHeight = 0
+let dragContainerHeight = 600
 
 const handleContentMouseMove = (e: MouseEvent) => {
   if (!isDraggingSplitter.value) return
-  const rect = contentAreaRef.value?.getBoundingClientRect()
-  const containerHeight = rect && rect.height > 0
-    ? rect.height
-    : (typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 600)
-  const topOffset = rect ? rect.top : 0
-  const relativeY = e.clientY - topOffset
-  const ratio = (relativeY / containerHeight) * 100
-  uiStore.setRequestPaneRatio(ratio, containerHeight)
+  const deltaY = e.clientY - dragStartY
+  const newHeight = dragStartHeight + deltaY
+  const ratio = (newHeight / dragContainerHeight) * 100
+  uiStore.setRequestPaneRatio(ratio, dragContainerHeight)
 }
 
 const stopContentResize = () => {
@@ -59,6 +59,18 @@ const startContentResize = (e: MouseEvent) => {
   e.preventDefault()
   isDraggingSplitter.value = true
   document.body.style.userSelect = 'none'
+
+  const mainRect = contentAreaRef.value?.getBoundingClientRect()
+  const reqRect = requestPaneRef.value?.getBoundingClientRect()
+
+  dragStartY = e.clientY
+  dragContainerHeight = mainRect && mainRect.height > 0
+    ? mainRect.height
+    : (typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 600)
+  dragStartHeight = reqRect && reqRect.height > 0
+    ? reqRect.height
+    : (dragContainerHeight * (uiStore.requestPaneRatio / 100))
+
   window.addEventListener('mousemove', handleContentMouseMove)
   window.addEventListener('mouseup', stopContentResize)
 }
@@ -97,6 +109,7 @@ onUnmounted(() => {
   <main ref="contentAreaRef" class="flex-1 flex flex-col min-w-0 overflow-hidden">
     <AppTabBar />
     <div
+      ref="requestPaneRef"
       data-test="request-pane"
       :class="[
         (!collectionStore.activeRequestId || isResponseCollapsed) ? 'flex-1' : '',
