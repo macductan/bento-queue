@@ -120,6 +120,8 @@ export const useResponseStore = defineStore('response', {
           variables: vars,
           request: effectiveReq,
           collectionVariables: collectionStore.activeCollection?.variables,
+          collectionAuth: collectionStore.activeCollection?.auth,
+          collectionAuthEnvs: collectionStore.activeCollection?.auth_envs,
           environments: envStore.environments as any,
           activeEnvId: envStore.activeEnvId,
           pathFolders: pathNodes,
@@ -140,6 +142,9 @@ export const useResponseStore = defineStore('response', {
           await envStore.applyVariableUpdates(preRes.envUpdates)
         }
         await envStore.applyScopedVariableUpdates(preRes.scopedEnvUpdates, pathNodes)
+        if (preRes.scopedAuthUpdates) {
+          await envStore.applyScopedAuthUpdates(preRes.scopedAuthUpdates, pathNodes)
+        }
 
         // Apply request mutations from pre-request script
         const mut = preRes.requestMutations
@@ -175,6 +180,10 @@ export const useResponseStore = defineStore('response', {
             req.body.content = mut.body.content
           }
         }
+        if (mut.auth !== undefined) {
+          effectiveReq.auth = mut.auth
+          req.auth = mut.auth
+        }
 
         if (!preRes.success) {
           this.scriptError = preRes.error || 'Lỗi thực thi Pre-request Script'
@@ -206,6 +215,7 @@ export const useResponseStore = defineStore('response', {
         if (result.success) {
           nextResponse = result.data as ExecuteResponse
           updatedResponse = true
+          useUiStore().setResponsePaneCollapsed(false)
 
           this.appendExecutionLog({
             timestamp: nextResponse.timestamp || new Date().toISOString(),
@@ -232,6 +242,8 @@ export const useResponseStore = defineStore('response', {
               response: nextResponse,
               request: effectiveReq,
               collectionVariables: collectionStore.activeCollection?.variables,
+              collectionAuth: collectionStore.activeCollection?.auth,
+              collectionAuthEnvs: collectionStore.activeCollection?.auth_envs,
               environments: envStore.environments as any,
               activeEnvId: envStore.activeEnvId,
               pathFolders: pathNodes,
@@ -252,6 +264,9 @@ export const useResponseStore = defineStore('response', {
               await envStore.applyVariableUpdates(postRes.envUpdates)
             }
             await envStore.applyScopedVariableUpdates(postRes.scopedEnvUpdates, pathNodes)
+            if (postRes.scopedAuthUpdates) {
+              await envStore.applyScopedAuthUpdates(postRes.scopedAuthUpdates, pathNodes)
+            }
             const pMut = postRes.requestMutations
             if (pMut.url !== undefined) req.url = pMut.url
             if (pMut.method !== undefined) req.method = pMut.method
@@ -262,6 +277,9 @@ export const useResponseStore = defineStore('response', {
               if (!req.body) req.body = { type: 'none', content: '' }
               if (pMut.body.type !== undefined) req.body.type = pMut.body.type
               if (pMut.body.content !== undefined) req.body.content = pMut.body.content
+            }
+            if (pMut.auth !== undefined) {
+              req.auth = pMut.auth
             }
             if (!postRes.success) {
               this.scriptError = postRes.error || 'Lỗi thực thi Post-response Script'
@@ -283,6 +301,7 @@ export const useResponseStore = defineStore('response', {
             response: nextResponse
           })
         } else {
+          useUiStore().setResponsePaneCollapsed(false)
           const code = result.error?.code || 'UNKNOWN'
           const msg = result.error?.message || 'Lỗi không xác định'
 

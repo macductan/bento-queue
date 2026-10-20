@@ -170,6 +170,20 @@ export function jsTokenClass(type: JsTokenType): string {
 export const SCRIPT_COMPLETION_CATALOG: ScriptSuggestionItem[] = [
   // Environment scopes (Level 1..4)
   {
+    label: 'ha.environment.name',
+    insertText: 'ha.environment.name',
+    detail: 'Current Env',
+    description: 'Tên môi trường hiện tại đang chọn (ví dụ: "Dev", "Production")',
+    phase: 'both'
+  },
+  {
+    label: 'ha.environment.getCurrent()',
+    insertText: 'ha.environment.getCurrent()',
+    detail: 'Current Env',
+    description: 'Lấy thông tin môi trường hiện tại ({ id, name })',
+    phase: 'both'
+  },
+  {
     label: 'ha.environment.get(key, envName?)',
     insertText: "ha.environment.get('key')",
     detail: 'Global Env',
@@ -226,20 +240,112 @@ export const SCRIPT_COMPLETION_CATALOG: ScriptSuggestionItem[] = [
     phase: 'both'
   },
   {
-    label: 'ha.folderEnv.get(key, folderName?, envName?)',
-    insertText: "ha.folderEnv.get('key')",
-    detail: 'Folder Env',
-    description: 'Lấy biến theo môi trường của Folder (Level 4 cao nhất)',
+    label: "ha.env(envName?).set({ ... })",
+    insertText: "ha.env().set({ token: 'abc' })",
+    detail: 'Environment Scope',
+    description: 'Gán nhanh biến (hoặc object nhiều biến) cho Environment',
     phase: 'both'
   },
   {
-    label: 'ha.folderEnv.set(key, value, folderName?, envName?)',
-    insertText: "ha.folderEnv.set('key', 'value')",
-    detail: 'Folder Env',
-    description: 'Lưu biến theo môi trường riêng của Folder (mặc định Folder gần nhất & Env hiện tại)',
+    label: "ha.env(envName?).get(key)",
+    insertText: "ha.env().get('key')",
+    detail: 'Environment Scope',
+    description: 'Lấy giá trị biến của Environment (mặc định Environment đang chọn)',
     phase: 'both'
   },
-  // Request Query, Path Params, Headers, Body
+  {
+    label: "ha.env(envName?).unset(key)",
+    insertText: "ha.env().unset('key')",
+    detail: 'Environment Scope',
+    description: 'Xóa biến khỏi Environment',
+    phase: 'both'
+  },
+  {
+    label: 'ha.env().name / ha.environment.name',
+    insertText: 'ha.env().name',
+    detail: 'Environment Name',
+    description: 'Lấy tên Environment đang kích hoạt',
+    phase: 'both'
+  },
+  // Folder Scope & Chained Auth
+  {
+    label: "ha.folder(folderName?).set({ ... })",
+    insertText: "ha.folder().set({ key: 'value' })",
+    detail: 'Folder Scope',
+    description: 'Gán biến chung cho Folder (mặc định Folder gần nhất)',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).get(key)",
+    insertText: "ha.folder().get('key')",
+    detail: 'Folder Scope',
+    description: 'Lấy giá trị biến chung của Folder',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).env(envName?).set(key, val)",
+    insertText: "ha.folder().env('Dev').set('key', 'val')",
+    detail: 'Folder Env Scope',
+    description: 'Gán biến cho Folder theo Environment cụ thể',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.set({ type: 'bearer', value })",
+    insertText: "ha.folder().auth.set({ type: 'bearer', value: 'token-xyz' })",
+    detail: 'Folder Auth',
+    description: 'Gán Bearer Auth cho Folder bằng JSON',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.set({ type: 'apiKey', key, value })",
+    insertText: "ha.folder().auth.set({ type: 'apiKey', key: 'X-API-KEY', value: 'secret', addTo: 'header' })",
+    detail: 'Folder Auth',
+    description: 'Gán API Key Auth cho Folder bằng JSON',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.set({ type: 'basic', username, password })",
+    insertText: "ha.folder().auth.set({ type: 'basic', username: 'admin', password: '123' })",
+    detail: 'Folder Auth',
+    description: 'Gán Basic Auth cho Folder bằng JSON',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.inherit()",
+    insertText: "ha.folder().auth.inherit()",
+    detail: 'Folder Auth',
+    description: 'Kế thừa cấu hình Auth từ cha (inherit)',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.none()",
+    insertText: "ha.folder().auth.none()",
+    detail: 'Folder Auth',
+    description: 'Tắt xác thực cho Folder (No Auth)',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.env(envName?).set({ ... })",
+    insertText: "ha.folder().auth.env('Dev').set({ type: 'bearer', value: 'dev-token' })",
+    detail: 'Folder Env Auth',
+    description: 'Gán cấu hình Auth của Folder theo Environment cụ thể',
+    phase: 'both'
+  },
+  {
+    label: "ha.folder(folderName?).auth.get()",
+    insertText: "ha.folder().auth.get()",
+    detail: 'Folder Auth',
+    description: 'Lấy cấu hình Auth của Folder',
+    phase: 'both'
+  },
+  {
+    label: "ha.folderAuth.set(folder, { type, ... })",
+    insertText: "ha.folderAuth.set('FolderName', { type: 'apiKey', key: 'X-API-KEY', value: 'secret' })",
+    detail: 'Folder Auth',
+    description: 'Gán cấu hình Auth linh hoạt cho Folder bằng JSON (apiKey, bearer, basic)',
+    phase: 'both'
+  },
+  // Request Query, Path Params, Headers, Body, Auth
   {
     label: 'ha.request.params.get(key)',
     insertText: "ha.request.params.get('page')",
@@ -317,6 +423,48 @@ export const SCRIPT_COMPLETION_CATALOG: ScriptSuggestionItem[] = [
     description: 'Cập nhật nội dung Body của request (Object hoặc chuỗi)',
     phase: 'pre'
   },
+  {
+    label: 'ha.request.auth.get()',
+    insertText: 'ha.request.auth.get()',
+    detail: 'Request Auth',
+    description: 'Lấy cấu hình Auth của request hiện tại',
+    phase: 'both'
+  },
+  {
+    label: 'ha.request.auth.setBearer(token)',
+    insertText: "ha.request.auth.setBearer('token-xyz')",
+    detail: 'Request Auth',
+    description: 'Gán Bearer Token cho request hiện tại trước khi gửi',
+    phase: 'pre'
+  },
+  {
+    label: 'ha.request.auth.setBasic(username, password)',
+    insertText: "ha.request.auth.setBasic('user', 'pass')",
+    detail: 'Request Auth',
+    description: 'Gán Basic Auth cho request hiện tại trước khi gửi',
+    phase: 'pre'
+  },
+  {
+    label: 'ha.request.auth.setApiKey(key, value, addTo?)',
+    insertText: "ha.request.auth.setApiKey('X-API-Key', 'secret', 'header')",
+    detail: 'Request Auth',
+    description: 'Gán API Key cho request hiện tại trước khi gửi',
+    phase: 'pre'
+  },
+  {
+    label: 'ha.request.auth.inherit()',
+    insertText: 'ha.request.auth.inherit()',
+    detail: 'Request Auth',
+    description: 'Kế thừa cấu hình Auth từ Folder cha hoặc Collection',
+    phase: 'pre'
+  },
+  {
+    label: 'ha.request.auth.none()',
+    insertText: 'ha.request.auth.none()',
+    detail: 'Request Auth',
+    description: 'Tắt xác thực cho request hiện tại (No Auth)',
+    phase: 'pre'
+  },
   // Response APIs
   {
     label: 'ha.response.json()',
@@ -391,42 +539,193 @@ export const SCRIPT_COMPLETION_CATALOG: ScriptSuggestionItem[] = [
   }
 ]
 
+export const OBJECT_COMPLETION_CATALOG: ScriptSuggestionItem[] = [
+  {
+    label: "type: 'bearer', value: ''",
+    insertText: "type: 'bearer', value: ''",
+    detail: 'Bearer Auth',
+    description: 'Cấu hình Bearer Token cho Auth',
+    phase: 'both'
+  },
+  {
+    label: "type: 'apiKey', key: '', value: '', addTo: 'header'",
+    insertText: "type: 'apiKey', key: 'X-API-KEY', value: '', addTo: 'header'",
+    detail: 'API Key Auth',
+    description: 'Cấu hình API Key (Header hoặc Query) cho Auth',
+    phase: 'both'
+  },
+  {
+    label: "type: 'basic', username: '', password: ''",
+    insertText: "type: 'basic', username: '', password: ''",
+    detail: 'Basic Auth',
+    description: 'Cấu hình Basic Auth (Username / Password)',
+    phase: 'both'
+  },
+  {
+    label: "type: 'inherit'",
+    insertText: "type: 'inherit'",
+    detail: 'Inherit Auth',
+    description: 'Kế thừa cấu hình Auth từ cấp cha',
+    phase: 'both'
+  },
+  {
+    label: "type: 'none'",
+    insertText: "type: 'none'",
+    detail: 'No Auth',
+    description: 'Tắt xác thực (Không gửi Auth)',
+    phase: 'both'
+  },
+  {
+    label: "'bearer'",
+    insertText: "'bearer'",
+    detail: 'Auth Type',
+    description: 'Loại xác thực Bearer Token',
+    phase: 'both'
+  },
+  {
+    label: "'apiKey'",
+    insertText: "'apiKey'",
+    detail: 'Auth Type',
+    description: 'Loại xác thực API Key',
+    phase: 'both'
+  },
+  {
+    label: "'basic'",
+    insertText: "'basic'",
+    detail: 'Auth Type',
+    description: 'Loại xác thực Basic Auth',
+    phase: 'both'
+  },
+  {
+    label: "'inherit'",
+    insertText: "'inherit'",
+    detail: 'Auth Type',
+    description: 'Loại xác thực Inherit',
+    phase: 'both'
+  },
+  {
+    label: "'none'",
+    insertText: "'none'",
+    detail: 'Auth Type',
+    description: 'Loại xác thực No Auth',
+    phase: 'both'
+  },
+  {
+    label: "key: 'value'",
+    insertText: "key: 'value'",
+    detail: 'Variable',
+    description: 'Cặp key-value biến môi trường',
+    phase: 'both'
+  }
+]
+
+export function isInsideObjectLiteral(codeBeforeCursor: string): boolean {
+  let braceDepth = 0
+  let inString: string | null = null
+  let lastOpenIndex = -1
+
+  for (let i = 0; i < codeBeforeCursor.length; i++) {
+    const char = codeBeforeCursor[i]
+    const prev = i > 0 ? codeBeforeCursor[i - 1] : ''
+
+    if (inString) {
+      if (char === inString && prev !== '\\') {
+        inString = null
+      }
+      continue
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      inString = char
+      continue
+    }
+
+    if (char === '{') {
+      braceDepth++
+      lastOpenIndex = i
+    } else if (char === '}') {
+      if (braceDepth > 0) braceDepth--
+    }
+  }
+
+  if (braceDepth > 0 && lastOpenIndex !== -1) {
+    const beforeBrace = codeBeforeCursor.slice(0, lastOpenIndex).trimEnd()
+    // Preceded by '(', ',', ':', '=', 'return' means object literal (e.g. .set({ or const obj = {)
+    if (/[(,:=]\s*$/.test(beforeBrace) || /return\s*$/.test(beforeBrace)) {
+      return true
+    }
+  }
+  return false
+}
+
 export function extractPrefixBeforeCursor(
   code: string,
   cursorIndex: number
-): { prefix: string; startIndex: number } {
+): { prefix: string; startIndex: number; isInsideObject: boolean } {
   const before = code.slice(0, Math.max(0, cursorIndex))
+  const isInsideObject = isInsideObjectLiteral(before)
+
   const match = before.match(/[a-zA-Z_$][a-zA-Z0-9_$.]*$/)
   if (!match) {
-    return { prefix: '', startIndex: cursorIndex }
+    return { prefix: '', startIndex: cursorIndex, isInsideObject }
   }
   return {
     prefix: match[0],
-    startIndex: cursorIndex - match[0].length
+    startIndex: cursorIndex - match[0].length,
+    isInsideObject
   }
 }
 
 export function getScriptSuggestions(
   prefix: string,
-  phase: 'pre_request' | 'post_response'
+  phase: 'pre_request' | 'post_response',
+  isInsideObject = false
 ): ScriptSuggestionItem[] {
   const trimmed = prefix.trim()
   if (!trimmed) return []
 
-  // Normalize pm. prefix to match ha. catalog items seamlessly
+  const targetPhase = phase === 'pre_request' ? 'pre' : 'post'
+
+  if (isInsideObject) {
+    // Inside object: ONLY suggest object properties / values, never top-level ha.* lines
+    const lower = trimmed.toLowerCase().replace(/['"]/g, '')
+    return OBJECT_COMPLETION_CATALOG.filter(item => {
+      if (item.phase !== 'both' && item.phase !== targetPhase) return false
+      const labelLower = item.label.toLowerCase()
+      const insertLower = item.insertText.toLowerCase()
+      return (
+        labelLower.startsWith(lower) ||
+        insertLower.startsWith(lower) ||
+        labelLower.includes(lower)
+      )
+    }).slice(0, 10)
+  }
+
+  // Outside object: suggestions from SCRIPT_COMPLETION_CATALOG
   const normalizedPrefix = trimmed.startsWith('pm.')
     ? 'ha.' + trimmed.slice(3)
     : trimmed === 'pm'
       ? 'ha'
       : trimmed
   const lower = normalizedPrefix.toLowerCase()
-  const targetPhase = phase === 'pre_request' ? 'pre' : 'post'
 
   return SCRIPT_COMPLETION_CATALOG.filter(item => {
     if (item.phase !== 'both' && item.phase !== targetPhase) return false
     const itemLower = item.label.toLowerCase()
     const insertLower = item.insertText.toLowerCase()
-    return itemLower.startsWith(lower) || insertLower.startsWith(lower) || itemLower.includes(lower)
+
+    // 1. Direct prefix matches
+    if (itemLower.startsWith(lower) || insertLower.startsWith(lower)) {
+      return true
+    }
+
+    // 2. Member / segment match (e.g. typing "folder", "auth", "resp", "env", "param", "header")
+    const segments = itemLower.split(/[.()]/).filter(Boolean)
+    if (segments.some(seg => seg.startsWith(lower))) {
+      return true
+    }
+
+    return false
   })
     .map(item => {
       if (trimmed.startsWith('pm')) {
@@ -438,5 +737,5 @@ export function getScriptSuggestions(
       }
       return item
     })
-    .slice(0, 8)
+    .slice(0, 16)
 }

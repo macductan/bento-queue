@@ -1,12 +1,86 @@
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useRequestStore } from '@/stores/requestStore'
 import TreeNodeRow from './TreeNodeRow.vue'
-import CollectionSwitcher from './CollectionSwitcher.vue'
+import { filterTree } from '@/utils/treeFilter'
 
 const store = useCollectionStore()
 const uiStore = useUiStore()
+const requestStore = useRequestStore()
+
+const filterQuery = ref('')
+const savedExpandedFolders = ref<Set<string> | null>(null)
+
+const clearFilter = () => {
+  filterQuery.value = ''
+}
+
+const onFilterInput = (e: Event) => {
+  filterQuery.value = (e.target as HTMLInputElement).value
+}
+
+const collapseAll = () => {
+  store.expandedFolders = new Set<string>()
+  if (savedExpandedFolders.value) {
+    savedExpandedFolders.value = new Set<string>()
+  }
+}
+
+const sortAlphabet = async () => {
+  await store.sortNodes('')
+}
+
+const handleFilterKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && filterQuery.value) {
+    e.stopPropagation()
+    clearFilter()
+  }
+}
+
+const filterResult = computed(() => {
+  return filterTree(store.tree, filterQuery.value, {
+    activeRequestId: requestStore.current?.id,
+    activeRequestUrl: requestStore.current?.url,
+    activeRequestBody: requestStore.current?.body?.content
+  })
+})
+
+const displayedTree = computed(() => filterResult.value.filtered)
+
+watch(
+  () => filterQuery.value,
+  (newQ, oldQ) => {
+    const trimmedNew = newQ.trim()
+    const trimmedOld = (oldQ || '').trim()
+
+    if (trimmedNew) {
+      if (!trimmedOld) {
+        savedExpandedFolders.value = new Set(store.expandedFolders)
+      }
+      for (const folderId of filterResult.value.expandedFolderIds) {
+        store.expandedFolders.add(folderId)
+      }
+    } else {
+      if (savedExpandedFolders.value) {
+        store.expandedFolders = new Set(savedExpandedFolders.value)
+        savedExpandedFolders.value = null
+      }
+    }
+  }
+)
+
+watch(
+  () => store.tree,
+  () => {
+    if (filterQuery.value.trim()) {
+      for (const folderId of filterResult.value.expandedFolderIds) {
+        store.expandedFolders.add(folderId)
+      }
+    }
+  }
+)
 
 const addDropdownOpen = ref(false)
 const addMenuContainerRef = ref<HTMLElement | null>(null)
@@ -55,44 +129,156 @@ const handleRootContextMenu = (e: MouseEvent) => {
     uiStore.openContextMenu(e.clientX, e.clientY, '', 'folder')
   }
 }
+
+const isRootDragOver = ref(false)
+
+watch(
+  () => store.draggingNode,
+  (node) => {
+    if (!node) {
+      isRootDragOver.value = false
+    }
+  }
+)
+
+const onRootDragOver = (e: DragEvent) => {
+  const dragging = store.draggingNode
+  if (!dragging) return
+
+  const target = e.target as HTMLElement | null
+  if (target?.closest('[data-tree-node]') || target?.closest('[data-tree-row]')) {
+    isRootDragOver.value = false
+    return
+  }
+
+  if (store.canMoveNodeTo(dragging.id, dragging.type, '')) {
+    e.preventDefault()
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move'
+    }
+    isRootDragOver.value = true
+  } else {
+    isRootDragOver.value = false
+  }
+}
+
+const onRootDragLeave = (e: DragEvent) => {
+  const currentTarget = e.currentTarget as HTMLElement | null
+  if (!currentTarget) {
+    isRootDragOver.value = false
+    return
+  }
+  const rect = currentTarget.getBoundingClientRect()
+  if (
+    e.clientX >= rect.left &&
+    e.clientX < rect.right &&
+    e.clientY >= rect.top &&
+    e.clientY < rect.bottom
+  ) {
+    return
+  }
+  isRootDragOver.value = false
+}
+
+const onRootDrop = async (e: DragEvent) => {
+  const dragging = store.draggingNode
+  isRootDragOver.value = false
+  if (!dragging) return
+
+  if (store.canMoveNodeTo(dragging.id, dragging.type, '')) {
+    e.preventDefault()
+    store.setDraggingNode(null)
+    if (dragging.type === 'folder') {
+      await store.moveFolder(dragging.id, '')
+    } else {
+      await store.moveRequest(dragging.id, '')
+    }
+  }
+}
 </script>
 
 <template>
   <nav
     class="shrink-0 bg-surface-raised border-r border-border-default flex flex-col overflow-hidden"
     :style="{ width: `${uiStore.sidebarWidth}px`, minWidth: `${uiStore.sidebarWidth}px` }"
-    aria-label="Bộ sưu tập"
+    :aria-label="store.activeCollection?.name ? `Bộ sưu tập: ${store.activeCollection.name}` : 'Bộ sưu tập'"
   >
-    <div class="px-3 py-2 border-b border-border-default shrink-0 flex items-center justify-between gap-1">
-      <CollectionSwitcher />
-      <div class="flex items-center gap-1 shrink-0">
+    <div class="p-2 border-b border-border-default shrink-0 flex items-center gap-1.5">
+      <!-- Tree Filter Search Input -->
+      <div class="relative flex-1 min-w-0 flex items-center">
+        <svg
+          class="absolute left-2.5 w-3.5 h-3.5 text-text-muted pointer-events-none"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input
+          :value="filterQuery"
+          @input="onFilterInput"
+          type="text"
+          data-test="tree-filter-input"
+          aria-label="Tìm kiếm trong bộ sưu tập"
+          placeholder="Tìm kiếm request..."
+          class="w-full pl-8 pr-7 py-1 text-xs rounded bg-surface-base border border-border-default hover:border-border-hover focus:border-brand-primary focus:outline-none transition-colors text-text-primary placeholder:text-text-muted"
+          @keydown="handleFilterKeydown"
+        />
         <button
+          v-if="filterQuery"
           type="button"
-          data-test="git-config-btn"
-          title="Cấu hình Git Remote"
-          aria-label="Cấu hình Git Remote"
-          class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          :class="(store.gitConflictError || store.gitSyncStatus?.has_conflicts) ? 'text-red-400' : (store.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
-          @click="uiStore.gitSyncModalOpen = true"
+          data-test="clear-filter-btn"
+          title="Xóa bộ lọc"
+          class="absolute right-1.5 p-0.5 rounded text-text-muted hover:text-text-primary cursor-pointer hover:bg-surface-hover"
+          @click="clearFilter"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="18" cy="18" r="3"></circle>
-            <circle cx="6" cy="6" r="3"></circle>
-            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
-            <line x1="6" y1="9" x2="6" y2="21"></line>
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
-          <span
-            v-if="store.gitConflictError || store.gitSyncStatus?.has_conflicts"
-            data-test="git-status-badge-conflict"
-            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-500"
-          />
-          <span
-            v-else-if="store.activeCollection?.git_remote_url"
-            data-test="git-status-badge-configured"
-            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400"
-          />
+        </button>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-0.5 shrink-0">
+        <!-- Collapse All -->
+        <button
+          type="button"
+          data-test="tree-collapse-all-btn"
+          title="Thu gọn tất cả"
+          aria-label="Thu gọn tất cả"
+          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          @click="collapseAll"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m7 20 5-5 5 5"/>
+            <path d="m7 4 5 5 5-5"/>
+          </svg>
         </button>
 
+        <!-- Sort Alphabetically -->
+        <button
+          type="button"
+          data-test="tree-sort-alphabet-btn"
+          title="Sắp xếp theo thứ tự A-Z"
+          aria-label="Sắp xếp theo thứ tự A-Z"
+          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          @click="sortAlphabet"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 16 4 4 4-4"/>
+            <path d="M7 20V4"/>
+            <path d="M20 8h-5"/>
+            <path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/>
+            <path d="M15 14h5l-5 6h5"/>
+          </svg>
+        </button>
+
+        <!-- Add Request / Folder -->
         <div ref="addMenuContainerRef" class="relative">
           <button
             type="button"
@@ -141,8 +327,16 @@ const handleRootContextMenu = (e: MouseEvent) => {
         </div>
       </div>
     </div>
+
+    <!-- Tree Content Area -->
     <div 
       class="flex-1 overflow-y-auto py-2"
+      data-test="tree-root-drop-zone"
+      :data-root-drop-active="isRootDragOver ? 'true' : undefined"
+      :class="{ 'ring-2 ring-inset ring-brand-primary/60 bg-brand-primary/5': isRootDragOver }"
+      @dragover="onRootDragOver"
+      @dragleave="onRootDragLeave"
+      @drop="onRootDrop"
       @contextmenu.prevent="handleRootContextMenu"
     >
       <div v-if="store.loading && store.tree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
@@ -156,13 +350,27 @@ const handleRootContextMenu = (e: MouseEvent) => {
           Tạo request mới
         </button>
       </div>
-      <div v-else>
-        <TreeNodeRow 
-          v-for="node in store.tree" 
-          :key="node.id"
-          :node="node"
-          :depth="0"
-        />
+      <div v-else-if="filterQuery.trim() && displayedTree.length === 0" data-test="tree-filter-empty" class="px-3 py-8 text-center flex flex-col items-center gap-2">
+        <span class="ui-sm text-text-muted">Không tìm thấy kết quả phù hợp cho "{{ filterQuery }}".</span>
+        <button 
+          type="button"
+          data-test="clear-filter-empty-btn"
+          @click="clearFilter"
+          class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
+        >
+          Xóa bộ lọc
+        </button>
+      </div>
+      <div v-else class="flex flex-col min-h-full">
+        <div>
+          <TreeNodeRow 
+            v-for="node in displayedTree" 
+            :key="node.id"
+            :node="node"
+            :depth="0"
+          />
+        </div>
+        <div class="flex-1 min-h-[48px]" data-test="tree-root-empty-space" />
       </div>
     </div>
   </nav>

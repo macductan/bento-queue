@@ -651,6 +651,67 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     expect(popover?.textContent).toContain('Global Env (Dev)')
     expect(popover?.textContent).toContain('Collection Env (Dùng chung)')
   })
+
+  it('renders tabs in order Variables -> Auth -> Headers and defaults activeTab to variables', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    const vm = wrapper.vm as any
+    expect(vm.activeTab).toBe('variables')
+
+    const tabButtons = wrapper.findAll('div[role="tablist"] button[role="tab"]')
+    expect(tabButtons.length).toBe(3)
+    expect(tabButtons[0].text()).toContain('Variables')
+    expect(tabButtons[0].attributes('aria-selected')).toBe('true')
+    expect(tabButtons[1].text()).toContain('Auth')
+    expect(tabButtons[1].attributes('aria-selected')).toBe('false')
+    expect(tabButtons[2].text()).toContain('Headers')
+    expect(tabButtons[2].attributes('aria-selected')).toBe('false')
+
+    await tabButtons[1].trigger('click')
+    await nextTick()
+    expect(vm.activeTab).toBe('auth')
+    expect(tabButtons[1].attributes('aria-selected')).toBe('true')
+
+    await tabButtons[2].trigger('click')
+    await nextTick()
+    expect(vm.activeTab).toBe('headers')
+    expect(tabButtons[2].attributes('aria-selected')).toBe('true')
+  })
+
+  it('preserves active tab when switching away to another tab and returning to the folder', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper1 = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    // Switch to Auth tab
+    const tabButtons = wrapper1.findAll('div[role="tablist"] button[role="tab"]')
+    await tabButtons[1].trigger('click')
+    await nextTick()
+    expect((wrapper1.vm as any).activeTab).toBe('auth')
+
+    // Simulate switching away (unmounting FolderEditor)
+    wrapper1.unmount()
+
+    // User switches back to folder tab (mounting FolderEditor again)
+    const wrapper2 = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    // It should still be on Auth tab!
+    expect((wrapper2.vm as any).activeTab).toBe('auth')
+    const tabButtons2 = wrapper2.findAll('div[role="tablist"] button[role="tab"]')
+    expect(tabButtons2[1].attributes('aria-selected')).toBe('true')
+  })
 })
 
 

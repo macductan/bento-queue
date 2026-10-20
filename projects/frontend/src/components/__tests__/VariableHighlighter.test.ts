@@ -683,6 +683,43 @@ describe('VariableHighlighter', () => {
       await nextTick()
       expect(document.body.querySelector('[data-test="variable-hover-popover"]')).toBeNull()
     })
+
+    it('highlights XML syntax tokens while preserving {{variable}} placeholders when syntax="xml"', async () => {
+      const store = useEnvironmentStore()
+      store.environments = [
+        { id: 'env-1', name: 'Dev', variables: [{ key: 'user_name', value: 'Alice', enabled: true }], created_at: '', updated_at: '' } as any
+      ]
+      store.activeEnvId = 'env-1'
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          props: {
+            value: '<user id="42" active="true"><name>{{user_name}}</name></user>',
+            syntax: 'xml'
+          }
+        })
+      )
+      await nextTick()
+
+      // XML syntax tokens should be rendered
+      const tagTokens = wrapper.findAll('[data-xml-token="tag-name"]')
+      expect(tagTokens.length).toBeGreaterThan(0)
+      expect(tagTokens.some((t: any) => t.text() === 'user')).toBe(true)
+      expect(tagTokens.some((t: any) => t.text() === 'name')).toBe(true)
+
+      const attrNameTokens = wrapper.findAll('[data-xml-token="attr-name"]')
+      expect(attrNameTokens.some((t: any) => t.text() === 'id')).toBe(true)
+      expect(attrNameTokens.some((t: any) => t.text() === 'active')).toBe(true)
+
+      const attrValTokens = wrapper.findAll('[data-xml-token="attr-value"]')
+      expect(attrValTokens.some((t: any) => t.text() === '"42"')).toBe(true)
+
+      // Variable placeholder {{user_name}} must be preserved with valid highlight
+      const varSpan = wrapper.find('[data-var-name="user_name"]')
+      expect(varSpan.exists()).toBe(true)
+      expect(varSpan.text()).toBe('{{user_name}}')
+      expect(varSpan.classes()).toContain('text-variable-valid')
+    })
   })
 })
 

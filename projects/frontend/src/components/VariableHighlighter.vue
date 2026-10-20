@@ -20,6 +20,7 @@ import {
 } from '@/utils/resolveHierarchyVariables'
 import VariableHoverPopover, { type AnchorRectLike } from './VariableHoverPopover.vue'
 import { tokenizeJsonTextSegment, type JsonSyntaxToken } from '@/utils/jsonEditor'
+import { tokenizeXmlTextSegment, xmlTokenClass, type XmlSyntaxToken } from '@/utils/xmlUtils'
 
 const HOVER_OPEN_DELAY_MS = 150
 const HOVER_CLOSE_DELAY_MS = 200
@@ -45,6 +46,27 @@ const getJsonTokensForSegment = (idx: number, textVal: string): JsonSyntaxToken[
   const prevWasVar = idx > 0 && (list[idx - 1].type === 'resolved' || list[idx - 1].type === 'missing')
   const nextIsVar = idx + 1 < list.length && (list[idx + 1].type === 'resolved' || list[idx + 1].type === 'missing')
   return tokenizeJsonTextSegment(textVal, prevWasVar, nextIsVar)
+}
+
+const xmlSegmentStates = computed(() => {
+  if (props.syntax !== 'xml') return []
+  const list = segments.value
+  let insideTag = false
+  const states: boolean[] = []
+  for (let i = 0; i < list.length; i++) {
+    const seg = list[i]
+    states.push(insideTag)
+    if (seg.type === 'text') {
+      const toks = tokenizeXmlTextSegment(seg.value, insideTag)
+      insideTag = Boolean(toks.endsInsideTag)
+    }
+  }
+  return states
+})
+
+const getXmlTokensForSegment = (idx: number, textVal: string): XmlSyntaxToken[] => {
+  const startInside = xmlSegmentStates.value[idx] || false
+  return tokenizeXmlTextSegment(textVal, startInside)
 }
 
 const jsonTokenClass = (type: JsonSyntaxToken['type']): string => {
@@ -522,6 +544,14 @@ defineExpose({
                 :key="tIdx"
                 :data-json-token="tok.type !== 'plain' ? tok.type : undefined"
                 :class="jsonTokenClass(tok.type)"
+              >{{ tok.value }}</span>
+            </template>
+            <template v-else-if="syntax === 'xml'">
+              <span
+                v-for="(tok, tIdx) in getXmlTokensForSegment(idx, seg.value)"
+                :key="tIdx"
+                :data-xml-token="tok.type !== 'plain' ? tok.type : undefined"
+                :class="xmlTokenClass(tok.type)"
               >{{ tok.value }}</span>
             </template>
             <span v-else>{{ seg.value }}</span>

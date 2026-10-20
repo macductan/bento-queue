@@ -441,6 +441,200 @@ func TestMoveRequest(t *testing.T) {
 	}
 }
 
+func TestMoveFolder(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+
+	// Create f1 at root
+	f1 := filepath.Join(root, "f1")
+	writeFolder(t, fs, f1, "f1", "Folder 1")
+
+	// Create child request inside f1
+	req1 := createTestRequest("r1", "Req 1", "GET")
+	fs.WriteJSON(filepath.Join(f1, "r1.json"), req1)
+
+	// Create child folder f1_sub inside f1
+	f1_sub := filepath.Join(f1, "f1_sub")
+	writeFolder(t, fs, f1_sub, "f1_sub", "Folder 1 Sub")
+
+	// Create request inside f1_sub
+	req2 := createTestRequest("r2", "Req 2", "POST")
+	fs.WriteJSON(filepath.Join(f1_sub, "r2.json"), req2)
+
+	// Create child-child folder f1_sub_sub inside f1_sub
+	f1_sub_sub := filepath.Join(f1_sub, "f1_sub_sub")
+	writeFolder(t, fs, f1_sub_sub, "f1_sub_sub", "Deep Folder")
+
+	// Create f2 at root
+	f2 := filepath.Join(root, "f2")
+	writeFolder(t, fs, f2, "f2", "Folder 2")
+
+	// Build index
+	if res := svc.GetTree(root); !res.Success {
+		t.Fatalf("GetTree failed: %v", res.Error)
+	}
+
+	// 1. Cycle checks
+	// Direct cycle (into itself)
+	if res := svc.MoveFolder(root, "f1", "f1"); res.Success {
+		t.Errorf("expected failure when moving folder into itself")
+	} else if res.Error.Code != model.ErrValidation || res.Error.Message != service.ErrFolderMoveCycle {
+		t.Errorf("unexpected error for self move: %v", res.Error)
+	}
+
+	// Descendant cycle: move f1 into child f1_sub
+	if res := svc.MoveFolder(root, "f1", "f1_sub"); res.Success {
+		t.Errorf("expected failure when moving folder into child")
+	} else if res.Error.Code != model.ErrValidation || res.Error.Message != service.ErrFolderMoveCycle {
+		t.Errorf("unexpected error for child move: %v", res.Error)
+	}
+
+	// Descendant cycle: move f1 into grandchild f1_sub_sub
+	if res := svc.MoveFolder(root, "f1", "f1_sub_sub"); res.Success {
+		t.Errorf("expected failure when moving folder into grandchild")
+	} else if res.Error.Code != model.ErrValidation || res.Error.Message != service.ErrFolderMoveCycle {
+		t.Errorf("unexpected error for grandchild move: %v", res.Error)
+	}
+
+	// 2. Invalid inputs & destinations
+	if res := svc.MoveFolder("", "f1", "f2"); res.Success {
+		t.Errorf("expected failure with empty rootPath")
+	}
+	if res := svc.MoveFolder(root, "", "f2"); res.Success {
+		t.Errorf("expected failure with empty id")
+	}
+	if res := svc.MoveFolder(root, "non-existent", "f2"); res.Success {
+		t.Errorf("expected failure with non-existent id")
+	}
+	if res := svc.MoveFolder(root, "f1", "non-existent-target"); res.Success {
+		t.Errorf("expected failure with non-existent target")
+	}
+	if res := svc.MoveFolder(root, "r1", "f2"); res.Success {
+		t.Errorf("expected failure when moving request as folder")
+	}
+	if res := svc.MoveFolder(root, "f1", "r1"); res.Success {
+		t.Errorf("expected failure when target is a request")
+	}
+
+	// Moving to environments directory
+	envsDir := filepath.Join(root, "environments")
+	os.MkdirAll(envsDir, 0755)
+	fs.IndexSet("env-fake", envsDir)
+	if res := svc.MoveFolder(root, "f1", "env-fake"); res.Success {
+		t.Errorf("expected failure when moving to environments")
+	}
+
+	// 3. Same parent no-op
+	if res := svc.MoveFolder(root, "f1", ""); !res.Success {
+		t.Errorf("expected success for same parent no-op (already in root): %v", res.Error)
+	}
+
+	// 4. Move f1 into f2
+	if res := svc.MoveFolder(root, "f1", "f2"); !res.Success {
+		t.Fatalf("expected success moving f1 into f2: %v", res.Error)
+	}
+
+	newF1Path := filepath.Join(f2, "f1")
+	if !fs.Exists(filepath.Join(newF1Path, "_folder.json")) {
+		t.Fatalf("f1 was not moved into f2 on disk")
+	}
+	if !fs.Exists(filepath.Join(newF1Path, "r1.json")) {
+		t.Errorf("req1 inside f1 not found at new location")
+	}
+	if !fs.Exists(filepath.Join(newF1Path, "f1_sub", "r2.json")) {
+		t.Errorf("req2 inside f1_sub not found at new location")
+	}
+
+	// Check index was updated for folder and all descendants
+	p, err := fs.FindByUUID("f1")
+	if err != nil || p != newF1Path {
+		t.Errorf("index not updated for f1: got %s, err: %v", p, err)
+	}
+	p, err = fs.FindByUUID("r1")
+	if err != nil || p != filepath.Join(newF1Path, "r1.json") {
+		t.Errorf("index not updated for r1: got %s, err: %v", p, err)
+	}
+	p, err = fs.FindByUUID("f1_sub")
+	if err != nil || p != filepath.Join(newF1Path, "f1_sub") {
+		t.Errorf("index not updated for f1_sub: got %s, err: %v", p, err)
+	}
+	p, err = fs.FindByUUID("r2")
+	if err != nil || p != filepath.Join(newF1Path, "f1_sub", "r2.json") {
+		t.Errorf("index not updated for r2: got %s, err: %v", p, err)
+	}
+	p, err = fs.FindByUUID("f1_sub_sub")
+	if err != nil || p != filepath.Join(newF1Path, "f1_sub", "f1_sub_sub") {
+		t.Errorf("index not updated for f1_sub_sub: got %s, err: %v", p, err)
+	}
+
+	// 5. Move nested folder f1_sub_sub to root ("")
+	if res := svc.MoveFolder(root, "f1_sub_sub", ""); !res.Success {
+		t.Fatalf("expected success moving f1_sub_sub to root: %v", res.Error)
+	}
+	p, err = fs.FindByUUID("f1_sub_sub")
+	if err != nil || p != filepath.Join(root, "f1_sub_sub") {
+		t.Errorf("f1_sub_sub not in root: got %s, err: %v", p, err)
+	}
+
+	// 6. Name collision handling: create another folder at root with same display name "Folder 1"
+	f3 := filepath.Join(root, "f3")
+	writeFolder(t, fs, f3, "f3", "Folder 1")
+	fs.IndexSet("f3", f3)
+
+	// Move f1 (which is currently in f2 and named "Folder 1") back to root
+	if res := svc.MoveFolder(root, "f1", ""); !res.Success {
+		t.Fatalf("expected success moving f1 to root with collision: %v", res.Error)
+	}
+
+	// Check that f1's display name was adjusted to avoid collision
+	var movedF1 model.Folder
+	f1Meta := filepath.Join(root, "f1", "_folder.json")
+	if err := fs.ReadJSON(f1Meta, &movedF1); err != nil {
+		t.Fatalf("failed to read moved f1 meta: %v", err)
+	}
+	if movedF1.Name != "Folder 1 (2)" {
+		t.Errorf("expected renamed folder to be 'Folder 1 (2)', got '%s'", movedF1.Name)
+	}
+
+	// 7. Physical directory collision handling:
+	// Suppose f4 has physical folder name "custom-f4-dir" (e.g. legacy folder name)
+	f4 := filepath.Join(f2, "custom-f4-dir")
+	writeFolder(t, fs, f4, "f4", "Folder 4")
+	fs.IndexSet("f4", f4)
+
+	rootCustomDir := filepath.Join(root, "custom-f4-dir")
+	if err := os.MkdirAll(rootCustomDir, 0755); err != nil {
+		t.Fatalf("failed to create dummy dir: %v", err)
+	}
+
+	if res := svc.MoveFolder(root, "f4", ""); !res.Success {
+		t.Fatalf("expected success moving f4 with directory fallback: %v", res.Error)
+	}
+	expectedFallback := filepath.Join(root, slug.FolderDir("f4"))
+	p, err = fs.FindByUUID("f4")
+	if err != nil || p != expectedFallback {
+		t.Errorf("expected f4 to move to fallback dir %s, got %s (err: %v)", expectedFallback, p, err)
+	}
+
+	// 8. If both primary dir and slug fallback dir exist, should return ErrFolderMoveConflict
+	f5 := filepath.Join(f2, "custom-f5-dir")
+	writeFolder(t, fs, f5, "f5", "Folder 5")
+	fs.IndexSet("f5", f5)
+
+	rootF5Custom := filepath.Join(root, "custom-f5-dir")
+	rootF5Slug := filepath.Join(root, slug.FolderDir("f5"))
+	if err := os.MkdirAll(rootF5Custom, 0755); err != nil {
+		t.Fatalf("failed to create dummy dir: %v", err)
+	}
+	if err := os.MkdirAll(rootF5Slug, 0755); err != nil {
+		t.Fatalf("failed to create dummy slug dir: %v", err)
+	}
+
+	res := svc.MoveFolder(root, "f5", "")
+	if res.Success || res.Error == nil || res.Error.Message != service.ErrFolderMoveConflict {
+		t.Fatalf("expected ErrFolderMoveConflict, got %v", res.Error)
+	}
+}
+
 func TestGetTree_Symlink(t *testing.T) {
 	svc, fs, root := setupCollectionService(t)
 
@@ -1566,3 +1760,68 @@ func TestAuthEnvs_DiskPersistence(t *testing.T) {
 		t.Errorf("expected APIKey value 'dev-key-999', got %q", reloadedFolder.AuthEnvs["env-dev"].APIKey.Value)
 	}
 }
+
+func TestReorderNodes(t *testing.T) {
+	svc, fs, root := setupCollectionService(t)
+
+	// Create 3 requests at root: r1, r2, r3
+	fs.WriteJSON(filepath.Join(root, "r1.json"), createTestRequest("r1", "Alpha Request", ""))
+	fs.WriteJSON(filepath.Join(root, "r2.json"), createTestRequest("r2", "Beta Request", ""))
+	fs.WriteJSON(filepath.Join(root, "r3.json"), createTestRequest("r3", "Gamma Request", ""))
+
+	// Default tree sorting is alphabetical (Alpha, Beta, Gamma)
+	treeRes := svc.GetTree(root)
+	if !treeRes.Success {
+		t.Fatalf("GetTree failed: %+v", treeRes)
+	}
+	nodes := treeRes.Data.([]model.TreeNode)
+	if len(nodes) != 3 || nodes[0].ID != "r1" || nodes[1].ID != "r2" || nodes[2].ID != "r3" {
+		t.Fatalf("unexpected default order: %+v", nodes)
+	}
+
+	// Reorder root nodes: r3, r1, r2
+	reorderRes := svc.ReorderNodes(root, "", []string{"r3", "r1", "r2"})
+	if !reorderRes.Success {
+		t.Fatalf("ReorderNodes failed: %+v", reorderRes)
+	}
+
+	// Verify GetTree returns nodes in new order
+	treeRes2 := svc.GetTree(root)
+	if !treeRes2.Success {
+		t.Fatalf("GetTree failed: %+v", treeRes2)
+	}
+	nodes2 := treeRes2.Data.([]model.TreeNode)
+	if len(nodes2) != 3 || nodes2[0].ID != "r3" || nodes2[1].ID != "r1" || nodes2[2].ID != "r2" {
+		t.Fatalf("expected order [r3, r1, r2], got [%s, %s, %s]", nodes2[0].ID, nodes2[1].ID, nodes2[2].ID)
+	}
+
+	// Create subfolder with children
+	f1 := filepath.Join(root, "f1")
+	writeFolder(t, fs, f1, "f1", "Folder 1")
+	fs.IndexSet("f1", f1)
+	fs.WriteJSON(filepath.Join(f1, "sub1.json"), createTestRequest("sub1", "Sub Alpha", ""))
+	fs.WriteJSON(filepath.Join(f1, "sub2.json"), createTestRequest("sub2", "Sub Beta", ""))
+
+	// Reorder subfolder: sub2, sub1
+	reorderSubRes := svc.ReorderNodes(root, "f1", []string{"sub2", "sub1"})
+	if !reorderSubRes.Success {
+		t.Fatalf("ReorderNodes on folder failed: %+v", reorderSubRes)
+	}
+
+	treeRes3 := svc.GetTree(root)
+	nodes3 := treeRes3.Data.([]model.TreeNode)
+	var folderNode *model.TreeNode
+	for _, n := range nodes3 {
+		if n.ID == "f1" {
+			folderNode = &n
+			break
+		}
+	}
+	if folderNode == nil || len(folderNode.Children) != 2 {
+		t.Fatalf("expected folder with 2 children, got %+v", folderNode)
+	}
+	if folderNode.Children[0].ID != "sub2" || folderNode.Children[1].ID != "sub1" {
+		t.Fatalf("expected folder children order [sub2, sub1], got [%s, %s]", folderNode.Children[0].ID, folderNode.Children[1].ID)
+	}
+}
+

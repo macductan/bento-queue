@@ -111,6 +111,8 @@ type TreeNode struct {
 	Name       string                 `json:"name"`
 	Type       string                 `json:"type"` // "folder" or "request"
 	Method     string                 `json:"method,omitempty"`
+	URL        string                 `json:"url,omitempty"`
+	Body       *Body                  `json:"body,omitempty"`
 	Path       string                 `json:"path"`
 	Children   []TreeNode             `json:"children,omitempty"`
 	Variables  []KVPair               `json:"variables,omitempty"`
@@ -126,6 +128,7 @@ type TreeNode struct {
 type Folder struct {
 	ID         string                 `json:"id"`
 	Name       string                 `json:"name"`
+	Order      []string               `json:"order,omitempty"`
 	Variables  []KVPair               `json:"variables"`
 	FolderEnvs map[string][]KVPair    `json:"folder_envs,omitempty"`
 	Headers    []KVPair               `json:"headers"`
@@ -151,6 +154,7 @@ type Collection struct {
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description"`
+	Order        []string               `json:"order,omitempty"`
 	Variables    []KVPair               `json:"variables,omitempty"`
 	Auth         *AuthConfig            `json:"auth,omitempty"`
 	AuthEnvs     map[string]*AuthConfig `json:"auth_envs,omitempty"`

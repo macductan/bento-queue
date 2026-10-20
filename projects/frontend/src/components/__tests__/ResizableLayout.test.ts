@@ -3,11 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import App from '@/App.vue'
+import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ContentArea from '@/components/ContentArea.vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useResponseStore } from '@/stores/responseStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   ListCollections: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -214,6 +216,30 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       ]
       collectionStore.activeCollectionId = 'default'
 
+      const headerWrapper = mount(AppHeader, {
+        global: {
+          stubs: {
+            CollectionSwitcher: true,
+            EnvSelector: true,
+            ImportErrorModal: true,
+            SettingsModal: true
+          }
+        }
+      })
+
+      // Git button exists in header and displays emerald badge when git_remote_url is configured
+      const gitBtn = headerWrapper.find('[data-test="git-config-btn"]')
+      expect(gitBtn.exists()).toBe(true)
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(true)
+
+      // When gitConflictError is set, displays red conflict badge instead
+      collectionStore.gitConflictError = { message: 'Conflict', files: ['req.json'] }
+      await nextTick()
+      expect(headerWrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
+
+      await gitBtn.trigger('click')
+      expect(uiStore.gitSyncModalOpen).toBe(true)
+
       const wrapper = mount(AppSidebar, {
         global: {
           stubs: {
@@ -226,19 +252,6 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       // Old standalone pull/push buttons are removed
       expect(wrapper.find('[data-test="git-pull-btn"]').exists()).toBe(false)
       expect(wrapper.find('[data-test="git-push-btn"]').exists()).toBe(false)
-
-      // Git button exists and displays emerald badge when git_remote_url is configured
-      const gitBtn = wrapper.find('[data-test="git-config-btn"]')
-      expect(gitBtn.exists()).toBe(true)
-      expect(wrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(true)
-
-      // When gitConflictError is set, displays red conflict badge instead
-      collectionStore.gitConflictError = { message: 'Conflict', files: ['req.json'] }
-      await nextTick()
-      expect(wrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
-
-      await gitBtn.trigger('click')
-      expect(uiStore.gitSyncModalOpen).toBe(true)
 
       // '+' dropdown button toggles New Request / New Folder menu
       const createReqSpy = vi.spyOn(collectionStore, 'createRequest').mockResolvedValue(undefined as any)
@@ -284,7 +297,12 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
   })
 
   describe('ContentArea.vue Horizontal Splitter', () => {
-    const mountContentArea = (containerHeight = 600, topOffset = 0) => {
+    const mountContentArea = (containerHeight = 600, topOffset = 0, explicitlyOpened = true) => {
+      const uiStore = useUiStore()
+      if (explicitlyOpened) {
+        uiStore.responsePaneExplicitlyOpened = true
+        uiStore.responsePaneCollapsed = false
+      }
       const wrapper = mount(ContentArea, {
         global: {
           stubs: {
@@ -346,7 +364,7 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       const responsePane = wrapper.find('[data-test="response-pane"]')
 
       expect(splitter.exists()).toBe(true)
-      expect(splitter.classes()).toContain('h-1.5')
+      expect(splitter.classes()).toContain('h-1')
       expect(splitter.classes()).toContain('cursor-row-resize')
       expect(responsePane.exists()).toBe(true)
       expect(requestPane.classes()).not.toContain('shrink-0')
@@ -486,6 +504,68 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       window.dispatchEvent(new MouseEvent('mousemove', { clientY: 180 }))
       expect(uiStore.requestPaneRatio).toBe(50)
+    })
+
+    it('collapses response pane by default when no response exists and expands on dock bar click', async () => {
+      const collectionStore = useCollectionStore()
+      const uiStore = useUiStore()
+      collectionStore.activeRequestId = 'req-1'
+
+      // mount without explicitlyOpened
+      const wrapper = mountContentArea(600, 0, false)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
+
+      const requestPane = wrapper.find('[data-test="request-pane"]')
+      expect(requestPane.classes()).toContain('flex-1')
+
+      // Click dock bar to uncollapse
+      await wrapper.find('[data-test="response-dock-bar"]').trigger('click')
+      expect(uiStore.responsePaneExplicitlyOpened).toBe(true)
+      expect(uiStore.responsePaneCollapsed).toBe(false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(true)
+
+      // Collapse via store action
+      uiStore.setResponsePaneCollapsed(true)
+      await nextTick()
+      expect(uiStore.responsePaneCollapsed).toBe(true)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)
+
+      wrapper.unmount()
+    })
+
+    it('automatically uncollapses response pane when a new response arrives', async () => {
+      const collectionStore = useCollectionStore()
+      const responseStore = useResponseStore()
+      const uiStore = useUiStore()
+      collectionStore.activeRequestId = 'req-1'
+
+      // mount without explicitlyOpened, collapsed by default
+      const wrapper = mountContentArea(600, 0, false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(false)
+
+      // Simulate response arriving
+      responseStore.response = {
+        status_code: 200,
+        status_text: 'OK',
+        headers: {},
+        body: '{"message":"hello"}',
+        size_bytes: 19,
+        duration_ms: 45
+      } as any
+      await nextTick()
+
+      expect(uiStore.responsePaneCollapsed).toBe(false)
+      expect(wrapper.find('[data-test="response-dock-bar"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="content-splitter"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="response-pane"]').exists()).toBe(true)
+
+      wrapper.unmount()
     })
   })
 })

@@ -170,4 +170,33 @@ describe('inputUndo utility', () => {
     )
     expect(input.value).toBe('')
   })
+
+  it('preserves cursor location and scroll position on undo without jumping to 0', () => {
+    const textarea = document.createElement('textarea')
+    textarea.value = 'line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10'
+    container.appendChild(textarea)
+
+    textarea.focus()
+    textarea.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+
+    // User clicks at character 45 (e.g. line 6)
+    textarea.setSelectionRange(45, 45)
+    textarea.scrollTop = 120
+    textarea.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    // User types something
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', bubbles: true }))
+    textarea.value = 'line 1\nline 2\nline 3\nline 4\nline 5\nline 6X\nline 7\nline 8\nline 9\nline 10'
+    textarea.setSelectionRange(46, 46)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+
+    // Undo via Ctrl+Z
+    const undoEvt = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+    textarea.dispatchEvent(undoEvt)
+
+    // Selection must be preserved near line 6 (at character 45), NOT 0!
+    expect(textarea.selectionStart).toBe(45)
+    expect(textarea.selectionEnd).toBe(45)
+    expect(textarea.scrollTop).toBe(120)
+  })
 })

@@ -3,8 +3,8 @@ import { ref, computed } from 'vue'
 import { ListEnvironments, SaveEnvironment, DeleteEnvironment, LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
 import { model } from '../../wailsjs/go/models'
 import { useUiStore } from './uiStore'
-import { useCollectionStore, type TreeNode } from './collectionStore'
-import type { ScopedEnvUpdates } from '../utils/scriptRunner'
+import { useCollectionStore, type TreeNode, type AuthConfig } from './collectionStore'
+import type { ScopedEnvUpdates, ScopedAuthUpdates } from '../utils/scriptRunner'
 import type { FolderNodeLike } from '../utils/resolveHierarchyVariables'
 
 export const useEnvironmentStore = defineStore('environment', () => {
@@ -347,6 +347,163 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
   }
 
+  async function applyScopedAuthUpdates(
+    scopedAuthUpdates?: ScopedAuthUpdates,
+    pathNodes: TreeNode[] = []
+  ): Promise<void> {
+    if (!scopedAuthUpdates) return
+    const { folderGlobals, folderEnvs, collectionGlobal, collectionEnvs } = scopedAuthUpdates
+    const hasFolderGlobals = folderGlobals && Object.keys(folderGlobals).length > 0
+    const hasFolderEnvs = folderEnvs && folderEnvs.length > 0
+    const hasCollectionGlobal = collectionGlobal !== undefined
+    const hasCollectionEnvs = collectionEnvs && collectionEnvs.length > 0
+
+    if (!hasFolderGlobals && !hasFolderEnvs && !hasCollectionGlobal && !hasCollectionEnvs) {
+      return
+    }
+
+    const collectionStore = useCollectionStore()
+
+    // 1. Collection Auth updates
+    if (hasCollectionGlobal || hasCollectionEnvs) {
+      const activeColl = collectionStore.activeCollection
+      if (activeColl && activeColl.id) {
+        let collAuth = activeColl.auth ? JSON.parse(JSON.stringify(activeColl.auth)) : undefined
+        const collAuthEnvs = activeColl.auth_envs ? JSON.parse(JSON.stringify(activeColl.auth_envs)) : {}
+        if (hasCollectionGlobal && collectionGlobal) {
+          collAuth = collectionGlobal
+        }
+        if (hasCollectionEnvs && collectionEnvs) {
+          for (const item of collectionEnvs) {
+            let targetEnvId = item.env === '__active__' ? activeEnvId.value : item.env
+            const matched = environments.value.find(
+              e => e.id?.toLowerCase() === item.env.toLowerCase() || e.name?.trim().toLowerCase() === item.env.toLowerCase()
+            )
+            if (matched) targetEnvId = matched.id
+            if (targetEnvId) {
+              collAuthEnvs[targetEnvId] = item.auth
+            }
+          }
+        }
+        await collectionStore.updateCollectionVariables(activeColl.id, activeColl.variables || [], collAuth, collAuthEnvs)
+      }
+    }
+
+    // 2. Folder Auth updates
+    const resolveFolderId = (folderNameOrId: string): string | undefined => {
+      const target = (folderNameOrId || '').trim().toLowerCase()
+      if (!target || target === '__nearest__') {
+        return pathNodes.length > 0 ? pathNodes[pathNodes.length - 1].id : undefined
+      }
+      const inPath = pathNodes.find(
+        n => n.id?.toLowerCase() === target || n.name?.trim().toLowerCase() === target
+      )
+      if (inPath) return inPath.id
+
+      let foundId: string | undefined = undefined
+      const walk = (nodes: TreeNode[] | undefined) => {
+        if (!Array.isArray(nodes) || foundId) return
+        for (const n of nodes) {
+          if (n.type === 'folder') {
+            if (n.id?.toLowerCase() === target || n.name?.trim().toLowerCase() === target) {
+              foundId = n.id
+              return
+            }
+            if (n.children) walk(n.children)
+          }
+        }
+      }
+      walk(collectionStore.tree)
+      return foundId
+    }
+
+    interface FolderAuthMutation {
+      global?: AuthConfig
+      envs: Record<string, AuthConfig>
+    }
+    const folderMutations = new Map<string, FolderAuthMutation>()
+
+    if (hasFolderGlobals) {
+      for (const [fNameOrId, auth] of Object.entries(folderGlobals)) {
+        if (!auth) continue
+        const fId = resolveFolderId(fNameOrId)
+        if (!fId) continue
+        if (!folderMutations.has(fId)) {
+          folderMutations.set(fId, { envs: {} })
+        }
+        folderMutations.get(fId)!.global = auth
+      }
+    }
+
+    if (hasFolderEnvs) {
+      for (const item of folderEnvs) {
+        if (!item.auth) continue
+        const fId = resolveFolderId(item.folder)
+        if (!fId) continue
+        let targetEnvId: string | undefined
+        if (item.env === '__active__') {
+          targetEnvId = activeEnvId.value || undefined
+        } else {
+          const matched = environments.value.find(
+            e => e.id?.toLowerCase() === item.env.toLowerCase() || e.name?.trim().toLowerCase() === item.env.toLowerCase()
+          )
+          targetEnvId = matched?.id || item.env.trim()
+        }
+        if (!targetEnvId) continue
+        if (!folderMutations.has(fId)) {
+          folderMutations.set(fId, { envs: {} })
+        }
+        folderMutations.get(fId)!.envs[targetEnvId] = item.auth
+      }
+    }
+
+    let anyFolderUpdated = false
+    for (const [folderId, mut] of folderMutations.entries()) {
+      try {
+        const loadRes = await LoadFolder(folderId)
+        if (!loadRes?.success || !loadRes.data) continue
+        const folderData = JSON.parse(JSON.stringify(loadRes.data))
+        folderData.id = folderData.id || folderId
+
+        if (mut.global) {
+          folderData.auth = mut.global
+        }
+        if (Object.keys(mut.envs).length > 0) {
+          if (!folderData.auth_envs || typeof folderData.auth_envs !== 'object' || Array.isArray(folderData.auth_envs)) {
+            folderData.auth_envs = {}
+          }
+          for (const [envId, auth] of Object.entries(mut.envs)) {
+            folderData.auth_envs[envId] = auth
+          }
+        }
+
+        const updateRes = await UpdateFolder(folderData)
+        if (updateRes?.success) {
+          anyFolderUpdated = true
+          const treeNode = collectionStore.findNode(collectionStore.tree, folderId)
+          if (treeNode) {
+            if (folderData.auth) treeNode.auth = folderData.auth
+            if (folderData.auth_envs) treeNode.auth_envs = folderData.auth_envs
+          }
+          const inPathNode = pathNodes.find(n => n.id === folderId)
+          if (inPathNode) {
+            if (folderData.auth) inPathNode.auth = folderData.auth
+            if (folderData.auth_envs) inPathNode.auth_envs = folderData.auth_envs
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('hecto:folder-updated', { detail: folderData }))
+          }
+        }
+      } catch {
+        // ignore folder update errors in script runner
+      }
+    }
+
+    if (anyFolderUpdated) {
+      await collectionStore.loadTree()
+    }
+  }
+
   return {
     environments,
     activeEnvId,
@@ -359,6 +516,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
     remove,
     setActive,
     applyVariableUpdates,
-    applyScopedVariableUpdates
+    applyScopedVariableUpdates,
+    applyScopedAuthUpdates
   }
 })

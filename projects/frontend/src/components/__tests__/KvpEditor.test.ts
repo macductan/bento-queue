@@ -160,6 +160,23 @@ describe('KvpEditor', () => {
     expect(textareasAfter[0].element).toBe(originalTextareaEl)
     expect(model[0].value).toBe('việt nam')
   })
+
+  it('synchronizes whitespace-pre-wrap and break-all on Value textarea to prevent caret offset', async () => {
+    const wrapper = mount(KvpEditor, {
+      props: {
+        modelValue: [
+          { key: 'wsdl_url', value: 'https://edev-ws.sanmar.com:8080/SanMarWebService/SanMarWebServicePort?wsdl', enabled: true }
+        ]
+      }
+    })
+    await nextTick()
+
+    const textarea = wrapper.find('textarea[placeholder="Value"]')
+    expect(textarea.exists()).toBe(true)
+    expect(textarea.classes()).toContain('whitespace-pre-wrap')
+    expect(textarea.classes()).toContain('break-all')
+    expect(textarea.classes()).toContain('mono-sm')
+  })
 })
 
 

@@ -1,3 +1,5 @@
+import type { AuthConfig } from '../stores/collectionStore'
+
 export interface VariableKVPair {
   key: string
   value: string
@@ -9,6 +11,8 @@ export interface FolderNodeLike {
   name?: string
   variables?: VariableKVPair[]
   folder_envs?: Record<string, VariableKVPair[]>
+  auth?: AuthConfig
+  auth_envs?: Record<string, AuthConfig>
 }
 
 export interface ResolveHierarchyOptions {

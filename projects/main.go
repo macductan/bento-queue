@@ -17,9 +17,11 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "hecto-api",
-		Width:  1024,
-		Height: 768,
+		Title:     "hecto-api",
+		Width:     1320,
+		Height:    860,
+		MinWidth:  900,
+		MinHeight: 600,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

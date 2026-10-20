@@ -427,7 +427,8 @@ func (s *GitSyncService) GetStatus(collectionsRoot, collectionID string) model.R
 }
 
 // Pull executes git pull inside the collection folder, runs 3-Way JSON Auto-Merge, and reports any remaining merge conflicts for resolution.
-func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result {
+// Optional branch parameter specifies target branch on origin to pull.
+func (s *GitSyncService) Pull(collectionsRoot, collectionID string, branch ...string) model.Result {
 	s.logger.Info("GitSyncService.Pull called", "collectionID", collectionID)
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
@@ -482,11 +483,18 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string) model.Result
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể kết nối tới Git Remote khi fetch: %s", fetchOut))
 	}
 
-	targetBranch, hasRemoteBranch := s.resolveTargetRemoteBranch(collDir)
-	if !hasRemoteBranch {
-		status := s.inspectStatus(collDir, remoteURL)
-		status.Output = "Remote repository chưa có nhánh nào để pull."
-		return model.NewSuccess(status)
+	targetBranch := ""
+	if len(branch) > 0 {
+		targetBranch = strings.TrimSpace(branch[0])
+	}
+	if targetBranch == "" {
+		var hasRemoteBranch bool
+		targetBranch, hasRemoteBranch = s.resolveTargetRemoteBranch(collDir)
+		if !hasRemoteBranch {
+			status := s.inspectStatus(collDir, remoteURL)
+			status.Output = "Remote repository chưa có nhánh nào để pull."
+			return model.NewSuccess(status)
+		}
 	}
 
 	pullOut, pullErr := s.runGit(collDir, "pull", "--no-rebase", "--no-edit", "--allow-unrelated-histories", "origin", targetBranch)
@@ -820,7 +828,7 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 	return model.NewSuccess(status)
 }
 
-// ListLocalBranches returns the list of local git branches for a collection.
+// ListLocalBranches returns the list of local and remote git branches for a collection.
 func (s *GitSyncService) ListLocalBranches(collectionsRoot, collectionID string) model.Result {
 	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -836,33 +844,110 @@ func (s *GitSyncService) ListLocalBranches(collectionsRoot, collectionID string)
 		}
 	}
 
-	out, err := s.runGit(collDir, "branch", "--list", "--format=%(refname:short)")
+	remoteURL := strings.TrimSpace(coll.GitRemoteURL)
+	if remoteURL == "" {
+		if originURL, err := s.runGit(collDir, "remote", "get-url", "origin"); err == nil && strings.TrimSpace(originURL) != "" {
+			remoteURL = strings.TrimSpace(originURL)
+		}
+	}
+	if remoteURL != "" {
+		_ = s.ensureGitRepoAndRemote(collDir, remoteURL)
+		// Fetch remote branch references so newly created branches on remote are visible (ignore errors if offline)
+		_, _ = s.runGit(collDir, "fetch", "--prune", "origin")
+	}
+
+	out, err := s.runGit(collDir, "for-each-ref", "--format=%(refname:short)", "refs/heads/", "refs/remotes/origin/")
 	var branches []string
+	seen := make(map[string]bool)
+
+	current := s.getCurrentBranch(collDir)
+	if current != "" {
+		branches = append(branches, current)
+		seen[current] = true
+	}
+
 	if err == nil && strings.TrimSpace(out) != "" {
 		for _, line := range strings.Split(out, "\n") {
 			b := strings.TrimSpace(line)
-			if b != "" {
+			if b == "" || b == "origin" || b == "origin/HEAD" {
+				continue
+			}
+			if strings.HasPrefix(b, "origin/") {
+				b = strings.TrimPrefix(b, "origin/")
+			}
+			if b != "" && !seen[b] {
+				seen[b] = true
 				branches = append(branches, b)
 			}
 		}
 	}
 
-	current := s.getCurrentBranch(collDir)
-	hasCurrent := false
-	for _, b := range branches {
-		if b == current {
-			hasCurrent = true
-			break
-		}
-	}
-	if !hasCurrent && current != "" {
-		branches = append([]string{current}, branches...)
-	}
 	if len(branches) == 0 {
 		branches = []string{"main"}
 	}
 
 	return model.NewSuccess(branches)
+}
+
+// CheckoutBranch switches the local collection repository to the specified branch.
+// If the branch exists locally, it checks it out.
+// If it exists on remote (origin/<branch>), it creates a local tracking branch.
+// If it is brand new, it creates a new branch from current HEAD.
+func (s *GitSyncService) CheckoutBranch(collectionsRoot, collectionID, branch string) model.Result {
+	targetBranch := strings.TrimSpace(branch)
+	if targetBranch == "" || strings.HasPrefix(targetBranch, "-") {
+		return model.NewError(model.ErrValidation, "Tên nhánh Git không hợp lệ")
+	}
+
+	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
+	if errRes != nil {
+		return *errRes
+	}
+
+	gitDir := filepath.Join(collDir, ".git")
+	if !s.fs.Exists(gitDir) {
+		return model.NewError(model.ErrGitError, "Collection chưa được khởi tạo Git repository")
+	}
+
+	currentBranch := s.getCurrentBranch(collDir)
+	remoteURL := strings.TrimSpace(coll.GitRemoteURL)
+
+	if currentBranch == targetBranch {
+		status := s.inspectStatus(collDir, remoteURL)
+		return model.NewSuccess(status)
+	}
+
+	// Auto-save/commit any uncommitted local changes on the current branch first
+	porcelain, _ := s.runGit(collDir, "status", "--porcelain")
+	if strings.TrimSpace(porcelain) != "" {
+		_, _ = s.runGit(collDir, "add", "-A")
+		commitMsg := fmt.Sprintf("chore(hecto): auto-save before checkout %s", time.Now().UTC().Format(time.RFC3339))
+		_, _ = s.runGit(collDir, "commit", "-m", commitMsg)
+	}
+
+	// 1. Check if targetBranch exists locally
+	if _, err := s.runGit(collDir, "rev-parse", "--verify", "refs/heads/"+targetBranch); err == nil {
+		if out, err := s.runGit(collDir, "checkout", targetBranch); err != nil {
+			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể chuyển sang nhánh %s: %s", targetBranch, out))
+		}
+	} else if _, errRemote := s.runGit(collDir, "rev-parse", "--verify", "origin/"+targetBranch); errRemote == nil {
+		// 2. Branch exists on remote: create local tracking branch
+		if out, err := s.runGit(collDir, "checkout", "-b", targetBranch, "--track", "origin/"+targetBranch); err != nil {
+			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể checkout nhánh %s từ remote: %s", targetBranch, out))
+		}
+	} else {
+		// 3. Brand new branch: create from current HEAD
+		if out, err := s.runGit(collDir, "checkout", "-b", targetBranch); err != nil {
+			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể tạo và chuyển sang nhánh %s: %s", targetBranch, out))
+		}
+	}
+
+	if s.fs != nil {
+		_ = s.fs.IndexRebuild(collDir)
+	}
+
+	status := s.inspectStatus(collDir, remoteURL)
+	return model.NewSuccess(status)
 }
 
 // Push stages all collection files, creates a commit if needed, and pushes to origin.
@@ -1005,6 +1090,9 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 							_, _ = s.runGit(collDir, "branch", "-f", targetBranch, "HEAD")
 						}
 						if retryOut, retryErr := s.runGit(collDir, "push", "-u", "origin", refSpec); retryErr == nil {
+							if explicitBranch != "" && targetBranch != currentBranch {
+								_, _ = s.runGit(collDir, "checkout", targetBranch)
+							}
 							if s.fs != nil {
 								_ = s.fs.IndexRebuild(collDir)
 							}
@@ -1020,6 +1108,12 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 			return model.NewError(model.ErrGitConflict, "Không thể Push do Remote có thay đổi mới hoặc xung đột. Vui lòng thực hiện Git Pull và xử lý xung đột trước khi Push.\nChi tiết: "+pushOut)
 		}
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể git push lên remote: %s", pushOut))
+	}
+
+	if explicitBranch != "" && targetBranch != currentBranch {
+		if _, coErr := s.runGit(collDir, "checkout", targetBranch); coErr == nil {
+			currentBranch = targetBranch
+		}
 	}
 
 	status := s.inspectStatus(collDir, remoteURL)

@@ -1,0 +1,5 @@
+stories:
+  - id: 1
+    title: "Script Runner Auth APIs (ha.folderAuth, ha.folderAuthEnv, ha.request.auth, ha.collectionAuth)"
+    file: "stories/1-script-runner-auth-api.md"
+    status: "ready"

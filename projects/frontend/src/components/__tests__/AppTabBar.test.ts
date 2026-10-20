@@ -347,4 +347,98 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
 
     wrapper.unmount()
   })
+
+  it('scrolls tabs horizontally when mouse wheel events occur', async () => {
+    const tabStore = useTabStore()
+    tabStore.tabs = [
+      { id: 'request:req-1', entityId: 'req-1', type: 'request', name: 'Req 1', method: 'GET', isDirty: false },
+      { id: 'request:req-2', entityId: 'req-2', type: 'request', name: 'Req 2', method: 'GET', isDirty: false },
+      { id: 'request:req-3', entityId: 'req-3', type: 'request', name: 'Req 3', method: 'GET', isDirty: false }
+    ]
+    tabStore.activeTabId = 'request:req-1'
+
+    const wrapper = mount(AppTabBar, { attachTo: document.body })
+    await nextTick()
+
+    const tabBar = wrapper.find('[data-test="app-tab-bar"]')
+    expect(tabBar.exists()).toBe(true)
+    const el = tabBar.element as HTMLElement
+
+    // Mock scrollLeft, scrollWidth, clientWidth
+    let scrollLeft = 0
+    Object.defineProperty(el, 'scrollLeft', {
+      get: () => scrollLeft,
+      set: (val: number) => { scrollLeft = val },
+      configurable: true
+    })
+    Object.defineProperty(el, 'scrollWidth', { value: 1000, configurable: true })
+    Object.defineProperty(el, 'clientWidth', { value: 400, configurable: true })
+
+    // Wheel event with deltaY and pixel mode (deltaMode = 0)
+    await tabBar.trigger('wheel', { deltaY: 60, deltaX: 0, deltaMode: 0 })
+    expect(el.scrollLeft).toBe(60)
+
+    // Wheel event with deltaMode = 1 (lines, e.g. 2 lines * 24px)
+    await tabBar.trigger('wheel', { deltaY: 2, deltaX: 0, deltaMode: 1 })
+    expect(el.scrollLeft).toBe(60 + 48)
+
+    wrapper.unmount()
+  })
+
+  it('renders dim tab-path above tab name and method badge indicating request location', async () => {
+    const colStore = useCollectionStore()
+    colStore.collections = [
+      { id: 'Test-Collection', name: 'My API', path: '/Test-Collection' } as any
+    ]
+    colStore.tree = [
+      {
+        id: 'f-sub',
+        name: 'Users Submodule',
+        type: 'folder',
+        path: '/Test-Collection/Users Submodule',
+        created_at: '2026-10-14',
+        children: [
+          {
+            id: 'req-nested',
+            name: 'Get User Profile',
+            type: 'request',
+            method: 'GET',
+            path: '/Test-Collection/Users Submodule/req-nested.json',
+            created_at: '2026-10-14'
+          }
+        ]
+      },
+      {
+        id: 'req-root',
+        name: 'Root Healthcheck',
+        type: 'request',
+        method: 'HEAD',
+        path: '/Test-Collection/req-root.json',
+        created_at: '2026-10-14'
+      }
+    ]
+
+    await colStore.selectRequest('req-nested')
+    await colStore.selectRequest('req-root')
+
+    const wrapper = mount(AppTabBar)
+    const tabItems = wrapper.findAll('[data-test="app-tab-item"]')
+    expect(tabItems).toHaveLength(2)
+
+    // Tab 0: nested in folder -> shows folder path 'Users Submodule'
+    const nestedTab = tabItems[0]
+    const nestedPath = nestedTab.find('[data-test="tab-path"]')
+    expect(nestedPath.exists()).toBe(true)
+    expect(nestedPath.text()).toBe('Users Submodule')
+    expect(nestedPath.attributes('title')).toBe('My API / Users Submodule / Get User Profile')
+
+    // Tab 1: at root of collection -> shows collection name 'My API'
+    const rootTab = tabItems[1]
+    const rootPath = rootTab.find('[data-test="tab-path"]')
+    expect(rootPath.exists()).toBe(true)
+    expect(rootPath.text()).toBe('My API')
+    expect(rootPath.attributes('title')).toBe('My API / Root Healthcheck')
+
+    wrapper.unmount()
+  })
 })
