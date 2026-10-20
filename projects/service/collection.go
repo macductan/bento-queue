@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -80,8 +81,43 @@ func (s *CollectionService) buildTree(dirPath string) ([]model.TreeNode, error) 
 		}
 	}
 
+	var order []string
+	metaPath := filepath.Join(dirPath, folderMetaFile)
+	if s.fs.Exists(metaPath) {
+		var f model.Folder
+		if err := s.fs.ReadJSON(metaPath, &f); err == nil {
+			order = f.Order
+		}
+	} else {
+		collPath := filepath.Join(dirPath, collectionFileName)
+		if s.fs.Exists(collPath) {
+			var c model.Collection
+			if err := s.fs.ReadJSON(collPath, &c); err == nil {
+				order = c.Order
+			}
+		}
+	}
+
+	orderMap := make(map[string]int, len(order))
+	for idx, id := range order {
+		orderMap[id] = idx
+	}
+
 	sort.SliceStable(nodes, func(i, j int) bool {
 		ni, nj := nodes[i], nodes[j]
+		idxI, hasI := orderMap[ni.ID]
+		idxJ, hasJ := orderMap[nj.ID]
+
+		if hasI && hasJ {
+			return idxI < idxJ
+		}
+		if hasI && !hasJ {
+			return true
+		}
+		if !hasI && hasJ {
+			return false
+		}
+
 		if ni.Type != nj.Type {
 			return ni.Type == "folder"
 		}
@@ -450,6 +486,197 @@ func (s *CollectionService) MoveRequest(rootPath, id, targetFolderID string) mod
 	return model.NewSuccess(nil)
 }
 
+// MoveFolder moves a folder and all its contents to a target folder (or root when targetFolderID is "").
+func (s *CollectionService) MoveFolder(rootPath, id, targetFolderID string) model.Result {
+	if rootPath == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return model.NewError(model.ErrValidation, ErrIDInvalid)
+	}
+	targetFolderID = strings.TrimSpace(targetFolderID)
+
+	srcPath, err := s.fs.FindByUUID(id)
+	if err != nil {
+		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
+	}
+	if !s.fs.Exists(filepath.Join(srcPath, folderMetaFile)) {
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
+	}
+	if !isDeletableFolderPath(rootPath, srcPath) {
+		return model.NewError(model.ErrValidation, ErrFolderNotInRoot)
+	}
+
+	var srcFolder model.Folder
+	if err := s.fs.ReadJSON(filepath.Join(srcPath, folderMetaFile), &srcFolder); err != nil {
+		return model.NewError(model.ErrIO, ErrFolderReadFailed)
+	}
+
+	if id == targetFolderID {
+		return model.NewError(model.ErrValidation, ErrFolderMoveCycle)
+	}
+
+	targetDir := rootPath
+	if targetFolderID != "" {
+		folderPath, err := s.fs.FindByUUID(targetFolderID)
+		if err != nil {
+			return model.NewError(model.ErrValidation, ErrTargetFolderNotFound)
+		}
+		if !s.fs.Exists(filepath.Join(folderPath, folderMetaFile)) || !isDeletableFolderPath(rootPath, folderPath) {
+			return model.NewError(model.ErrValidation, ErrTargetFolderInvalid)
+		}
+		targetDir = folderPath
+	}
+
+	if !isInsideRoot(rootPath, targetDir) {
+		return model.NewError(model.ErrValidation, ErrTargetFolderNotInRoot)
+	}
+	envDir := filepath.Join(rootPath, "environments")
+	if targetDir == envDir || strings.HasPrefix(targetDir, envDir+string(filepath.Separator)) {
+		return model.NewError(model.ErrValidation, ErrMoveFolderToEnvFailed)
+	}
+
+	rel, err := filepath.Rel(srcPath, targetDir)
+	if err == nil && (rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")) {
+		return model.NewError(model.ErrValidation, ErrFolderMoveCycle)
+	}
+
+	if filepath.Clean(filepath.Dir(srcPath)) == filepath.Clean(targetDir) {
+		return model.NewSuccess(srcFolder)
+	}
+
+	var existingNames []string
+	if entries, err := s.fs.ListDir(targetDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				childMeta := filepath.Join(targetDir, entry.Name(), folderMetaFile)
+				if s.fs.Exists(childMeta) {
+					var childF model.Folder
+					if err := s.fs.ReadJSON(childMeta, &childF); err == nil {
+						if childF.ID != id {
+							existingNames = append(existingNames, strings.TrimSpace(childF.Name))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	baseName := strings.TrimSpace(srcFolder.Name)
+	targetName := baseName
+	hasCollision := func(candidate string) bool {
+		for _, n := range existingNames {
+			if strings.EqualFold(n, candidate) {
+				return true
+			}
+		}
+		return false
+	}
+
+	nameAdjusted := false
+	if hasCollision(targetName) {
+		idx := 2
+		for {
+			suffix := fmt.Sprintf(" (%d)", idx)
+			prefixLen := 255 - len([]rune(suffix))
+			trimmedBase := baseName
+			if len([]rune(trimmedBase)) > prefixLen {
+				trimmedBase = string([]rune(trimmedBase)[:prefixLen])
+			}
+			candidate := trimmedBase + suffix
+			if !hasCollision(candidate) {
+				targetName = candidate
+				nameAdjusted = true
+				break
+			}
+			idx++
+		}
+	}
+
+	dirName := filepath.Base(srcPath)
+	newPath := filepath.Join(targetDir, dirName)
+	if s.fs.Exists(newPath) && filepath.Clean(newPath) != filepath.Clean(srcPath) {
+		newPath = filepath.Join(targetDir, slug.FolderDir(id))
+		if s.fs.Exists(newPath) && filepath.Clean(newPath) != filepath.Clean(srcPath) {
+			return model.NewError(model.ErrValidation, ErrFolderMoveConflict)
+		}
+	}
+
+	if err := s.fs.MoveFile(srcPath, newPath); err != nil {
+		s.logger.Error("failed to move folder", "id", id, "error", err)
+		return model.NewError(model.ErrIO, ErrFolderMoveFailed)
+	}
+
+	if nameAdjusted {
+		srcFolder.Name = targetName
+		srcFolder.UpdatedAt = time.Now()
+		if err := s.fs.WriteJSON(filepath.Join(newPath, folderMetaFile), srcFolder); err != nil {
+			s.logger.Error("failed to update _folder.json after move", "path", newPath, "error", err)
+		}
+	}
+
+	s.fs.IndexUpdatePrefix(srcPath, newPath)
+	s.fs.IndexSet(id, newPath)
+	return model.NewSuccess(srcFolder)
+}
+
+// ReorderNodes updates the display order of child nodes in a folder or at the collection root.
+func (s *CollectionService) ReorderNodes(rootPath, parentFolderID string, nodeIDs []string) model.Result {
+	s.logger.Info("ReorderNodes called", "root", rootPath, "parent", parentFolderID, "count", len(nodeIDs))
+
+	if rootPath == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
+	}
+
+	targetDir := rootPath
+	if parentFolderID != "" {
+		folderPath, err := s.fs.FindByUUID(parentFolderID)
+		if err != nil {
+			return model.NewError(model.ErrNotFound, ErrFolderNotFound)
+		}
+		if !s.fs.Exists(filepath.Join(folderPath, folderMetaFile)) || !isDeletableFolderPath(rootPath, folderPath) {
+			return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
+		}
+		targetDir = folderPath
+
+		metaPath := filepath.Join(targetDir, folderMetaFile)
+		var folder model.Folder
+		if err := s.fs.ReadJSON(metaPath, &folder); err != nil {
+			return model.NewError(model.ErrIO, ErrFolderReadFailed)
+		}
+		folder.Order = nodeIDs
+		folder.UpdatedAt = time.Now()
+		if err := s.fs.WriteJSON(metaPath, folder); err != nil {
+			return model.NewError(model.ErrIO, ErrFolderInfoSaveFailed)
+		}
+		return model.NewSuccess(nil)
+	}
+
+	metaPath := filepath.Join(targetDir, collectionFileName)
+	var coll model.Collection
+	if s.fs.Exists(metaPath) {
+		if err := s.fs.ReadJSON(metaPath, &coll); err != nil {
+			return model.NewError(model.ErrIO, ErrCollectionUpdateFailed)
+		}
+	} else {
+		now := time.Now()
+		coll = model.Collection{
+			ID:        filepath.Base(targetDir),
+			Name:      filepath.Base(targetDir),
+			CreatedAt: now,
+		}
+	}
+
+	coll.Order = nodeIDs
+	coll.UpdatedAt = time.Now()
+	if err := s.fs.WriteJSON(metaPath, coll); err != nil {
+		return model.NewError(model.ErrIO, ErrCollectionUpdateFailed)
+	}
+
+	return model.NewSuccess(nil)
+}
+
 // LoadFolder loads a folder by ID.
 func (s *CollectionService) LoadFolder(id string) model.Result {
 	s.logger.Info("LoadFolder called", "id", id)
@@ -502,6 +729,9 @@ func (s *CollectionService) UpdateFolder(folder model.Folder) model.Result {
 		existingFolder.Auth = folder.Auth
 	}
 	existingFolder.AuthEnvs = folder.AuthEnvs
+	if folder.Order != nil {
+		existingFolder.Order = folder.Order
+	}
 	existingFolder.UpdatedAt = time.Now()
 
 	if err := s.fs.WriteJSON(folderMetaPath, existingFolder); err != nil {
@@ -723,6 +953,9 @@ func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.
 	}
 	if coll.AuthEnvs != nil {
 		existingColl.AuthEnvs = coll.AuthEnvs
+	}
+	if coll.Order != nil {
+		existingColl.Order = coll.Order
 	}
 	existingColl.ActiveEnvID = strings.TrimSpace(coll.ActiveEnvID)
 	if strings.TrimSpace(coll.GitRemoteURL) != "" {

@@ -10,11 +10,13 @@ import { useTabStore } from '@/stores/tabStore'
 const saveRemoteMock = vi.fn()
 const getStatusMock = vi.fn()
 const gitPullMock = vi.fn()
+const gitPullFromBranchMock = vi.fn()
 const gitPushMock = vi.fn()
 const gitPushToBranchMock = vi.fn()
 const gitClearAndPullMock = vi.fn()
 const gitStashAndPullMock = vi.fn()
 const gitListLocalBranchesMock = vi.fn()
+const gitCheckoutBranchMock = vi.fn()
 const resolveGitConflictMock = vi.fn()
 const abortGitMergeMock = vi.fn()
 const listCollectionsMock = vi.fn()
@@ -24,11 +26,13 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SaveCollectionGitRemote: (...args: any[]) => saveRemoteMock(...args),
   GetCollectionGitStatus: (...args: any[]) => getStatusMock(...args),
   GitPullCollection: (...args: any[]) => gitPullMock(...args),
+  GitPullCollectionFromBranch: (...args: any[]) => gitPullFromBranchMock(...args),
   GitPushCollection: (...args: any[]) => gitPushMock(...args),
   GitPushCollectionToBranch: (...args: any[]) => gitPushToBranchMock(...args),
   GitClearAndPullCollection: (...args: any[]) => gitClearAndPullMock(...args),
   GitStashAndPullCollection: (...args: any[]) => gitStashAndPullMock(...args),
   GitListLocalBranches: (...args: any[]) => gitListLocalBranchesMock(...args),
+  GitCheckoutBranch: (...args: any[]) => gitCheckoutBranchMock(...args),
   ResolveGitConflict: (...args: any[]) => resolveGitConflictMock(...args),
   AbortGitMerge: (...args: any[]) => abortGitMergeMock(...args),
   ListCollections: (...args: any[]) => listCollectionsMock(...args),
@@ -78,6 +82,16 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     gitListLocalBranchesMock.mockResolvedValue({
       success: true,
       data: ['main', 'develop', 'feature/auth']
+    })
+    gitCheckoutBranchMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false
+      }
     })
     listCollectionsMock.mockResolvedValue({
       success: true,
@@ -618,6 +632,176 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     // Verify hidden select was also updated
     const hiddenSelect = wrapper.find('[data-test="git-push-branch-select"]').element as HTMLSelectElement
     expect(hiddenSelect.value).toBe('develop')
+  })
+
+  it('filters branches by search query in branch dropdown', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    // Open dropdown
+    await wrapper.find('[data-test="custom-branch-select-btn"]').trigger('click')
+    expect(wrapper.find('[data-test="branch-select-dropdown"]').exists()).toBe(true)
+
+    // Type 'auth' in search input
+    const searchInput = wrapper.find('[data-test="branch-search-input"]')
+    expect(searchInput.exists()).toBe(true)
+    await searchInput.setValue('auth')
+
+    const options = wrapper.findAll('[data-test="branch-select-option"]')
+    expect(options.length).toBe(1)
+    expect(options[0].text()).toContain('feature/auth')
+  })
+
+  it('allows creating a new branch and pushing to it with new branch badge', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    gitPushToBranchMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'feature/v2-release',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    // Open dropdown
+    await wrapper.find('[data-test="custom-branch-select-btn"]').trigger('click')
+
+    // Search query for a non-existing branch
+    const searchInput = wrapper.find('[data-test="branch-search-input"]')
+    await searchInput.setValue('feature/v2-release')
+
+    const createOption = wrapper.find('[data-test="create-new-branch-option"]')
+    expect(createOption.exists()).toBe(true)
+    expect(createOption.text()).toContain('Tạo nhánh mới: feature/v2-release')
+
+    // Click create new branch
+    await createOption.trigger('click')
+
+    // Dropdown should close and trigger button should display the new branch with 'Mới' badge
+    expect(wrapper.find('[data-test="branch-select-dropdown"]').exists()).toBe(false)
+    const triggerBtn = wrapper.find('[data-test="custom-branch-select-btn"]')
+    expect(triggerBtn.text()).toContain('feature/v2-release')
+    expect(wrapper.find('[data-test="branch-new-badge"]').exists()).toBe(true)
+
+    // Push to the new branch
+    await wrapper.find('[data-test="git-push-modal-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(gitPushToBranchMock).toHaveBeenCalledWith('Test-Collection', 'feature/v2-release')
+  })
+
+  it('refreshes branches from remote when clicking refresh button', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    await wrapper.find('[data-test="custom-branch-select-btn"]').trigger('click')
+    const refreshBtn = wrapper.find('[data-test="refresh-branches-btn"]')
+    expect(refreshBtn.exists()).toBe(true)
+
+    gitListLocalBranchesMock.mockClear()
+    await refreshBtn.trigger('click')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(gitListLocalBranchesMock).toHaveBeenCalledWith('Test-Collection')
+  })
+
+  it('checks out branch directly from dropdown or status bar button', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+
+    gitCheckoutBranchMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'develop',
+        has_changes: false,
+        has_conflicts: false
+      }
+    })
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    // Open dropdown and checkout 'develop' directly
+    await wrapper.find('[data-test="custom-branch-select-btn"]').trigger('click')
+    const checkoutBtns = wrapper.findAll('[data-test="checkout-branch-item-btn"]')
+    expect(checkoutBtns.length).toBeGreaterThan(0)
+
+    await checkoutBtns[0].trigger('click')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(gitCheckoutBranchMock).toHaveBeenCalledWith('Test-Collection', 'develop')
+
+    // Also test checkout button in status bar when selectedBranch !== currentBranch
+    await wrapper.find('[data-test="git-push-branch-select"]').setValue('feature/auth')
+    await new Promise(r => setTimeout(r, 10))
+
+    const statusBarCheckoutBtn = wrapper.find('[data-test="checkout-selected-branch-btn"]')
+    expect(statusBarCheckoutBtn.exists()).toBe(true)
+    expect(statusBarCheckoutBtn.text()).toContain('Chuyển sang feature/auth')
+
+    await statusBarCheckoutBtn.trigger('click')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(gitCheckoutBranchMock).toHaveBeenCalledWith('Test-Collection', 'feature/auth')
   })
 })
 

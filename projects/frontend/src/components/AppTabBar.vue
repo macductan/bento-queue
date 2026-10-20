@@ -1,7 +1,29 @@
 <script lang="ts" setup>
-import { useTabStore } from '@/stores/tabStore'
+import { useTabStore, type TabItem } from '@/stores/tabStore'
+import { useCollectionStore } from '@/stores/collectionStore'
 
 const tabStore = useTabStore()
+const collectionStore = useCollectionStore()
+
+const getTabPath = (tab: TabItem): string => {
+  const full = collectionStore.findFolderPath(collectionStore.tree, tab.entityId) || []
+  const folderParts = full.filter(n => n.type === 'folder' && n.id !== tab.entityId).map(n => n.name)
+  if (folderParts.length > 0) {
+    return folderParts.join(' / ')
+  }
+  return collectionStore.activeCollection?.name || ''
+}
+
+const getTabFullPath = (tab: TabItem): string => {
+  const full = collectionStore.findFolderPath(collectionStore.tree, tab.entityId) || []
+  const folderParts = full.filter(n => n.type === 'folder' && n.id !== tab.entityId).map(n => n.name)
+  const collName = collectionStore.activeCollection?.name
+  const parts: string[] = []
+  if (collName) parts.push(collName)
+  parts.push(...folderParts)
+  parts.push(displayName(tab.name))
+  return parts.join(' / ')
+}
 
 const methodColors: Record<string, string> = {
   get: 'text-method-get',
@@ -60,7 +82,7 @@ const handleWheel = (e: WheelEvent) => {
     role="tablist"
     aria-label="Danh sách các tab đang mở"
     @wheel.passive="handleWheel"
-    class="h-9 shrink-0 bg-surface-base border-b border-border-default flex items-center overflow-x-auto hide-scrollbar select-none"
+    class="h-10 shrink-0 bg-surface-base border-b border-border-default flex items-center overflow-x-auto hide-scrollbar select-none"
   >
     <div
       v-for="tab in tabStore.tabs"
@@ -83,39 +105,52 @@ const handleWheel = (e: WheelEvent) => {
       @keydown.enter.prevent="handleActivate(tab.id)"
       @keydown.space.prevent="handleActivate(tab.id)"
     >
-      <!-- Request Method Badge -->
-      <span
-        v-if="tab.type === 'request'"
-        data-test="tab-method-badge"
-        class="text-[10px] font-mono font-bold shrink-0"
-        :class="getMethodColorClass(tab.method)"
-      >
-        {{ tab.method || 'GET' }}
-      </span>
+      <!-- Tab Content (Dim path on top + method badge & name below) -->
+      <div class="flex flex-col justify-center min-w-0 pr-1 py-0.5">
+        <span
+          v-if="getTabPath(tab)"
+          data-test="tab-path"
+          class="text-[9px] text-text-muted/60 truncate leading-none mb-0.5 select-none font-normal max-w-[180px]"
+          :title="getTabFullPath(tab)"
+        >
+          {{ getTabPath(tab) }}
+        </span>
+        <div class="flex items-center gap-1.5 min-w-0">
+          <!-- Request Method Badge -->
+          <span
+            v-if="tab.type === 'request'"
+            data-test="tab-method-badge"
+            class="text-[10px] font-mono font-bold shrink-0"
+            :class="getMethodColorClass(tab.method)"
+          >
+            {{ tab.method || 'GET' }}
+          </span>
 
-      <!-- Folder Icon -->
-      <svg
-        v-else
-        data-test="tab-folder-icon"
-        class="w-3.5 h-3.5 shrink-0 text-text-muted"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
-      </svg>
+          <!-- Folder Icon -->
+          <svg
+            v-else
+            data-test="tab-folder-icon"
+            class="w-3.5 h-3.5 shrink-0 text-text-muted"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+          </svg>
 
-      <!-- Tab Name -->
-      <span
-        data-test="tab-name"
-        class="max-w-[160px] truncate ui-sm"
-        :title="displayName(tab.name)"
-      >
-        {{ displayName(tab.name) }}
-      </span>
+          <!-- Tab Name -->
+          <span
+            data-test="tab-name"
+            class="max-w-[160px] truncate ui-sm font-medium"
+            :title="getTabFullPath(tab)"
+          >
+            {{ displayName(tab.name) }}
+          </span>
+        </div>
+      </div>
 
       <!-- Unsaved Dot -->
       <span

@@ -464,3 +464,31 @@ func TestIndexRebuild_IgnoresCorruptedAndUnreadable(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexUpdatePrefix(t *testing.T) {
+	fs := NewFileSystem()
+	sep := string(filepath.Separator)
+	fs.IndexSet("dir", sep+"root"+sep+"a")
+	fs.IndexSet("child", sep+"root"+sep+"a"+sep+"x.json")
+	fs.IndexSet("deep", sep+"root"+sep+"a"+sep+"b"+sep+"y.json")
+	fs.IndexSet("sibling", sep+"root"+sep+"ab"+sep+"z.json") // must NOT match prefix "a"
+	fs.IndexSet("other", sep+"root"+sep+"c.json")
+
+	fs.IndexUpdatePrefix(sep+"root"+sep+"a", sep+"root"+sep+"dest"+sep+"a")
+
+	if fs.index["dir"] != sep+"root"+sep+"dest"+sep+"a" {
+		t.Errorf("dir path mismatch, got %s", fs.index["dir"])
+	}
+	if fs.index["child"] != sep+"root"+sep+"dest"+sep+"a"+sep+"x.json" {
+		t.Errorf("child path mismatch, got %s", fs.index["child"])
+	}
+	if fs.index["deep"] != sep+"root"+sep+"dest"+sep+"a"+sep+"b"+sep+"y.json" {
+		t.Errorf("deep path mismatch, got %s", fs.index["deep"])
+	}
+	if fs.index["sibling"] != sep+"root"+sep+"ab"+sep+"z.json" {
+		t.Errorf("sibling should not be updated, got %s", fs.index["sibling"])
+	}
+	if fs.index["other"] != sep+"root"+sep+"c.json" {
+		t.Errorf("other should not be updated, got %s", fs.index["other"])
+	}
+}

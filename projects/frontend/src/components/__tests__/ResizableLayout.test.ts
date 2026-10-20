@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import App from '@/App.vue'
+import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ContentArea from '@/components/ContentArea.vue'
 import { useUiStore } from '@/stores/uiStore'
@@ -215,6 +216,30 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       ]
       collectionStore.activeCollectionId = 'default'
 
+      const headerWrapper = mount(AppHeader, {
+        global: {
+          stubs: {
+            CollectionSwitcher: true,
+            EnvSelector: true,
+            ImportErrorModal: true,
+            SettingsModal: true
+          }
+        }
+      })
+
+      // Git button exists in header and displays emerald badge when git_remote_url is configured
+      const gitBtn = headerWrapper.find('[data-test="git-config-btn"]')
+      expect(gitBtn.exists()).toBe(true)
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(true)
+
+      // When gitConflictError is set, displays red conflict badge instead
+      collectionStore.gitConflictError = { message: 'Conflict', files: ['req.json'] }
+      await nextTick()
+      expect(headerWrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
+
+      await gitBtn.trigger('click')
+      expect(uiStore.gitSyncModalOpen).toBe(true)
+
       const wrapper = mount(AppSidebar, {
         global: {
           stubs: {
@@ -227,19 +252,6 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       // Old standalone pull/push buttons are removed
       expect(wrapper.find('[data-test="git-pull-btn"]').exists()).toBe(false)
       expect(wrapper.find('[data-test="git-push-btn"]').exists()).toBe(false)
-
-      // Git button exists and displays emerald badge when git_remote_url is configured
-      const gitBtn = wrapper.find('[data-test="git-config-btn"]')
-      expect(gitBtn.exists()).toBe(true)
-      expect(wrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(true)
-
-      // When gitConflictError is set, displays red conflict badge instead
-      collectionStore.gitConflictError = { message: 'Conflict', files: ['req.json'] }
-      await nextTick()
-      expect(wrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
-
-      await gitBtn.trigger('click')
-      expect(uiStore.gitSyncModalOpen).toBe(true)
 
       // '+' dropdown button toggles New Request / New Folder menu
       const createReqSpy = vi.spyOn(collectionStore, 'createRequest').mockResolvedValue(undefined as any)

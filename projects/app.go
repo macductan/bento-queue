@@ -199,6 +199,30 @@ func (a *App) MoveRequest(id, targetFolderID string) model.Result {
 	return res
 }
 
+// MoveFolder moves a folder and all its contents to a target folder (or root when targetFolderID is "").
+func (a *App) MoveFolder(folderID, targetFolderID string) model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.collSvc.MoveFolder(root, folderID, targetFolderID)
+	if res.Success {
+		a.recordChangelog("folder", folderID, folderID, "move", "Di chuyển thư mục sang vị trí khác")
+	}
+	return res
+}
+
+// ReorderNodes updates the order of items within a folder (or root if parentFolderId is empty).
+func (a *App) ReorderNodes(parentFolderId string, nodeIds []string) model.Result {
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.collSvc.ReorderNodes(root, parentFolderId, nodeIds)
+	if res.Success {
+		a.recordChangelog("order", parentFolderId, parentFolderId, "reorder", "Sắp xếp lại các mục")
+	}
+	return res
+}
+
 // ListEnvironments returns all environments.
 func (a *App) ListEnvironments() model.Result {
 	a.mu.RLock()
@@ -509,10 +533,10 @@ func (a *App) GetCollectionGitStatus(collectionID string) model.Result {
 	return a.gitSyncSvc.GetStatus(cRoot, id)
 }
 
-// GitPullCollection executes git pull in the collection directory and rebuilds index on success.
-func (a *App) GitPullCollection(collectionID string) model.Result {
+// GitPullCollectionFromBranch executes git pull from the specified branch in the collection directory.
+func (a *App) GitPullCollectionFromBranch(collectionID, branch string) model.Result {
 	cRoot, id := a.resolveCollectionID(collectionID)
-	res := a.gitSyncSvc.Pull(cRoot, id)
+	res := a.gitSyncSvc.Pull(cRoot, id, branch)
 	if res.Success {
 		a.mu.RLock()
 		root := a.collRoot
@@ -522,6 +546,11 @@ func (a *App) GitPullCollection(collectionID string) model.Result {
 		}
 	}
 	return res
+}
+
+// GitPullCollection executes git pull in the collection directory and rebuilds index on success.
+func (a *App) GitPullCollection(collectionID string) model.Result {
+	return a.GitPullCollectionFromBranch(collectionID, "")
 }
 
 // GitClearAndPullCollection clears local uncommitted/untracked files, resets hard to remote, and rebuilds index.
@@ -569,6 +598,21 @@ func (a *App) GitPushCollectionToBranch(collectionID, branch string) model.Resul
 // GitPushCollection stages, commits, and pushes the collection directory to its configured git remote (backward compatible).
 func (a *App) GitPushCollection(collectionID string) model.Result {
 	return a.GitPushCollectionToBranch(collectionID, "")
+}
+
+// GitCheckoutBranch switches the collection repository to the specified branch.
+func (a *App) GitCheckoutBranch(collectionID, branch string) model.Result {
+	cRoot, id := a.resolveCollectionID(collectionID)
+	res := a.gitSyncSvc.CheckoutBranch(cRoot, id, branch)
+	if res.Success {
+		a.mu.RLock()
+		root := a.collRoot
+		a.mu.RUnlock()
+		if root != "" {
+			_ = a.fs.IndexRebuild(root)
+		}
+	}
+	return res
 }
 
 // ResolveGitConflict writes user-resolved conflict files, stages them, completes the merge commit, and rebuilds the index.

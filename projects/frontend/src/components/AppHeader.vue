@@ -66,7 +66,35 @@ onUnmounted(() => {
     </div>
 
     <div class="flex items-center gap-2">
-      <CollectionSwitcher />
+      <div class="flex items-center gap-1">
+        <CollectionSwitcher />
+        <button
+          type="button"
+          data-test="git-config-btn"
+          title="Đồng bộ Git / Cấu hình Remote"
+          aria-label="Đồng bộ Git / Cấu hình Remote"
+          class="relative p-1.5 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer"
+          :class="(collectionStore.gitConflictError || collectionStore.gitSyncStatus?.has_conflicts) ? 'text-red-400' : (collectionStore.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
+          @click="uiStore.gitSyncModalOpen = true"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="18" r="3"></circle>
+            <circle cx="6" cy="6" r="3"></circle>
+            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+            <line x1="6" y1="9" x2="6" y2="21"></line>
+          </svg>
+          <span
+            v-if="collectionStore.gitConflictError || collectionStore.gitSyncStatus?.has_conflicts"
+            data-test="git-status-badge-conflict"
+            class="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 ring-2 ring-surface-raised"
+          />
+          <span
+            v-else-if="collectionStore.activeCollection?.git_remote_url"
+            data-test="git-status-badge-configured"
+            class="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-surface-raised"
+          />
+        </button>
+      </div>
       <button @click="triggerImport" :disabled="isImporting" class="text-sm text-text-primary hover:text-text-inverse hover:bg-text-primary px-3 py-1.5 rounded border border-border-default transition-colors disabled:opacity-50 flex items-center gap-2" title="Import Postman (Ctrl+I)">
         <svg v-if="isImporting" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>

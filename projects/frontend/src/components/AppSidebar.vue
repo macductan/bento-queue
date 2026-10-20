@@ -28,23 +28,8 @@ const collapseAll = () => {
   }
 }
 
-const expandAll = () => {
-  const nextExpanded = new Set(store.expandedFolders)
-  const collectFolderIds = (nodes: typeof store.tree) => {
-    for (const node of nodes) {
-      if (node.type === 'folder') {
-        nextExpanded.add(node.id)
-        if (node.children && node.children.length > 0) {
-          collectFolderIds(node.children)
-        }
-      }
-    }
-  }
-  collectFolderIds(store.tree)
-  store.expandedFolders = nextExpanded
-  if (savedExpandedFolders.value) {
-    savedExpandedFolders.value = new Set(nextExpanded)
-  }
+const sortAlphabet = async () => {
+  await store.sortNodes('')
 }
 
 const handleFilterKeydown = (e: KeyboardEvent) => {
@@ -144,6 +129,72 @@ const handleRootContextMenu = (e: MouseEvent) => {
     uiStore.openContextMenu(e.clientX, e.clientY, '', 'folder')
   }
 }
+
+const isRootDragOver = ref(false)
+
+watch(
+  () => store.draggingNode,
+  (node) => {
+    if (!node) {
+      isRootDragOver.value = false
+    }
+  }
+)
+
+const onRootDragOver = (e: DragEvent) => {
+  const dragging = store.draggingNode
+  if (!dragging) return
+
+  const target = e.target as HTMLElement | null
+  if (target?.closest('[data-tree-node]') || target?.closest('[data-tree-row]')) {
+    isRootDragOver.value = false
+    return
+  }
+
+  if (store.canMoveNodeTo(dragging.id, dragging.type, '')) {
+    e.preventDefault()
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move'
+    }
+    isRootDragOver.value = true
+  } else {
+    isRootDragOver.value = false
+  }
+}
+
+const onRootDragLeave = (e: DragEvent) => {
+  const currentTarget = e.currentTarget as HTMLElement | null
+  if (!currentTarget) {
+    isRootDragOver.value = false
+    return
+  }
+  const rect = currentTarget.getBoundingClientRect()
+  if (
+    e.clientX >= rect.left &&
+    e.clientX < rect.right &&
+    e.clientY >= rect.top &&
+    e.clientY < rect.bottom
+  ) {
+    return
+  }
+  isRootDragOver.value = false
+}
+
+const onRootDrop = async (e: DragEvent) => {
+  const dragging = store.draggingNode
+  isRootDragOver.value = false
+  if (!dragging) return
+
+  if (store.canMoveNodeTo(dragging.id, dragging.type, '')) {
+    e.preventDefault()
+    store.setDraggingNode(null)
+    if (dragging.type === 'folder') {
+      await store.moveFolder(dragging.id, '')
+    } else {
+      await store.moveRequest(dragging.id, '')
+    }
+  }
+}
 </script>
 
 <template>
@@ -209,47 +260,22 @@ const handleRootContextMenu = (e: MouseEvent) => {
           </svg>
         </button>
 
-        <!-- Expand All -->
+        <!-- Sort Alphabetically -->
         <button
           type="button"
-          data-test="tree-expand-all-btn"
-          title="Mở rộng tất cả"
-          aria-label="Mở rộng tất cả"
+          data-test="tree-sort-alphabet-btn"
+          title="Sắp xếp theo thứ tự A-Z"
+          aria-label="Sắp xếp theo thứ tự A-Z"
           class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          @click="expandAll"
+          @click="sortAlphabet"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m7 15 5 5 5-5"/>
-            <path d="m7 9 5-5 5 5"/>
+            <path d="m3 16 4 4 4-4"/>
+            <path d="M7 20V4"/>
+            <path d="M20 8h-5"/>
+            <path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/>
+            <path d="M15 14h5l-5 6h5"/>
           </svg>
-        </button>
-
-        <!-- Git remote config button -->
-        <button
-          type="button"
-          data-test="git-config-btn"
-          title="Cấu hình Git Remote"
-          aria-label="Cấu hình Git Remote"
-          class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          :class="(store.gitConflictError || store.gitSyncStatus?.has_conflicts) ? 'text-red-400' : (store.activeCollection?.git_remote_url ? 'text-emerald-400' : '')"
-          @click="uiStore.gitSyncModalOpen = true"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="18" cy="18" r="3"></circle>
-            <circle cx="6" cy="6" r="3"></circle>
-            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
-            <line x1="6" y1="9" x2="6" y2="21"></line>
-          </svg>
-          <span
-            v-if="store.gitConflictError || store.gitSyncStatus?.has_conflicts"
-            data-test="git-status-badge-conflict"
-            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-500"
-          />
-          <span
-            v-else-if="store.activeCollection?.git_remote_url"
-            data-test="git-status-badge-configured"
-            class="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400"
-          />
         </button>
 
         <!-- Add Request / Folder -->
@@ -305,6 +331,12 @@ const handleRootContextMenu = (e: MouseEvent) => {
     <!-- Tree Content Area -->
     <div 
       class="flex-1 overflow-y-auto py-2"
+      data-test="tree-root-drop-zone"
+      :data-root-drop-active="isRootDragOver ? 'true' : undefined"
+      :class="{ 'ring-2 ring-inset ring-brand-primary/60 bg-brand-primary/5': isRootDragOver }"
+      @dragover="onRootDragOver"
+      @dragleave="onRootDragLeave"
+      @drop="onRootDrop"
       @contextmenu.prevent="handleRootContextMenu"
     >
       <div v-if="store.loading && store.tree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
@@ -329,13 +361,16 @@ const handleRootContextMenu = (e: MouseEvent) => {
           Xóa bộ lọc
         </button>
       </div>
-      <div v-else>
-        <TreeNodeRow 
-          v-for="node in displayedTree" 
-          :key="node.id"
-          :node="node"
-          :depth="0"
-        />
+      <div v-else class="flex flex-col min-h-full">
+        <div>
+          <TreeNodeRow 
+            v-for="node in displayedTree" 
+            :key="node.id"
+            :node="node"
+            :depth="0"
+          />
+        </div>
+        <div class="flex-1 min-h-[48px]" data-test="tree-root-empty-space" />
       </div>
     </div>
   </nav>

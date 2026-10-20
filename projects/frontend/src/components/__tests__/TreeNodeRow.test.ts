@@ -14,6 +14,8 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   UpdateFolder: vi.fn().mockResolvedValue({ success: true, data: {} }),
   DeleteFolder: vi.fn().mockResolvedValue({ success: true, data: {} }),
   RenameFolder: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  MoveFolder: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  MoveRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
   CreateRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
   SaveRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
   DeleteRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
@@ -356,5 +358,355 @@ describe('TreeNodeRow.vue', () => {
     await folderInput.trigger('keydown.enter')
 
     expect(renameFolderSpy).toHaveBeenCalledWith('folder-long', expected255)
+  })
+
+  it('handles draggable attribute and inline rename state properly (CAP-4)', async () => {
+    const requestNode: TreeNode = {
+      id: 'req-drag',
+      name: 'Draggable Request',
+      type: 'request',
+      method: 'GET',
+      path: '/req-drag',
+      created_at: '2026-10-19'
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: { node: requestNode, depth: 0 }
+    })
+
+    const row = wrapper.find('[data-tree-row="true"]')
+    expect(row.attributes('draggable')).toBe('true')
+
+    await row.trigger('dblclick')
+    expect(row.attributes('draggable')).toBe('false')
+  })
+
+  it('handles dragstart and dragend events on TreeNodeRow (CAP-4)', async () => {
+    const store = useCollectionStore()
+    const requestNode: TreeNode = {
+      id: 'req-drag-1',
+      name: 'Req Drag',
+      type: 'request',
+      method: 'POST',
+      path: '/req-drag-1',
+      created_at: '2026-10-19'
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: { node: requestNode, depth: 0 }
+    })
+
+    const row = wrapper.find('[data-tree-row="true"]')
+    const dataTransfer = {
+      effectAllowed: '',
+      setData: vi.fn(),
+      getData: vi.fn()
+    }
+
+    await row.trigger('dragstart', { dataTransfer })
+
+    expect(store.draggingNode).toEqual({ id: 'req-drag-1', type: 'request' })
+    expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-hecto-tree-node', JSON.stringify({ id: 'req-drag-1', type: 'request' }))
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'req-drag-1')
+    expect(row.attributes('data-dragging')).toBe('true')
+
+    await row.trigger('dragend')
+    expect(store.draggingNode).toBeNull()
+    expect(row.attributes('data-dragging')).toBeUndefined()
+  })
+
+  it('highlights valid folder drop target on dragover and executes move on drop (CAP-4)', async () => {
+    const store = useCollectionStore()
+    const moveReqSpy = vi.spyOn(store, 'moveRequest').mockResolvedValue()
+
+    store.tree = [
+      {
+        id: 'f-target',
+        name: 'Target Folder',
+        type: 'folder',
+        path: '/f-target',
+        children: [],
+        created_at: '2026-10-19'
+      },
+      {
+        id: 'req-source',
+        name: 'Source Req',
+        type: 'request',
+        method: 'GET',
+        path: '/req-source',
+        created_at: '2026-10-19'
+      }
+    ]
+
+    const wrapper = mount(TreeNodeRow, {
+      props: { node: store.tree[0], depth: 0 }
+    })
+
+    store.setDraggingNode({ id: 'req-source', type: 'request' })
+
+    const row = wrapper.find('[data-tree-row="true"]')
+    const dataTransfer = { dropEffect: '' }
+
+    await row.trigger('dragover', { dataTransfer })
+    expect(row.attributes('data-drop-target')).toBe('valid')
+    expect(dataTransfer.dropEffect).toBe('move')
+
+    await row.trigger('drop')
+    expect(moveReqSpy).toHaveBeenCalledWith('req-source', 'f-target')
+    expect(row.attributes('data-drop-target')).toBeUndefined()
+  })
+
+  it('rejects dropping folder into itself or descendant folder (CAP-1, CAP-4)', async () => {
+    const store = useCollectionStore()
+    const moveFolderSpy = vi.spyOn(store, 'moveFolder').mockResolvedValue()
+
+    const childFolder: TreeNode = {
+      id: 'f-child',
+      name: 'Child Folder',
+      type: 'folder',
+      path: '/f-parent/f-child',
+      children: [],
+      created_at: '2026-10-19'
+    }
+
+    const parentFolder: TreeNode = {
+      id: 'f-parent',
+      name: 'Parent Folder',
+      type: 'folder',
+      path: '/f-parent',
+      children: [childFolder],
+      created_at: '2026-10-19'
+    }
+
+    store.tree = [parentFolder]
+
+    // 1. Dragging parent over itself
+    const parentWrapper = mount(TreeNodeRow, {
+      props: { node: parentFolder, depth: 0 }
+    })
+    store.setDraggingNode({ id: 'f-parent', type: 'folder' })
+
+    const parentRow = parentWrapper.find('[data-tree-row="true"]')
+    const dataTransfer = { dropEffect: '' }
+    await parentRow.trigger('dragover', { dataTransfer })
+
+    expect(parentRow.attributes('data-drop-target')).toBe('invalid')
+    expect(dataTransfer.dropEffect).toBe('none')
+
+    await parentRow.trigger('drop')
+    expect(moveFolderSpy).not.toHaveBeenCalled()
+
+    // 2. Dragging parent over its child
+    const childWrapper = mount(TreeNodeRow, {
+      props: { node: childFolder, depth: 1 }
+    })
+    const childRow = childWrapper.find('[data-tree-row="true"]')
+    await childRow.trigger('dragover', { dataTransfer })
+
+    expect(childRow.attributes('data-drop-target')).toBe('invalid')
+    expect(dataTransfer.dropEffect).toBe('none')
+
+    await childRow.trigger('drop')
+    expect(moveFolderSpy).not.toHaveBeenCalled()
+  })
+
+  it('allows dropping a folder onto a valid target folder and calls moveFolder (CAP-4)', async () => {
+    const store = useCollectionStore()
+    const moveFolderSpy = vi.spyOn(store, 'moveFolder').mockResolvedValue()
+
+    const sourceFolder: TreeNode = {
+      id: 'f-source',
+      name: 'Source Folder',
+      type: 'folder',
+      path: '/f-source',
+      children: [],
+      created_at: ''
+    }
+    const targetFolder: TreeNode = {
+      id: 'f-target',
+      name: 'Target Folder',
+      type: 'folder',
+      path: '/f-target',
+      children: [],
+      created_at: ''
+    }
+
+    store.tree = [sourceFolder, targetFolder]
+    store.setDraggingNode({ id: 'f-source', type: 'folder' })
+
+    const targetWrapper = mount(TreeNodeRow, {
+      props: { node: targetFolder, depth: 0 }
+    })
+    const targetRow = targetWrapper.find('[data-tree-row="true"]')
+
+    const dataTransfer = { dropEffect: '' }
+    await targetRow.trigger('dragover', { dataTransfer })
+    expect(targetRow.attributes('data-drop-target')).toBe('valid')
+    expect(dataTransfer.dropEffect).toBe('move')
+
+    await targetRow.trigger('drop')
+    expect(moveFolderSpy).toHaveBeenCalledWith('f-source', 'f-target')
+    expect(store.draggingNode).toBeNull()
+  })
+
+  it('renders "Di chuyển tới ▸" submenu in TreeContextMenu for folder, excluding self and descendants (CAP-3)', async () => {
+    const store = useCollectionStore()
+    const uiStore = useUiStore()
+    const moveFolderSpy = vi.spyOn(store, 'moveFolder').mockResolvedValue()
+
+    const fChild: TreeNode = {
+      id: 'f-sub',
+      name: 'Subfolder',
+      type: 'folder',
+      path: '/f-main/f-sub',
+      children: [],
+      created_at: ''
+    }
+    const fMain: TreeNode = {
+      id: 'f-main',
+      name: 'Main Folder',
+      type: 'folder',
+      path: '/f-main',
+      children: [fChild],
+      created_at: ''
+    }
+    const fOther: TreeNode = {
+      id: 'f-other',
+      name: 'Other Folder',
+      type: 'folder',
+      path: '/f-other',
+      children: [],
+      created_at: ''
+    }
+
+    store.tree = [fMain, fOther]
+    uiStore.openContextMenu(100, 100, 'f-main', 'folder')
+
+    const wrapper = mount(TreeContextMenu)
+    await flushPromises()
+
+    // Find "Di chuyển tới" button
+    const moveSubmenu = wrapper.findAll('.relative').find(el => el.text().includes('Di chuyển tới'))
+    expect(moveSubmenu).toBeDefined()
+
+    // Submenu options should include "Gốc collection" and "Other Folder", but NOT "Main Folder" or "Subfolder"
+    const buttons = moveSubmenu!.findAll('button')
+    const buttonTexts = buttons.map(b => b.text())
+
+    expect(buttonTexts).toContain('Gốc collection')
+    expect(buttonTexts).toContain('Other Folder')
+    expect(buttonTexts).not.toContain('Main Folder')
+    expect(buttonTexts).not.toContain('Subfolder')
+
+    // Click "Gốc collection"
+    const rootBtn = buttons.find(b => b.text().includes('Gốc collection'))
+    await rootBtn!.trigger('click')
+    expect(moveFolderSpy).toHaveBeenCalledWith('f-main', '')
+
+    // Re-open and click "Other Folder"
+    uiStore.openContextMenu(100, 100, 'f-main', 'folder')
+    await flushPromises()
+    const otherBtn = wrapper.findAll('button').find(b => b.text().includes('Other Folder'))
+    await otherBtn!.trigger('click')
+    expect(moveFolderSpy).toHaveBeenCalledWith('f-main', 'f-other')
+  })
+
+  it('clicking folder sort button calls sortNodes with folder id', async () => {
+    const store = useCollectionStore()
+    const sortNodesSpy = vi.spyOn(store, 'sortNodes').mockResolvedValue(true)
+
+    const folderNode: TreeNode = {
+      id: 'f-users',
+      name: 'Users',
+      type: 'folder',
+      path: '/f-users',
+      children: [],
+      created_at: ''
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: {
+        node: folderNode,
+        depth: 0
+      }
+    })
+
+    const sortBtn = wrapper.find('[data-test="folder-sort-btn"]')
+    expect(sortBtn.exists()).toBe(true)
+    await sortBtn.trigger('click')
+    expect(sortNodesSpy).toHaveBeenCalledWith('f-users')
+  })
+
+  it('calculates drop position accurately and triggers reorderNodePosition on drop', async () => {
+    const store = useCollectionStore()
+    const reorderSpy = vi.spyOn(store, 'reorderNodePosition').mockResolvedValue(true)
+    vi.spyOn(store, 'canReorderNode').mockReturnValue(true)
+
+    const folderNode: TreeNode = {
+      id: 'f-target',
+      name: 'Target Folder',
+      type: 'folder',
+      path: '/f-target',
+      children: [],
+      created_at: ''
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: {
+        node: folderNode,
+        depth: 0
+      }
+    })
+
+    store.setDraggingNode({ id: 'req-drag', type: 'request' })
+
+    const row = wrapper.find('[data-tree-row="true"]')
+    // Mock getBoundingClientRect
+    row.element.getBoundingClientRect = () => ({
+      top: 100,
+      bottom: 200,
+      height: 100,
+      left: 0,
+      right: 200,
+      width: 200,
+      x: 0,
+      y: 100,
+      toJSON: () => {}
+    })
+
+    // Drag over top 20% -> 'before'
+    await row.trigger('dragover', { clientY: 110 })
+    expect(wrapper.find('[data-test="tree-drop-indicator-before"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="tree-drop-indicator-after"]').exists()).toBe(false)
+
+    // Drag over middle 50% -> 'inside'
+    await row.trigger('dragover', { clientY: 150 })
+    expect(wrapper.find('[data-test="tree-drop-indicator-before"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="tree-drop-indicator-after"]').exists()).toBe(false)
+    expect(row.classes()).toContain('border-brand-primary')
+
+    // Drag over bottom 20% -> 'after'
+    await row.trigger('dragover', { clientY: 190 })
+    expect(wrapper.find('[data-test="tree-drop-indicator-after"]').exists()).toBe(true)
+
+    // Drop on 'after'
+    await row.trigger('drop')
+    expect(reorderSpy).toHaveBeenCalledWith('req-drag', 'request', 'f-target', 'after')
+  })
+
+  it('context menu has Sắp xếp A-Z option which calls sortNodes', async () => {
+    const store = useCollectionStore()
+    const uiStore = useUiStore()
+    const sortNodesSpy = vi.spyOn(store, 'sortNodes').mockResolvedValue(true)
+
+    uiStore.openContextMenu(100, 100, 'f-target', 'folder')
+    const wrapper = mount(TreeContextMenu)
+    await flushPromises()
+
+    const sortBtn = wrapper.find('[data-test="context-menu-sort-btn"]')
+    expect(sortBtn.exists()).toBe(true)
+    await sortBtn.trigger('click')
+    expect(sortNodesSpy).toHaveBeenCalledWith('f-target')
+    expect(uiStore.contextMenu).toBeNull()
   })
 })

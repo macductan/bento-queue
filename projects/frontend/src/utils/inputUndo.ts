@@ -2,6 +2,8 @@ export interface InputSnapshot {
   value: string
   selectionStart: number
   selectionEnd: number
+  scrollTop?: number
+  scrollLeft?: number
 }
 
 interface UndoHistory {
@@ -47,16 +49,26 @@ export function isEditableTextControl(
   return false
 }
 
-function getSelection(el: HTMLInputElement | HTMLTextAreaElement): { start: number; end: number } {
+function getSelection(el: HTMLInputElement | HTMLTextAreaElement): {
+  start: number
+  end: number
+  scrollTop?: number
+  scrollLeft?: number
+} {
+  let start = 0
+  let end = 0
   try {
     const len = (el.value || '').length
-    const start = typeof el.selectionStart === 'number' ? el.selectionStart : len
-    const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : len
-    return { start, end }
+    start = typeof el.selectionStart === 'number' ? el.selectionStart : len
+    end = typeof el.selectionEnd === 'number' ? el.selectionEnd : len
   } catch {
     const len = (el.value || '').length
-    return { start: len, end: len }
+    start = len
+    end = len
   }
+  const scrollTop = 'scrollTop' in el ? el.scrollTop : undefined
+  const scrollLeft = 'scrollLeft' in el ? el.scrollLeft : undefined
+  return { start, end, scrollTop, scrollLeft }
 }
 
 function restoreSelection(
@@ -66,7 +78,7 @@ function restoreSelection(
 ): void {
   try {
     if (typeof el.setSelectionRange === 'function') {
-      const len = el.value.length
+      const len = (el.value || '').length
       const clampedStart = Math.max(0, Math.min(len, start))
       const clampedEnd = Math.max(clampedStart, Math.min(len, end))
       el.setSelectionRange(clampedStart, clampedEnd)
@@ -76,16 +88,26 @@ function restoreSelection(
   }
 }
 
+function findFirstDiff(a: string, b: string): number {
+  const minLen = Math.min(a.length, b.length)
+  for (let i = 0; i < minLen; i++) {
+    if (a[i] !== b[i]) return i
+  }
+  return a.length !== b.length ? minLen : -1
+}
+
 function getOrCreateHistory(el: HTMLInputElement | HTMLTextAreaElement): UndoHistory {
   let hist = historyMap.get(el)
   if (!hist) {
-    const { start, end } = getSelection(el)
+    const { start, end, scrollTop, scrollLeft } = getSelection(el)
     hist = {
       stack: [
         {
           value: el.value || '',
           selectionStart: start,
-          selectionEnd: end
+          selectionEnd: end,
+          scrollTop,
+          scrollLeft
         }
       ],
       index: 0,
@@ -103,12 +125,14 @@ export function recordInputSnapshot(el: HTMLInputElement | HTMLTextAreaElement |
   if (hist.isApplying) return
 
   const currentVal = el.value || ''
-  const { start, end } = getSelection(el)
+  const { start, end, scrollTop, scrollLeft } = getSelection(el)
   const currentEntry = hist.stack[hist.index]
 
   if (currentEntry && currentEntry.value === currentVal) {
     currentEntry.selectionStart = start
     currentEntry.selectionEnd = end
+    currentEntry.scrollTop = scrollTop
+    currentEntry.scrollLeft = scrollLeft
     return
   }
 
@@ -120,7 +144,9 @@ export function recordInputSnapshot(el: HTMLInputElement | HTMLTextAreaElement |
   hist.stack.push({
     value: currentVal,
     selectionStart: start,
-    selectionEnd: end
+    selectionEnd: end,
+    scrollTop,
+    scrollLeft
   })
 
   if (hist.stack.length > MAX_HISTORY_SIZE) {
@@ -143,18 +169,56 @@ export function undoInput(el: HTMLInputElement | HTMLTextAreaElement | null | un
 
   if (hist.index <= 0) return false
 
+  const prevEntry = hist.stack[hist.index]
   hist.index -= 1
   const targetEntry = hist.stack[hist.index]
   if (!targetEntry) return false
 
+  let restoreStart = targetEntry.selectionStart
+  let restoreEnd = targetEntry.selectionEnd
+
+  if (prevEntry) {
+    const diffPos = findFirstDiff(prevEntry.value, targetEntry.value)
+    if (diffPos >= 0) {
+      if (restoreStart === 0 && diffPos > 0) {
+        restoreStart = diffPos
+        restoreEnd = diffPos
+      }
+    }
+  }
+
+  const savedScrollTop = targetEntry.scrollTop ?? ('scrollTop' in el ? el.scrollTop : undefined)
+  const savedScrollLeft = targetEntry.scrollLeft ?? ('scrollLeft' in el ? el.scrollLeft : undefined)
+
   hist.isApplying = true
   try {
     el.value = targetEntry.value
-    restoreSelection(el, targetEntry.selectionStart, targetEntry.selectionEnd)
+    restoreSelection(el, restoreStart, restoreEnd)
+    if (savedScrollTop !== undefined && 'scrollTop' in el) {
+      el.scrollTop = savedScrollTop
+      el.scrollLeft = savedScrollLeft || 0
+    }
     el.dispatchEvent(new Event('input', { bubbles: true }))
   } finally {
     hist.isApplying = false
   }
+
+  const scheduleRestore = () => {
+    try {
+      restoreSelection(el, restoreStart, restoreEnd)
+      if (savedScrollTop !== undefined && 'scrollTop' in el) {
+        el.scrollTop = savedScrollTop
+        el.scrollLeft = savedScrollLeft || 0
+      }
+    } catch {}
+  }
+  scheduleRestore()
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(scheduleRestore)
+  } else {
+    setTimeout(scheduleRestore, 0)
+  }
+
   return true
 }
 
@@ -169,18 +233,60 @@ export function redoInput(el: HTMLInputElement | HTMLTextAreaElement | null | un
   const targetEntry = hist.stack[hist.index]
   if (!targetEntry) return false
 
+  const restoreStart = targetEntry.selectionStart
+  const restoreEnd = targetEntry.selectionEnd
+  const savedScrollTop = targetEntry.scrollTop ?? ('scrollTop' in el ? el.scrollTop : undefined)
+  const savedScrollLeft = targetEntry.scrollLeft ?? ('scrollLeft' in el ? el.scrollLeft : undefined)
+
   hist.isApplying = true
   try {
     el.value = targetEntry.value
-    restoreSelection(el, targetEntry.selectionStart, targetEntry.selectionEnd)
+    restoreSelection(el, restoreStart, restoreEnd)
+    if (savedScrollTop !== undefined && 'scrollTop' in el) {
+      el.scrollTop = savedScrollTop
+      el.scrollLeft = savedScrollLeft || 0
+    }
     el.dispatchEvent(new Event('input', { bubbles: true }))
   } finally {
     hist.isApplying = false
   }
+
+  const scheduleRestore = () => {
+    try {
+      restoreSelection(el, restoreStart, restoreEnd)
+      if (savedScrollTop !== undefined && 'scrollTop' in el) {
+        el.scrollTop = savedScrollTop
+        el.scrollLeft = savedScrollLeft || 0
+      }
+    } catch {}
+  }
+  scheduleRestore()
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(scheduleRestore)
+  } else {
+    setTimeout(scheduleRestore, 0)
+  }
+
   return true
 }
 
 export function installGlobalInputUndo(target: Window | Document | HTMLElement = window): () => void {
+  const updateCursorOnCurrentSnapshot = (el: EventTarget | null) => {
+    if (isEditableTextControl(el)) {
+      const hist = historyMap.get(el)
+      if (hist && !hist.isApplying && !hist.isComposing) {
+        const currentEntry = hist.stack[hist.index]
+        if (currentEntry && currentEntry.value === (el.value || '')) {
+          const { start, end, scrollTop, scrollLeft } = getSelection(el)
+          currentEntry.selectionStart = start
+          currentEntry.selectionEnd = end
+          currentEntry.scrollTop = scrollTop
+          currentEntry.scrollLeft = scrollLeft
+        }
+      }
+    }
+  }
+
   const onFocusIn = (e: Event) => {
     if (isEditableTextControl(e.target)) {
       recordInputSnapshot(e.target)
@@ -222,12 +328,20 @@ export function installGlobalInputUndo(target: Window | Document | HTMLElement =
         ke.preventDefault()
         ke.stopPropagation()
         undoInput(ke.target)
+        return
       } else if ((key === 'z' && ke.shiftKey) || (key === 'y' && !ke.shiftKey)) {
         ke.preventDefault()
         ke.stopPropagation()
         redoInput(ke.target)
+        return
       }
     }
+
+    updateCursorOnCurrentSnapshot(ke.target)
+  }
+
+  const onPointerOrKeyMove = (e: Event) => {
+    updateCursorOnCurrentSnapshot(e.target)
   }
 
   target.addEventListener('focusin', onFocusIn, true)
@@ -235,6 +349,10 @@ export function installGlobalInputUndo(target: Window | Document | HTMLElement =
   target.addEventListener('compositionend', onCompositionEnd, true)
   target.addEventListener('input', onInput, true)
   target.addEventListener('keydown', onKeyDown, true)
+  target.addEventListener('keyup', onPointerOrKeyMove, true)
+  target.addEventListener('pointerup', onPointerOrKeyMove, true)
+  target.addEventListener('click', onPointerOrKeyMove, true)
+  target.addEventListener('select', onPointerOrKeyMove, true)
 
   return () => {
     target.removeEventListener('focusin', onFocusIn, true)
@@ -242,5 +360,9 @@ export function installGlobalInputUndo(target: Window | Document | HTMLElement =
     target.removeEventListener('compositionend', onCompositionEnd, true)
     target.removeEventListener('input', onInput, true)
     target.removeEventListener('keydown', onKeyDown, true)
+    target.removeEventListener('keyup', onPointerOrKeyMove, true)
+    target.removeEventListener('pointerup', onPointerOrKeyMove, true)
+    target.removeEventListener('click', onPointerOrKeyMove, true)
+    target.removeEventListener('select', onPointerOrKeyMove, true)
   }
 }

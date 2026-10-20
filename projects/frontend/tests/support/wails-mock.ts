@@ -205,6 +205,7 @@ export function setupWailsMock() {
           }),
           AbortRequest: async () => ({ success: true, data: null }),
           MoveRequest: async () => ({ success: true, data: null }),
+          MoveFolder: async () => ({ success: true, data: null }),
           ListCollections: async () => ({
             success: true,
             data: [

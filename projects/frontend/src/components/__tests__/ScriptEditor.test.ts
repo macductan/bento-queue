@@ -62,6 +62,31 @@ describe('ScriptEditor.vue', () => {
     expect(wrapper.text()).toContain('Chưa có log thực thi')
   })
 
+  it('defaults to post-response tab when only post-response script exists, and displays checkmark badges', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      scripts: {
+        pre_request: '',
+        post_response: 'console.log("post script only");'
+      }
+    })
+
+    const wrapper = mount(ScriptEditor)
+
+    // Should default to post_response because only post_response has code
+    expect(wrapper.find('[data-test="post-script-panel"]').attributes('style') || '').not.toContain('display: none')
+    expect(wrapper.find('[data-test="pre-script-panel"]').attributes('style') || '').toContain('display: none')
+
+    // Post tab has badge, pre tab does not
+    expect(wrapper.find('[data-test="post-script-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="pre-script-badge"]').exists()).toBe(false)
+
+    // Clicking pre-request tab switches to pre-request
+    await wrapper.find('[data-test="script-tab-pre-request"]').trigger('click')
+    expect(wrapper.find('[data-test="pre-script-panel"]').attributes('style') || '').not.toContain('display: none')
+    expect(wrapper.find('[data-test="post-script-panel"]').attributes('style') || '').toContain('display: none')
+  })
+
   it('inserts snippets into Pre-request and Post-response scripts on button click', async () => {
     const reqStore = useRequestStore()
     reqStore.current = createMockRequest()
@@ -73,7 +98,7 @@ describe('ScriptEditor.vue', () => {
     expect(preSnippetBtn.exists()).toBe(true)
     await preSnippetBtn.trigger('click')
 
-    expect(reqStore.current.scripts?.pre_request).toContain("ha.environment.set('token', 'value');")
+    expect(reqStore.current.scripts?.pre_request).toContain("ha.env().set({ token: 'value' });")
 
     // Switch to post-response and insert snippets
     await wrapper.find('[data-test="script-phase-select"]').setValue('post_response')
@@ -89,6 +114,36 @@ describe('ScriptEditor.vue', () => {
     await postEnvBtn.trigger('click')
 
     expect(reqStore.current.scripts?.post_response).toContain('ha.response.code')
+  })
+
+  it('inserts Folder Auth and Request Auth snippets and displays auth autocomplete suggestions', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest()
+
+    const wrapper = mount(ScriptEditor)
+
+    const folderAuthBtn = wrapper.find('[data-test="snippet-pre-folder-auth"]')
+    expect(folderAuthBtn.exists()).toBe(true)
+    await folderAuthBtn.trigger('click')
+    expect(reqStore.current.scripts?.pre_request).toContain("ha.folder('FolderName').auth.set")
+
+    const reqAuthBtn = wrapper.find('[data-test="snippet-pre-request-auth"]')
+    expect(reqAuthBtn.exists()).toBe(true)
+    await reqAuthBtn.trigger('click')
+    expect(reqStore.current.scripts?.pre_request).toContain("ha.request.auth.set")
+
+    // Test autocomplete trigger
+    const textarea = wrapper.find('[data-test="pre-request-script-input"]')
+    const el = textarea.element as HTMLTextAreaElement
+    el.value = 'ha.folder'
+    el.selectionStart = el.selectionEnd = el.value.length
+    await textarea.trigger('input')
+    await textarea.trigger('keydown', { key: ' ', ctrlKey: true })
+    await nextTick()
+
+    const list = wrapper.find('[data-test="script-autocomplete-list"]')
+    expect(list.exists()).toBe(true)
+    expect(list.text()).toContain('ha.folder')
   })
 
   it('executes pre-request script preview, updates logs, and applies env variables', async () => {
@@ -274,5 +329,141 @@ describe('ScriptEditor.vue', () => {
     await nextTick()
 
     expect(store.current?.scripts?.pre_request).toContain('\n')
+  })
+
+  it('IME Composition (Ubuntu Vietnamese): toggles is-ime-composing, hides syntax overlay, and updates script on compositionend', async () => {
+    const store = useRequestStore()
+    store.current = {
+      id: 'req-ime',
+      name: 'IME Test',
+      scripts: {
+        pre_request: 'const a = 1;',
+        post_response: ''
+      }
+    } as any
+
+    const wrapper = mount(ScriptEditor)
+    await nextTick()
+
+    const panel = wrapper.find('[data-test="pre-script-panel"]')
+    const overlay = wrapper.find('[data-test="pre-script-syntax-overlay"]')
+    const textarea = wrapper.find('[data-test="pre-request-script-input"]')
+
+    expect(panel.classes()).not.toContain('is-ime-composing')
+    expect(overlay.classes()).not.toContain('opacity-0')
+
+    // Simulate compositionstart
+    await textarea.trigger('compositionstart')
+    await nextTick()
+
+    expect(panel.classes()).toContain('is-ime-composing')
+    expect(overlay.classes()).toContain('opacity-0')
+
+    // Simulate compositionupdate
+    await textarea.trigger('compositionupdate', { data: 'ư' })
+    await nextTick()
+
+    expect(panel.classes()).toContain('is-ime-composing')
+
+    // Simulate compositionend
+    const el = textarea.element as HTMLTextAreaElement
+    el.value = 'const a = 1; // test tiếng việt'
+    await textarea.trigger('compositionend')
+    await nextTick()
+
+    expect(panel.classes()).not.toContain('is-ime-composing')
+    expect(overlay.classes()).not.toContain('opacity-0')
+    expect(store.current?.scripts?.pre_request).toBe('const a = 1; // test tiếng việt')
+  })
+
+  it('renders line numbers gutter synchronized with script line count', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      scripts: {
+        pre_request: 'line1\nline2\nline3\nline4\nline5',
+        post_response: ''
+      }
+    })
+
+    const wrapper = mount(ScriptEditor)
+    await nextTick()
+
+    const gutter = wrapper.find('[data-test="pre-script-gutter"]')
+    expect(gutter.exists()).toBe(true)
+    expect(gutter.text()).toContain('1')
+    expect(gutter.text()).toContain('5')
+  })
+
+  it('only suggests inner object payload properties when typing inside an object literal', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest()
+
+    const wrapper = mount(ScriptEditor)
+    const textarea = wrapper.find('[data-test="pre-request-script-input"]')
+    const el = textarea.element as HTMLTextAreaElement
+
+    // User types inside .auth.set({ type
+    el.value = "ha.folder('Backoffice').auth.set({ type"
+    el.selectionStart = el.selectionEnd = el.value.length
+    await textarea.trigger('input')
+    await textarea.trigger('keydown', { key: ' ', ctrlKey: true })
+    await nextTick()
+
+    const list = wrapper.find('[data-test="script-autocomplete-list"]')
+    expect(list.exists()).toBe(true)
+    // Should suggest object property type: 'bearer', NOT full ha.folder(...) line
+    expect(list.text()).toContain("type: 'bearer'")
+    expect(list.text()).not.toContain("ha.folder(")
+  })
+
+  it('handles Ctrl+X to cut selected text in the script editor', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      scripts: {
+        pre_request: 'console.log("hello world");',
+        post_response: ''
+      }
+    })
+
+    const wrapper = mount(ScriptEditor)
+    const textarea = wrapper.find('[data-test="pre-request-script-input"]')
+    const el = textarea.element as HTMLTextAreaElement
+
+    // Select "hello world"
+    el.selectionStart = 13
+    el.selectionEnd = 24
+    await textarea.trigger('keydown', { key: 'x', ctrlKey: true })
+    await nextTick()
+
+    expect(reqStore.current.scripts?.pre_request).toBe('console.log("");')
+  })
+
+  it('formats code when clicking Format button and via Ctrl+Shift+F shortcut', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      scripts: {
+        pre_request: 'const a=1+2;\nif(a){\nha.env().set({x:a});\n}',
+        post_response: ''
+      }
+    })
+
+    const wrapper = mount(ScriptEditor)
+    const formatBtn = wrapper.find('[data-test="format-script-btn"]')
+    expect(formatBtn.exists()).toBe(true)
+
+    await formatBtn.trigger('click')
+    await nextTick()
+
+    const expected = 'const a = 1 + 2;\nif (a) {\n  ha.env().set({ x: a });\n}'
+    expect(reqStore.current.scripts?.pre_request).toBe(expected)
+
+    // Test shortcut on post_response
+    await wrapper.find('[data-test="script-tab-post-response"]').trigger('click')
+    reqStore.current.scripts!.post_response = 'const b=10;'
+    const postTextarea = wrapper.find('[data-test="post-response-script-input"]')
+    await postTextarea.trigger('keydown', { key: 'F', ctrlKey: true, shiftKey: true })
+    await nextTick()
+
+    expect(reqStore.current.scripts?.post_response).toBe('const b = 10;')
   })
 })

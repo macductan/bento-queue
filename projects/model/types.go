@@ -128,6 +128,7 @@ type TreeNode struct {
 type Folder struct {
 	ID         string                 `json:"id"`
 	Name       string                 `json:"name"`
+	Order      []string               `json:"order,omitempty"`
 	Variables  []KVPair               `json:"variables"`
 	FolderEnvs map[string][]KVPair    `json:"folder_envs,omitempty"`
 	Headers    []KVPair               `json:"headers"`
@@ -153,6 +154,7 @@ type Collection struct {
 	ID           string                 `json:"id,omitempty"`
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description"`
+	Order        []string               `json:"order,omitempty"`
 	Variables    []KVPair               `json:"variables,omitempty"`
 	Auth         *AuthConfig            `json:"auth,omitempty"`
 	AuthEnvs     map[string]*AuthConfig `json:"auth_envs,omitempty"`

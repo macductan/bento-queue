@@ -176,28 +176,175 @@ const guideOffsets = computed(() => {
   }
   return offsets
 })
+
+const isDragging = ref(false)
+const isDragOver = ref(false)
+const isInvalidTarget = ref(false)
+const dropPosition = ref<'before' | 'after' | 'inside' | null>(null)
+
+const handleSortFolder = async () => {
+  await store.sortNodes(props.node.id)
+}
+
+const onDragStart = (e: DragEvent) => {
+  if (isEditing.value) {
+    e.preventDefault()
+    return
+  }
+  isDragging.value = true
+  store.setDraggingNode({ id: props.node.id, type: props.node.type as 'folder' | 'request' })
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-hecto-tree-node', JSON.stringify({ id: props.node.id, type: props.node.type }))
+    e.dataTransfer.setData('text/plain', props.node.id)
+  }
+}
+
+const onDragEnd = () => {
+  isDragging.value = false
+  isDragOver.value = false
+  isInvalidTarget.value = false
+  dropPosition.value = null
+  store.setDraggingNode(null)
+}
+
+watch(
+  () => store.draggingNode,
+  (node) => {
+    if (!node) {
+      isDragging.value = false
+      isDragOver.value = false
+      isInvalidTarget.value = false
+      dropPosition.value = null
+    }
+  }
+)
+
+const onDragOver = (e: DragEvent) => {
+  const dragging = store.draggingNode
+  if (!dragging) return
+
+  e.stopPropagation()
+
+  const currentTarget = e.currentTarget as HTMLElement | null
+  if (!currentTarget) return
+
+  const rect = currentTarget.getBoundingClientRect()
+  const offsetY = e.clientY - rect.top
+
+  let pos: 'before' | 'after' | 'inside' = 'after'
+  if (isFolder.value) {
+    if (offsetY < rect.height * 0.25) {
+      pos = 'before'
+    } else if (offsetY > rect.height * 0.75) {
+      pos = 'after'
+    } else {
+      pos = 'inside'
+    }
+  } else {
+    pos = offsetY < rect.height * 0.5 ? 'before' : 'after'
+  }
+
+  if (store.canReorderNode(dragging.id, dragging.type, props.node.id, pos)) {
+    e.preventDefault()
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move'
+    }
+    dropPosition.value = pos
+    isDragOver.value = true
+    isInvalidTarget.value = false
+  } else {
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'none'
+    }
+    dropPosition.value = null
+    isDragOver.value = false
+    isInvalidTarget.value = true
+  }
+}
+
+const onDragLeave = (e: DragEvent) => {
+  const currentTarget = e.currentTarget as HTMLElement | null
+  if (!currentTarget) {
+    isDragOver.value = false
+    isInvalidTarget.value = false
+    dropPosition.value = null
+    return
+  }
+  const rect = currentTarget.getBoundingClientRect()
+  if (
+    e.clientX >= rect.left &&
+    e.clientX < rect.right &&
+    e.clientY >= rect.top &&
+    e.clientY < rect.bottom
+  ) {
+    return
+  }
+  isDragOver.value = false
+  isInvalidTarget.value = false
+  dropPosition.value = null
+}
+
+const onDrop = async (e: DragEvent) => {
+  e.preventDefault()
+  e.stopPropagation()
+
+  const dragging = store.draggingNode
+  const pos = dropPosition.value
+  dropPosition.value = null
+  isDragOver.value = false
+  isInvalidTarget.value = false
+
+  if (!dragging || !pos) return
+
+  store.setDraggingNode(null)
+  await store.reorderNodePosition(dragging.id, dragging.type, props.node.id, pos)
+}
 </script>
 
 <template>
-  <div>
+  <div data-tree-node="true">
     <!-- The Row -->
     <div 
-      class="relative flex items-center py-1.5 pr-2 cursor-pointer transition-colors select-none group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
+      class="relative flex items-center py-1.5 pr-2 cursor-pointer select-none group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary border-l-2"
       data-tree-row="true"
+      :draggable="!isEditing"
       :data-active="isActive ? 'true' : undefined"
       :data-depth="depth"
+      :data-dragging="isDragging ? 'true' : undefined"
+      :data-drop-target="isDragOver ? 'valid' : (isInvalidTarget ? 'invalid' : undefined)"
+      :data-drop-position="dropPosition || undefined"
       :class="{
-        'border-l-2 border-brand-primary bg-surface-hover text-text-primary': isActive,
-        'border-l-2 border-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary': !isActive && !isFolder,
-        'border-l-2 border-transparent text-text-primary hover:bg-surface-hover': !isActive && isFolder
+        'opacity-50': isDragging,
+        'ring-2 ring-inset ring-brand-primary bg-brand-primary/15 border-brand-primary': isDragOver && dropPosition === 'inside',
+        'cursor-not-allowed opacity-60 border-transparent': isInvalidTarget,
+        'border-brand-primary bg-surface-hover text-text-primary': isActive && !(isDragOver && dropPosition === 'inside'),
+        'border-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary': !isActive && !isFolder && !(isDragOver && dropPosition === 'inside'),
+        'border-transparent text-text-primary hover:bg-surface-hover': !isActive && isFolder && !(isDragOver && dropPosition === 'inside')
       }"
       :style="{ paddingLeft }"
       @click="toggle"
       @dblclick="startEdit"
       @keydown="onKeyDown"
       @contextmenu.prevent="handleContextMenu"
+      @dragstart="onDragStart"
+      @dragend="onDragEnd"
+      @dragover="onDragOver"
+      @dragleave="onDragLeave"
+      @drop="onDrop"
       tabindex="0"
     >
+      <!-- Drop Line Indicators -->
+      <div
+        v-if="isDragOver && dropPosition === 'before'"
+        data-test="tree-drop-indicator-before"
+        class="absolute top-0 left-0 right-0 h-0.5 bg-brand-primary z-20 pointer-events-none"
+      />
+      <div
+        v-if="isDragOver && dropPosition === 'after'"
+        data-test="tree-drop-indicator-after"
+        class="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-primary z-20 pointer-events-none"
+      />
       <!-- Vertical Hierarchy Guide Lines -->
       <span
         v-for="(leftPx, idx) in guideOffsets"
@@ -211,7 +358,7 @@ const guideOffsets = computed(() => {
       <!-- Caret for folder -->
       <svg 
         v-if="isFolder"
-        class="w-4 h-4 mr-1 shrink-0 transition-transform duration-150 ease-in-out"
+        class="w-4 h-4 mr-1 shrink-0 transition-transform duration-150 ease-in-out pointer-events-none"
         :class="{ 'rotate-90': isExpanded }" 
         viewBox="0 0 16 16" 
         fill="none" 
@@ -223,7 +370,7 @@ const guideOffsets = computed(() => {
       <!-- Folder Icon -->
       <svg 
         v-if="isFolder"
-        class="w-4 h-4 mr-2 shrink-0 text-text-muted"
+        class="w-4 h-4 mr-2 shrink-0 text-text-muted pointer-events-none"
         viewBox="0 0 24 24" 
         fill="none" 
         stroke="currentColor" 
@@ -237,20 +384,20 @@ const guideOffsets = computed(() => {
       <!-- Request Method Badge -->
       <span 
         v-if="!isFolder && effectiveMethod"
-        class="text-[10px] font-bold mr-2 min-w-9 shrink-0 text-left"
+        class="text-[10px] font-bold mr-2 min-w-9 shrink-0 text-left pointer-events-none"
         :class="methodColorClass"
       >
         {{ effectiveMethod }}
       </span>
 
       <!-- Name -->
-      <span v-if="!isEditing" class="truncate ui-sm min-w-0 flex items-center gap-2 flex-1" :class="{ 'italic text-text-tertiary': isUnnamed }">
-        <span data-test="tree-row-name" class="truncate">{{ displayName }}</span>
+      <span v-if="!isEditing" class="truncate ui-sm min-w-0 flex items-center gap-2 flex-1 pointer-events-none" :class="{ 'italic text-text-tertiary': isUnnamed }">
+        <span data-test="tree-row-name" class="truncate pointer-events-none">{{ displayName }}</span>
         <span
           v-if="!isFolder && isActive && requestStore.current?.id === props.node.id && requestStore.isDirty"
           data-test="tree-row-unsaved-dot"
           aria-label="Chưa lưu"
-          class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"
+          class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0 pointer-events-none"
           title="Chưa lưu"
         ></span>
       </span>
@@ -267,14 +414,35 @@ const guideOffsets = computed(() => {
         @click.stop
       />
 
+      <!-- Folder Sort Button -->
+      <button 
+        v-if="!isEditing && isFolder"
+        type="button"
+        class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-surface-elevated opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary cursor-pointer"
+        :class="{ 'pointer-events-none': !!store.draggingNode }"
+        data-test="folder-sort-btn"
+        title="Sắp xếp thư mục theo A-Z"
+        aria-label="Sắp xếp thư mục theo A-Z"
+        @click.stop="handleSortFolder"
+      >
+        <svg class="w-3.5 h-3.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m3 16 4 4 4-4"/>
+          <path d="M7 20V4"/>
+          <path d="M20 8h-5"/>
+          <path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/>
+          <path d="M15 14h5l-5 6h5"/>
+        </svg>
+      </button>
+
       <!-- Menu Button -->
       <button 
         v-if="!isEditing"
         class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-surface-elevated opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary"
+        :class="{ 'pointer-events-none': !!store.draggingNode }"
         aria-label="Tùy chọn"
         @click.stop="handleMenuClick"
       >
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="w-4 h-4 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="1"></circle>
           <circle cx="19" cy="12" r="1"></circle>
           <circle cx="5" cy="12" r="1"></circle>

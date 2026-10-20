@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterTree, matchesTreeNode } from '../treeFilter'
+import { filterTree } from '../treeFilter'
 import type { TreeNode } from '@/stores/collectionStore'
 
 describe('treeFilter utility', () => {

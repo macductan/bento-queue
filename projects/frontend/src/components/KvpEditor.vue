@@ -151,138 +151,159 @@ const autoResize = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
   if (target) {
     target.style.height = 'auto'
-    target.style.height = Math.max(32, target.scrollHeight) + 'px'
+    target.style.height = Math.max(36, target.scrollHeight) + 'px'
   }
 }
 
 const initResize = (el: any) => {
   if (el) {
     el.style.height = 'auto'
-    el.style.height = Math.max(32, el.scrollHeight) + 'px'
+    el.style.height = Math.max(36, el.scrollHeight) + 'px'
   }
 }
 </script>
 
 <template>
   <div class="flex flex-col gap-2">
-    <div class="flex items-start gap-2 pl-[40px] pr-[40px]">
-      <!-- Headers -->
-      <div class="flex-1 ui-xs uppercase text-text-muted px-2">Key</div>
-      <div class="flex-[2] ui-xs uppercase text-text-muted px-2">Value</div>
-    </div>
-    
-    <div class="flex flex-col gap-1">
-      <!-- Unified Real + Phantom rows (keyed by index so DOM inputs are preserved in-place on promotion) -->
-      <div
-        v-for="(row, index) in displayRows"
-        :key="index"
-        class="flex items-start gap-2 group"
-        :class="{ 'opacity-50': !row._isPhantom && !row.enabled }"
-      >
-        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
-          <button 
-            v-if="row._isPhantom"
-            type="button"
-            role="checkbox"
-            aria-checked="true"
-            disabled
-            class="w-4 h-4 rounded-[4px] border bg-surface-input border-border-default text-transparent flex items-center justify-center cursor-not-allowed opacity-50"
-            aria-label="Bật/tắt dòng (trống)"
-          >
-            <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="216 72 104 184 48 128"></polyline>
-            </svg>
-          </button>
-          <button 
-            v-else
-            type="button"
-            role="checkbox"
-            :aria-checked="row.enabled"
-            @click="toggleRowEnabled(index)"
-            class="w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
-            :class="row.enabled ? 'bg-brand-primary border-brand-primary text-white' : 'bg-surface-input border-border-default text-transparent hover:border-border-focus'"
-            aria-label="Bật/tắt dòng"
-          >
-            <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="216 72 104 184 48 128"></polyline>
-            </svg>
-          </button>
+    <!-- Table Container with clear borders -->
+    <div class="border border-border-default rounded-md overflow-hidden bg-surface-base">
+      <!-- Table Header -->
+      <div class="flex items-center bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none">
+        <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default py-2">
+          <span class="sr-only">Kích hoạt</span>
         </div>
-        
-        <div class="flex-1 relative min-h-[32px] min-w-0 bg-surface-base rounded flex items-center">
-          <span
-            v-if="keyPrefix"
-            class="pl-3 pr-0.5 mono-sm text-brand-primary font-semibold select-none shrink-0"
-          >{{ keyPrefix }}</span>
-          <input 
-            type="text" 
-            :value="row.key"
-            :readonly="row._isAuto || readonlyKeys"
-            :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
-            @compositionstart="ensureRealRow(index)"
-            @input="e => onCellInput(index, 'key', e)"
-            @compositionend="e => onCellInput(index, 'key', e)"
-            placeholder="Key"
-            class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted caret-text-primary py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] block"
-            :class="[
-              keyPrefix ? 'pl-0.5 pr-3' : 'px-3',
-              { 'opacity-50 cursor-not-allowed': row._isAuto, 'text-sky-300 font-medium cursor-default': readonlyKeys }
-            ]"
-            spellcheck="false"
-            autocomplete="off"
-          />
+        <div class="flex-1 px-3 py-2 border-r border-border-default">Key</div>
+        <div class="flex-[2] px-3 py-2">Value</div>
+        <div v-if="!readonlyKeys" class="w-10 shrink-0 border-l border-border-default py-2 text-center">
+          <span class="sr-only">Xóa</span>
         </div>
-        
-        <div class="flex-[2] relative min-h-[32px] min-w-0 bg-surface-base rounded">
-          <VariableHighlighter
-            :ref="el => { if (el) highlighterRefs[index] = el }"
-            :value="row.value"
-            overlay-class="px-3 py-1.5 mono-sm min-h-[32px] w-full border border-transparent rounded"
+      </div>
+
+      <!-- Table Body / Rows -->
+      <div class="divide-y divide-border-default">
+        <div
+          v-for="(row, index) in displayRows"
+          :key="index"
+          class="flex items-stretch group transition-colors hover:bg-surface-hover/20 focus-within:bg-surface-hover/25"
+          :class="{ 'opacity-50': !row._isPhantom && !row.enabled }"
+        >
+          <!-- Checkbox Column -->
+          <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1">
+            <button 
+              v-if="row._isPhantom"
+              type="button"
+              role="checkbox"
+              aria-checked="true"
+              disabled
+              class="w-4 h-4 rounded-[4px] border bg-surface-input border-border-default text-transparent flex items-center justify-center cursor-not-allowed opacity-50"
+              aria-label="Bật/tắt dòng (trống)"
+            >
+              <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="216 72 104 184 48 128"></polyline>
+              </svg>
+            </button>
+            <button 
+              v-else
+              type="button"
+              role="checkbox"
+              :aria-checked="row.enabled"
+              @click="toggleRowEnabled(index)"
+              class="w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
+              :class="row.enabled ? 'bg-brand-primary border-brand-primary text-white' : 'bg-surface-input border-border-default text-transparent hover:border-border-focus'"
+              aria-label="Bật/tắt dòng"
+            >
+              <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="216 72 104 184 48 128"></polyline>
+              </svg>
+            </button>
+          </div>
+          
+          <!-- Key Column -->
+          <div 
+            class="flex-1 relative min-w-0 flex items-center border-r border-border-default bg-transparent cursor-text"
+            @click="focusCell(index, 'key')"
           >
-            <textarea 
-              rows="1"
-              :value="row.value"
-              :readonly="row._isAuto"
-              :ref="el => { if (el) { valueInputs[index] = el as HTMLTextAreaElement; initResize(el) } }"
+            <span
+              v-if="keyPrefix"
+              class="pl-3 pr-0.5 mono-sm text-brand-primary font-semibold select-none shrink-0"
+            >{{ keyPrefix }}</span>
+            <input 
+              type="text" 
+              :value="row.key"
+              :readonly="row._isAuto || readonlyKeys"
+              :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
               @compositionstart="ensureRealRow(index)"
-              @input="e => { autoResize(e); onCellInput(index, 'value', e) }"
-              @compositionend="e => { autoResize(e); onCellInput(index, 'value', e) }"
-              @paste="e => { nextTick(() => autoResize(e)) }"
-              @scroll="e => highlighterRefs[index]?.syncScroll(e)"
-              placeholder="Value"
-              class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted caret-text-primary px-3 py-1.5 rounded border border-transparent focus:border-border-focus focus:ring-1 focus:ring-border-focus outline-none w-full min-h-[32px] resize-none overflow-hidden block whitespace-pre-wrap break-all"
-              :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
+              @input="e => onCellInput(index, 'key', e)"
+              @compositionend="e => onCellInput(index, 'key', e)"
+              placeholder="Key"
+              class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted/60 caret-text-primary py-2 border-0 outline-none w-full min-h-[36px] block focus:ring-0"
+              :class="[
+                keyPrefix ? 'pl-0.5 pr-3' : 'px-3',
+                { 'opacity-50 cursor-not-allowed': row._isAuto, 'text-sky-300 font-medium cursor-default': readonlyKeys }
+              ]"
               spellcheck="false"
               autocomplete="off"
-              @keydown.tab="row._isPhantom ? undefined : onValueTab($event, index)"
-            ></textarea>
-          </VariableHighlighter>
-        </div>
-        
-        <div class="flex items-center justify-center h-[32px] w-[32px] shrink-0">
-          <button 
-            v-if="!row._isPhantom && !row._isAuto && !readonlyKeys"
-            @click="removeRow(index)" 
-            class="text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-surface-hover rounded outline-none mt-0.5"
-            aria-label="Xóa dòng"
+            />
+          </div>
+          
+          <!-- Value Column -->
+          <div 
+            class="flex-[2] relative min-w-0 bg-transparent flex items-center cursor-text"
+            @click="focusCell(index, 'value')"
           >
-            <svg class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"></path>
-            </svg>
-          </button>
+            <VariableHighlighter
+              :ref="el => { if (el) highlighterRefs[index] = el }"
+              :value="row.value"
+              overlay-class="px-3 py-2 mono-sm min-h-[36px] w-full border border-transparent rounded-none"
+            >
+              <textarea 
+                rows="1"
+                :value="row.value"
+                :readonly="row._isAuto"
+                :ref="el => { if (el) { valueInputs[index] = el as HTMLTextAreaElement; initResize(el) } }"
+                @compositionstart="ensureRealRow(index)"
+                @input="e => { autoResize(e); onCellInput(index, 'value', e) }"
+                @compositionend="e => { autoResize(e); onCellInput(index, 'value', e) }"
+                @paste="e => { nextTick(() => autoResize(e)) }"
+                @scroll="e => highlighterRefs[index]?.syncScroll(e)"
+                placeholder="Value"
+                class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted/60 caret-text-primary px-3 py-2 rounded-none border border-transparent outline-none w-full min-h-[36px] resize-none overflow-hidden block whitespace-pre-wrap break-all focus:ring-0"
+                :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
+                spellcheck="false"
+                autocomplete="off"
+                @keydown.tab="row._isPhantom ? undefined : onValueTab($event, index)"
+              ></textarea>
+            </VariableHighlighter>
+          </div>
+          
+          <!-- Delete Action Column -->
+          <div v-if="!readonlyKeys" class="w-10 shrink-0 flex items-center justify-center border-l border-border-default bg-transparent">
+            <button 
+              v-if="!row._isPhantom && !row._isAuto"
+              @click="removeRow(index)" 
+              class="text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-surface-hover rounded outline-none transition-opacity cursor-pointer"
+              aria-label="Xóa dòng"
+              title="Xóa dòng"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+                <path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"></path>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
     
-    <div v-if="!readonlyKeys" class="mt-2 ml-8">
+    <div v-if="!readonlyKeys" class="flex items-center">
       <button 
+        type="button"
         @click="addRow" 
-        class="ui-sm flex items-center font-medium text-text-secondary hover:text-text-primary gap-1 p-1 rounded hover:bg-surface-hover outline-none focus-visible:ring-1 focus-visible:ring-border-focus"
+        class="ui-sm flex items-center font-medium text-text-secondary hover:text-text-primary gap-1.5 px-2.5 py-1 rounded hover:bg-surface-hover border border-border-default/80 hover:border-border-default transition-colors outline-none focus-visible:ring-1 focus-visible:ring-brand-primary cursor-pointer text-xs"
       >
-        <svg class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 256 256" fill="currentColor">
           <path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path>
         </svg>
-        Thêm mới
+        <span>Thêm mới</span>
       </button>
     </div>
   </div>

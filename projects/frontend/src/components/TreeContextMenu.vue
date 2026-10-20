@@ -39,6 +39,15 @@ function flattenFolders(nodes: TreeNode[], depth = 0): FlatFolder[] {
 }
 
 const flatFolders = computed(() => flattenFolders(collectionStore.tree))
+const availableTargetFolders = computed(() => {
+  if (uiStore.contextMenu?.nodeType === 'folder' && uiStore.contextMenu.nodeId) {
+    const currentFolderId = uiStore.contextMenu.nodeId
+    return flatFolders.value.filter(
+      f => f.id !== currentFolderId && !collectionStore.isDescendantFolder(currentFolderId, f.id)
+    )
+  }
+  return flatFolders.value
+})
 const isSubmenuOpen = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
 
@@ -70,6 +79,13 @@ const handleFolderSettings = () => {
   }
 }
 
+const handleSortAlphabet = () => {
+  if (uiStore.contextMenu) {
+    collectionStore.sortNodes(uiStore.contextMenu.nodeId)
+  }
+  uiStore.closeContextMenu()
+}
+
 const handleDuplicate = () => {
   if (uiStore.contextMenu?.nodeId) {
     collectionStore.duplicateRequest(uiStore.contextMenu.nodeId)
@@ -79,7 +95,11 @@ const handleDuplicate = () => {
 
 const handleMove = (targetFolderId: string) => {
   if (uiStore.contextMenu?.nodeId) {
-    collectionStore.moveRequest(uiStore.contextMenu.nodeId, targetFolderId)
+    if (uiStore.contextMenu.nodeType === 'folder') {
+      collectionStore.moveFolder(uiStore.contextMenu.nodeId, targetFolderId)
+    } else {
+      collectionStore.moveRequest(uiStore.contextMenu.nodeId, targetFolderId)
+    }
   }
   uiStore.closeContextMenu()
 }
@@ -215,6 +235,48 @@ onUnmounted(() => {
         Cài đặt thư mục
       </button>
       <button 
+        class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
+        data-test="context-menu-sort-btn"
+        @click="handleSortAlphabet"
+      >
+        Sắp xếp A-Z
+      </button>
+      <div 
+        v-if="uiStore.contextMenu.nodeId !== ''"
+        class="relative"
+        @mouseenter="isSubmenuOpen = true"
+        @mouseleave="isSubmenuOpen = false"
+      >
+        <button class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center justify-between transition-colors">
+          Di chuyển tới 
+          <span class="text-text-muted">▸</span>
+        </button>
+        
+        <div 
+          v-show="isSubmenuOpen"
+          class="absolute top-0 -mt-1 bg-surface-raised border border-border-default rounded shadow-lg py-1 w-56 max-h-64 overflow-y-auto"
+          :class="submenuPosition === 'right' ? 'left-full ml-1' : 'right-full mr-1'"
+        >
+          <button 
+            class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors font-medium"
+            @click="handleMove('')"
+          >
+            Gốc collection
+          </button>
+          <button 
+            v-for="folder in availableTargetFolders" 
+            :key="folder.id"
+            class="w-full text-left pr-3 h-8 hover:bg-surface-hover flex items-center truncate transition-colors"
+            :style="{ paddingLeft: `${0.75 + folder.depth * 1}rem` }"
+            @click="handleMove(folder.id)"
+            :title="folder.name"
+          >
+            <span class="truncate">{{ folder.name }}</span>
+          </button>
+        </div>
+      </div>
+      <div v-if="uiStore.contextMenu.nodeId !== ''" class="h-px bg-border-default my-1"></div>
+      <button 
         v-if="uiStore.contextMenu.nodeId !== ''"
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors text-text-danger"
         @click="handleDelete"
@@ -266,7 +328,7 @@ onUnmounted(() => {
             Gốc collection
           </button>
           <button 
-            v-for="folder in flatFolders" 
+            v-for="folder in availableTargetFolders" 
             :key="folder.id"
             class="w-full text-left pr-3 h-8 hover:bg-surface-hover flex items-center truncate transition-colors"
             :style="{ paddingLeft: `${0.75 + folder.depth * 1}rem` }"

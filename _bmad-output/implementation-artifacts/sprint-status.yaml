@@ -1,10 +1,12 @@
 generated: 09-24-2026 16:36
-last_updated: 2026-10-16 14:25
+last_updated: 2026-10-19 15:50
 project: hecto-api
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
+  spec-script-runner-auth-api: done
+  spec-folder-move-and-drag-drop: done
   epic-1: done
   1-1-wails-v2-project-initialization-go-backend-skeleton: done
   1-2-app-config-default-collection-initialization: done

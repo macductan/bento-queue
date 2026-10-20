@@ -59,6 +59,12 @@ const handleWindowResize = () => {
 }
 
 const handleKeyDown = (e: KeyboardEvent) => {
+  if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') || e.key === 'F5') {
+    e.preventDefault()
+    window.location.reload()
+    return
+  }
+
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
     e.preventDefault()
     if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {

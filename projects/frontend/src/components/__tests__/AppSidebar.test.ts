@@ -4,12 +4,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import AppSidebar from '../AppSidebar.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
-import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   CreateRequest: vi.fn(),
   CreateFolder: vi.fn(),
-  SaveRequest: vi.fn()
+  SaveRequest: vi.fn(),
+  MoveFolder: vi.fn(),
+  MoveRequest: vi.fn()
 }))
 
 describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
@@ -111,24 +112,23 @@ describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
     expect(wrapper.find('[data-test="tree-filter-input"]').exists()).toBe(true)
     expect(wrapper.attributes('aria-label')).toContain('My API Collection')
     expect(wrapper.find('[data-test="tree-collapse-all-btn"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="tree-expand-all-btn"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="git-config-btn"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="tree-sort-alphabet-btn"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="sidebar-add-btn"]').exists()).toBe(true)
   })
 
-  it('supports collapse all and expand all buttons', async () => {
+  it('supports collapse all and sort alphabet buttons', async () => {
     const store = setupTree()
+    store.expandedFolders.add('f-auth')
+    const sortNodesSpy = vi.spyOn(store, 'sortNodes').mockResolvedValue(true)
     const wrapper = mount(AppSidebar, {
       global: {
         stubs: { TreeNodeRow: true }
       }
     })
 
-    // Click expand all
-    await wrapper.find('[data-test="tree-expand-all-btn"]').trigger('click')
-    expect(store.expandedFolders.has('f-auth')).toBe(true)
-    expect(store.expandedFolders.has('f-items')).toBe(true)
-    expect(store.expandedFolders.has('f-nested-inventory')).toBe(true)
+    // Click sort alphabet
+    await wrapper.find('[data-test="tree-sort-alphabet-btn"]').trigger('click')
+    expect(sortNodesSpy).toHaveBeenCalledWith('')
 
     // Click collapse all
     await wrapper.find('[data-test="tree-collapse-all-btn"]').trigger('click')
@@ -246,5 +246,62 @@ describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
     await nextTick()
     expect((input.element as HTMLInputElement).value).toBe('')
     expect(wrapper.findAll('.stub-tree-node').length).toBe(3)
+  })
+
+  it('activates root drop zone on dragover and moves node to root on drop (CAP-4)', async () => {
+    const store = setupTree()
+    const moveReqSpy = vi.spyOn(store, 'moveRequest').mockResolvedValue()
+    const moveFolderSpy = vi.spyOn(store, 'moveFolder').mockResolvedValue()
+
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: {
+          TreeNodeRow: {
+            props: ['node'],
+            template: '<div class="stub-tree-node" :data-node-id="node.id">{{ node.name }}</div>'
+          }
+        }
+      }
+    })
+
+    const rootDropZone = wrapper.find('[data-test="tree-root-drop-zone"]')
+    expect(rootDropZone.exists()).toBe(true)
+
+    // 1. Dragging a node already at root (req-root) -> should not activate root drop zone
+    store.setDraggingNode({ id: 'req-root', type: 'request' })
+    const dt = { dropEffect: '' }
+    await rootDropZone.trigger('dragover', { dataTransfer: dt })
+    expect(rootDropZone.attributes('data-root-drop-active')).toBeUndefined()
+
+    // 2. Dragging a request from inside a folder (req-login inside f-auth) -> should activate root drop zone
+    store.setDraggingNode({ id: 'req-login', type: 'request' })
+    await rootDropZone.trigger('dragover', { dataTransfer: dt })
+    expect(rootDropZone.attributes('data-root-drop-active')).toBe('true')
+    expect(dt.dropEffect).toBe('move')
+
+    // Drag leave clears active state
+    await rootDropZone.trigger('dragleave')
+    expect(rootDropZone.attributes('data-root-drop-active')).toBeUndefined()
+
+    // Drag over again and drop
+    await rootDropZone.trigger('dragover', { dataTransfer: dt })
+    await rootDropZone.trigger('drop')
+    expect(moveReqSpy).toHaveBeenCalledWith('req-login', '')
+    expect(rootDropZone.attributes('data-root-drop-active')).toBeUndefined()
+
+    // 3. Dragging a nested folder (f-nested-inventory inside f-items) and dropping to root
+    store.setDraggingNode({ id: 'f-nested-inventory', type: 'folder' })
+    await rootDropZone.trigger('dragover', { dataTransfer: dt })
+    expect(rootDropZone.attributes('data-root-drop-active')).toBe('true')
+    await rootDropZone.trigger('drop')
+    expect(moveFolderSpy).toHaveBeenCalledWith('f-nested-inventory', '')
+
+    // 4. Drag cancellation (store.setDraggingNode(null)) clears root drop zone active state
+    store.setDraggingNode({ id: 'f-nested-inventory', type: 'folder' })
+    await rootDropZone.trigger('dragover', { dataTransfer: dt })
+    expect(rootDropZone.attributes('data-root-drop-active')).toBe('true')
+    store.setDraggingNode(null)
+    await nextTick()
+    expect(rootDropZone.attributes('data-root-drop-active')).toBeUndefined()
   })
 })

@@ -384,4 +384,61 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
 
     wrapper.unmount()
   })
+
+  it('renders dim tab-path above tab name and method badge indicating request location', async () => {
+    const colStore = useCollectionStore()
+    colStore.collections = [
+      { id: 'Test-Collection', name: 'My API', path: '/Test-Collection' } as any
+    ]
+    colStore.tree = [
+      {
+        id: 'f-sub',
+        name: 'Users Submodule',
+        type: 'folder',
+        path: '/Test-Collection/Users Submodule',
+        created_at: '2026-10-14',
+        children: [
+          {
+            id: 'req-nested',
+            name: 'Get User Profile',
+            type: 'request',
+            method: 'GET',
+            path: '/Test-Collection/Users Submodule/req-nested.json',
+            created_at: '2026-10-14'
+          }
+        ]
+      },
+      {
+        id: 'req-root',
+        name: 'Root Healthcheck',
+        type: 'request',
+        method: 'HEAD',
+        path: '/Test-Collection/req-root.json',
+        created_at: '2026-10-14'
+      }
+    ]
+
+    await colStore.selectRequest('req-nested')
+    await colStore.selectRequest('req-root')
+
+    const wrapper = mount(AppTabBar)
+    const tabItems = wrapper.findAll('[data-test="app-tab-item"]')
+    expect(tabItems).toHaveLength(2)
+
+    // Tab 0: nested in folder -> shows folder path 'Users Submodule'
+    const nestedTab = tabItems[0]
+    const nestedPath = nestedTab.find('[data-test="tab-path"]')
+    expect(nestedPath.exists()).toBe(true)
+    expect(nestedPath.text()).toBe('Users Submodule')
+    expect(nestedPath.attributes('title')).toBe('My API / Users Submodule / Get User Profile')
+
+    // Tab 1: at root of collection -> shows collection name 'My API'
+    const rootTab = tabItems[1]
+    const rootPath = rootTab.find('[data-test="tab-path"]')
+    expect(rootPath.exists()).toBe(true)
+    expect(rootPath.text()).toBe('My API')
+    expect(rootPath.attributes('title')).toBe('My API / Root Healthcheck')
+
+    wrapper.unmount()
+  })
 })

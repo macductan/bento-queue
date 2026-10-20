@@ -208,6 +208,25 @@ func (f *FileSystem) IndexDeleteByPrefix(prefix string) {
 	}
 }
 
+// IndexUpdatePrefix updates the path of oldPrefix and all entries nested under oldPrefix
+// to start with newPrefix instead.
+func (f *FileSystem) IndexUpdatePrefix(oldPrefix, newPrefix string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	oldClean := filepath.Clean(oldPrefix)
+	newClean := filepath.Clean(newPrefix)
+	oldWithSep := oldClean + string(filepath.Separator)
+	for id, p := range f.index {
+		cleanP := filepath.Clean(p)
+		if cleanP == oldClean {
+			f.index[id] = newClean
+		} else if strings.HasPrefix(cleanP, oldWithSep) {
+			rel := strings.TrimPrefix(cleanP, oldWithSep)
+			f.index[id] = filepath.Join(newClean, rel)
+		}
+	}
+}
+
 // FindByUUID returns the path for the given UUID from the in-memory index.
 // On index miss, performs a fallback walk of the collection root directory,
 // scanning JSON files for a matching "id" field. If found, the index is

@@ -10,6 +10,7 @@ import {
   DeleteFolder,
   DeleteRequest,
   DuplicateRequest,
+  MoveFolder,
   MoveRequest,
   SelectPostmanFile,
   ImportPostman,
@@ -17,6 +18,7 @@ import {
   SwitchCollection,
   CreateCollection,
   RenameCollection,
+  ReorderNodes,
   UpdateCollection,
   DeleteCollection,
   DuplicateCollection,
@@ -28,6 +30,8 @@ import {
   GitStashAndPullCollection,
   GitListLocalBranches,
   GitPushCollectionToBranch,
+  GitPullCollectionFromBranch,
+  GitCheckoutBranch,
   ResolveGitConflict,
   AbortGitMerge
 } from '../../wailsjs/go/main/App'
@@ -77,6 +81,8 @@ interface CollectionState {
   gitSyncStatus: model.GitSyncStatus | null
   gitConflictError: { message: string; files: string[] } | null
   gitBranches: string[]
+  draggingNode: { id: string; type: 'folder' | 'request' } | null
+  sortDirectionMap: Record<string, 'asc' | 'desc'>
 }
 
 export const useCollectionStore = defineStore('collection', {
@@ -95,7 +101,9 @@ export const useCollectionStore = defineStore('collection', {
     gitSyncLoading: false,
     gitSyncStatus: null,
     gitConflictError: null,
-    gitBranches: []
+    gitBranches: [],
+    draggingNode: null,
+    sortDirectionMap: {}
   }),
   getters: {
     activeCollection(state): model.Collection | null {
@@ -118,6 +126,7 @@ export const useCollectionStore = defineStore('collection', {
       useResponseStore().clear()
       useTabStore().clearAllTabs()
       this.expandedFolders.clear()
+      this.draggingNode = null
       await this.loadTree()
     },
     async loadTree() {
@@ -856,6 +865,35 @@ export const useCollectionStore = defineStore('collection', {
         useUiStore().showToast(String(err))
       }
     },
+    async moveFolder(id: string, targetFolderId: string) {
+      try {
+        const result = await MoveFolder(id, targetFolderId)
+        if (result.success) {
+          const { useUiStore } = await import('./uiStore')
+          useUiStore().showToast('Đã di chuyển')
+          
+          await this.loadTree()
+          
+          if (targetFolderId) {
+             const path = this.findFolderPath(this.tree, targetFolderId)
+             if (path) {
+                path.forEach(node => this.expandedFolders.add(node.id))
+             }
+          }
+          const updatedNode = this.findNode(this.tree, id)
+          if (updatedNode) {
+            useTabStore().updateTabMeta('folder', id, { name: updatedNode.name })
+          }
+        } else {
+          const { useUiStore } = await import('./uiStore')
+          useUiStore().showToast(result.error?.message || 'Không thể di chuyển thư mục')
+          if (result.error?.code === 'NOT_FOUND') await this.loadTree()
+        }
+      } catch (err) {
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(String(err))
+      }
+    },
     async importPostman() {
       try {
         const filePath = await SelectPostmanFile()
@@ -954,6 +992,182 @@ export const useCollectionStore = defineStore('collection', {
       }
       return null
     },
+    setDraggingNode(node: { id: string; type: 'folder' | 'request' } | null) {
+      this.draggingNode = node
+    },
+    isDescendantFolder(folderId: string, candidateTargetId: string): boolean {
+      const folderNode = this.findNode(this.tree, folderId)
+      if (!folderNode || folderNode.type !== 'folder') return false
+      if (folderId === candidateTargetId) return true
+      return !!this.findNode(folderNode.children || [], candidateTargetId)
+    },
+    findParentFolderId(nodes: TreeNode[], targetId: string, parentId = ''): string | null {
+      for (const node of nodes) {
+        if (node.id === targetId) return parentId
+        if (node.children) {
+          const found = this.findParentFolderId(node.children, targetId, node.id)
+          if (found !== null) return found
+        }
+      }
+      return null
+    },
+    canMoveNodeTo(nodeId: string, nodeType: 'folder' | 'request', targetFolderId: string): boolean {
+      if (!nodeId) return false
+      const currentParentId = this.findParentFolderId(this.tree, nodeId)
+      if (currentParentId === null || currentParentId === targetFolderId) return false
+      if (nodeType === 'folder') {
+        if (nodeId === targetFolderId) return false
+        if (targetFolderId !== '' && this.isDescendantFolder(nodeId, targetFolderId)) return false
+      }
+      return true
+    },
+    async reorderNodes(parentFolderId: string, nodeIds: string[]): Promise<boolean> {
+      try {
+        const result = await ReorderNodes(parentFolderId, nodeIds)
+        if (result.success) {
+          const reorderList = (list: TreeNode[]) => {
+            const map = new Map(list.map(item => [item.id, item]))
+            const reordered: TreeNode[] = []
+            for (const id of nodeIds) {
+              const item = map.get(id)
+              if (item) {
+                reordered.push(item)
+                map.delete(id)
+              }
+            }
+            for (const item of map.values()) {
+              reordered.push(item)
+            }
+            return reordered
+          }
+
+          if (!parentFolderId) {
+            this.tree = reorderList(this.tree)
+          } else {
+            const folder = this.findNode(this.tree, parentFolderId)
+            if (folder && folder.children) {
+              folder.children = reorderList(folder.children)
+            }
+          }
+          return true
+        } else {
+          const { useUiStore } = await import('./uiStore')
+          useUiStore().showToast(result.error?.message || 'Không thể sắp xếp lại thứ tự')
+          return false
+        }
+      } catch (err) {
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(String(err))
+        return false
+      }
+    },
+    async sortNodes(parentFolderId: string = '', direction?: 'asc' | 'desc'): Promise<boolean> {
+      const currentDir = this.sortDirectionMap[parentFolderId] || 'desc'
+      const nextDir = direction || (currentDir === 'asc' ? 'desc' : 'asc')
+      this.sortDirectionMap[parentFolderId] = nextDir
+
+      const targetList: TreeNode[] = !parentFolderId
+        ? [...this.tree]
+        : [...(this.findNode(this.tree, parentFolderId)?.children || [])]
+
+      if (targetList.length <= 1) return true
+
+      const folders = targetList.filter(n => n.type === 'folder')
+      const requests = targetList.filter(n => n.type !== 'folder')
+
+      const comparator = (a: TreeNode, b: TreeNode) => {
+        const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+        return nextDir === 'asc' ? cmp : -cmp
+      }
+
+      folders.sort(comparator)
+      requests.sort(comparator)
+
+      const sortedIds = [...folders, ...requests].map(n => n.id)
+      const success = await this.reorderNodes(parentFolderId, sortedIds)
+      if (success) {
+        const { useUiStore } = await import('./uiStore')
+        useUiStore().showToast(`Đã sắp xếp ${nextDir === 'asc' ? 'A-Z' : 'Z-A'}`)
+      }
+      return success
+    },
+    canReorderNode(nodeId: string, nodeType: 'folder' | 'request', targetNodeId: string, position: 'before' | 'after' | 'inside'): boolean {
+      if (!nodeId || !targetNodeId || nodeId === targetNodeId) return false
+
+      if (position === 'inside') {
+        const targetNode = this.findNode(this.tree, targetNodeId)
+        if (!targetNode || targetNode.type !== 'folder') return false
+        return this.canMoveNodeTo(nodeId, nodeType, targetNodeId)
+      }
+
+      const targetParentId = this.findParentFolderId(this.tree, targetNodeId)
+      if (targetParentId === null) return false
+
+      if (nodeType === 'folder') {
+        if (this.isDescendantFolder(nodeId, targetNodeId)) return false
+        if (targetParentId !== '' && this.isDescendantFolder(nodeId, targetParentId)) return false
+      }
+
+      return true
+    },
+    async reorderNodePosition(nodeId: string, nodeType: 'folder' | 'request', targetNodeId: string, position: 'before' | 'after' | 'inside'): Promise<boolean> {
+      if (!this.canReorderNode(nodeId, nodeType, targetNodeId, position)) return false
+
+      if (position === 'inside') {
+        if (nodeType === 'folder') {
+          await this.moveFolder(nodeId, targetNodeId)
+        } else {
+          await this.moveRequest(nodeId, targetNodeId)
+        }
+        return true
+      }
+
+      const targetParentId = this.findParentFolderId(this.tree, targetNodeId) ?? ''
+      const currentParentId = this.findParentFolderId(this.tree, nodeId) ?? ''
+
+      if (currentParentId !== targetParentId) {
+        if (nodeType === 'folder') {
+          const res = await MoveFolder(nodeId, targetParentId)
+          if (!res.success) {
+            const { useUiStore } = await import('./uiStore')
+            useUiStore().showToast(res.error?.message || 'Không thể di chuyển thư mục')
+            return false
+          }
+        } else {
+          const res = await MoveRequest(nodeId, targetParentId)
+          if (!res.success) {
+            const { useUiStore } = await import('./uiStore')
+            useUiStore().showToast(res.error?.message || 'Không thể di chuyển request')
+            return false
+          }
+        }
+      }
+
+      const parentNode = targetParentId ? this.findNode(this.tree, targetParentId) : null
+      const currentSiblings = parentNode ? (parentNode.children || []) : this.tree
+      const withoutSelf = currentSiblings.filter(n => n.id !== nodeId)
+      const targetIdx = withoutSelf.findIndex(n => n.id === targetNodeId)
+
+      const newOrderList = [...withoutSelf]
+      const insertIdx = position === 'before' ? Math.max(0, targetIdx) : targetIdx + 1
+      newOrderList.splice(insertIdx, 0, { id: nodeId } as TreeNode)
+
+      const newOrderIds = newOrderList.map(n => n.id)
+      await this.reorderNodes(targetParentId, newOrderIds)
+
+      if (currentParentId !== targetParentId) {
+        const oldParentNode = currentParentId ? this.findNode(this.tree, currentParentId) : null
+        const oldSiblings = oldParentNode ? (oldParentNode.children || []) : this.tree
+        const oldOrderIds = oldSiblings.filter(n => n.id !== nodeId).map(n => n.id)
+        await this.reorderNodes(currentParentId, oldOrderIds)
+      }
+
+      await this.loadTree()
+      if (targetParentId) {
+        this.expandedFolders.add(targetParentId)
+      }
+      return true
+    },
     async fetchGitStatus(collectionId?: string): Promise<model.GitSyncStatus | null> {
       const targetId = collectionId || this.activeCollectionId || 'default'
       try {
@@ -1004,8 +1218,20 @@ export const useCollectionStore = defineStore('collection', {
       if (!folderSaved) return false
       return true
     },
-    async gitPull(collectionId?: string): Promise<boolean> {
-      const targetId = collectionId || this.activeCollectionId || 'default'
+    async gitPull(branch?: string, collectionId?: string): Promise<boolean> {
+      let targetBranch = branch?.trim() || ''
+      let targetId = collectionId || this.activeCollectionId || 'default'
+      // Backward compatibility if single argument is a collection ID rather than a branch name
+      if (
+        !collectionId &&
+        branch &&
+        !this.gitBranches.includes(branch) &&
+        branch !== this.gitSyncStatus?.branch &&
+        this.collections.some(c => c.id === branch)
+      ) {
+        targetId = branch
+        targetBranch = ''
+      }
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
       const coll = this.collections.find(c => c.id === targetId) || this.activeCollection
@@ -1022,12 +1248,15 @@ export const useCollectionStore = defineStore('collection', {
       this.gitSyncLoading = true
       this.gitConflictError = null
       try {
-        const res = await GitPullCollection(targetId)
+        const res = targetBranch && typeof GitPullCollectionFromBranch === 'function'
+          ? await GitPullCollectionFromBranch(targetId, targetBranch)
+          : await GitPullCollection(targetId)
+
         if (res.success) {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1055,6 +1284,48 @@ export const useCollectionStore = defineStore('collection', {
             }
           }
           uiStore.showToast(res.error?.message || 'Lỗi khi thực thi Git Pull')
+          return false
+        }
+      } catch (err) {
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        this.gitSyncLoading = false
+      }
+    },
+    async gitCheckout(branch: string, collectionId?: string): Promise<boolean> {
+      const targetId = collectionId || this.activeCollectionId || 'default'
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+
+      if (!(await this.flushDirtyBeforeGitSync())) {
+        return false
+      }
+
+      this.gitSyncLoading = true
+      try {
+        const res = typeof GitCheckoutBranch === 'function'
+          ? await GitCheckoutBranch(targetId, branch)
+          : { success: false, data: null, error: { message: 'Chức năng chuyển nhánh chưa được hỗ trợ' } }
+
+        if (res.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          const { useEnvironmentStore } = await import('./environmentStore')
+          const envStore = useEnvironmentStore()
+          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          if (this.activeRequestId) {
+            const { useRequestStore } = await import('./requestStore')
+            if (this.findNode(this.tree, this.activeRequestId)) {
+              await useRequestStore().loadRequest(this.activeRequestId)
+            } else {
+              this.activeRequestId = null
+              useRequestStore().clearRequest()
+            }
+          }
+          uiStore.showToast(`Đã chuyển sang nhánh ${branch}`)
+          return true
+        } else {
+          uiStore.showToast(res.error?.message || `Không thể chuyển sang nhánh ${branch}`)
           return false
         }
       } catch (err) {

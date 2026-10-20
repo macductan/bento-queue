@@ -3,10 +3,8 @@ import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import UrlBar from '../UrlBar.vue'
 import { useRequestStore } from '@/stores/requestStore'
-import { useResponseStore } from '@/stores/responseStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
-import { model } from '../../../wailsjs/go/models'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   SendRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),

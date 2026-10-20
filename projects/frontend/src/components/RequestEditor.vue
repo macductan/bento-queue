@@ -35,7 +35,9 @@ const pathNodes = computed(() => {
 const requestPath = computed(() => {
   if (!req.value) return []
   const full = collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []
-  return full.map(n => n.name)
+  const names = full.map(n => n.name)
+  const collName = collectionStore.activeCollection?.name
+  return collName ? [collName, ...names] : names
 })
 
 const req = computed(() => requestStore.current)
@@ -261,9 +263,16 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             <AuthEditor v-model="req.auth" v-model:authEnvs="req.auth_envs" :path-nodes="pathNodes" />
           </div>
           
-          <div v-show="uiStore.activeRequestTab === 'headers'" role="tabpanel" id="panel-headers" aria-labelledby="tab-headers">
+          <div v-show="uiStore.activeRequestTab === 'headers'" role="tabpanel" id="panel-headers" aria-labelledby="tab-headers" class="space-y-4">
             <DefaultHeadersTable :items="defaultHeaders" @toggle="toggleDefaultHeader" />
-            <KvpEditor field="headers" />
+            <div class="space-y-2">
+              <div class="flex items-center justify-between px-1">
+                <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                  Headers
+                </span>
+              </div>
+              <KvpEditor field="headers" />
+            </div>
           </div>
           
           <div v-show="uiStore.activeRequestTab === 'body'" role="tabpanel" id="panel-body" aria-labelledby="tab-body" class="flex-1 h-full min-h-0 flex flex-col">

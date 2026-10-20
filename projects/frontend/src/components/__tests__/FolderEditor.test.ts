@@ -683,6 +683,35 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     expect(vm.activeTab).toBe('headers')
     expect(tabButtons[2].attributes('aria-selected')).toBe('true')
   })
+
+  it('preserves active tab when switching away to another tab and returning to the folder', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper1 = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    // Switch to Auth tab
+    const tabButtons = wrapper1.findAll('div[role="tablist"] button[role="tab"]')
+    await tabButtons[1].trigger('click')
+    await nextTick()
+    expect((wrapper1.vm as any).activeTab).toBe('auth')
+
+    // Simulate switching away (unmounting FolderEditor)
+    wrapper1.unmount()
+
+    // User switches back to folder tab (mounting FolderEditor again)
+    const wrapper2 = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    // It should still be on Auth tab!
+    expect((wrapper2.vm as any).activeTab).toBe('auth')
+    const tabButtons2 = wrapper2.findAll('div[role="tablist"] button[role="tab"]')
+    expect(tabButtons2[1].attributes('aria-selected')).toBe('true')
+  })
 })
 
 

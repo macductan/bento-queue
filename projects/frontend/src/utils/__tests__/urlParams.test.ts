@@ -9,7 +9,6 @@ import {
   updateUrlWithParams,
   areParamsEqual,
   reconcileParamsFromUrl,
-  findPathParamTokens,
   extractPathParamKeys,
   reconcilePathParamsFromUrl,
   resolvePathParamsInUrl

@@ -35,7 +35,16 @@ const selectedEnvScope = ref<string>(resolveDefaultEnvScope())
 const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
 const auth_envs = ref<Record<string, AuthConfig>>({})
-const activeTab = ref<'variables' | 'auth' | 'headers'>('variables')
+const activeTab = computed<'variables' | 'auth' | 'headers'>({
+  get: () => {
+    const id = folder.value?.id || collectionStore.activeFolderId || undefined
+    return uiStore.getFolderActiveTab(id)
+  },
+  set: (val) => {
+    const id = folder.value?.id || collectionStore.activeFolderId || undefined
+    uiStore.setFolderActiveTab(val, id)
+  }
+})
 
 watch(selectedEnvScope, (scope) => {
   if (scope !== '__folder_global__' && !folder_envs.value[scope]) {
@@ -89,6 +98,17 @@ const parentNodes = computed(() => {
   if (!folder.value) return []
   const fullPath = collectionStore.findFolderPath(collectionStore.tree, folder.value.id) || []
   return fullPath.slice(0, -1)
+})
+
+const folderParentPath = computed(() => {
+  if (!folder.value) return ''
+  const collName = collectionStore.activeCollection?.name
+  const parts: string[] = []
+  if (collName) parts.push(collName)
+  for (const p of parentNodes.value) {
+    if (p.name) parts.push(p.name)
+  }
+  return parts.join(' / ')
 })
 
 const folderHierarchyNodes = computed(() => {
@@ -462,10 +482,18 @@ const syncExternalFolderVariables = (updatedData: any) => {
   if (selectedEnvScope.value !== '__folder_global__' && !nextFolderEnvs[selectedEnvScope.value]) {
     nextFolderEnvs[selectedEnvScope.value] = []
   }
+  if (updatedData.auth) {
+    auth.value = JSON.parse(JSON.stringify(updatedData.auth))
+  }
+  if (updatedData.auth_envs && typeof updatedData.auth_envs === 'object' && !Array.isArray(updatedData.auth_envs)) {
+    auth_envs.value = JSON.parse(JSON.stringify(updatedData.auth_envs))
+  }
   folder.value = {
     ...folder.value,
     variables: nextVars,
-    folder_envs: nextFolderEnvs
+    folder_envs: nextFolderEnvs,
+    auth: auth.value,
+    auth_envs: auth_envs.value
   }
   variables.value = nextVars
   folder_envs.value = nextFolderEnvs
@@ -513,8 +541,12 @@ onBeforeUnmount(async () => {
     </div>
     <div v-else-if="folder" class="flex flex-col h-full">
       <div class="px-4 py-3 border-b border-border-default flex items-center justify-between">
-        <h2 class="text-lg font-medium text-text-primary flex items-center gap-3">
-          <span>{{ folderName }}</span>
+        <div class="min-w-0">
+          <div v-if="folderParentPath" data-test="folder-parent-path" class="text-xs font-medium text-text-muted/70 truncate mb-1 select-none">
+            {{ folderParentPath }}
+          </div>
+          <h2 class="text-lg font-medium text-text-primary flex items-center gap-3">
+            <span>{{ folderName }}</span>
           <span
             data-test="folder-save-state-indicator"
             role="status"
@@ -552,6 +584,7 @@ onBeforeUnmount(async () => {
             </template>
           </span>
         </h2>
+        </div>
         <button 
           @click="saveFolderData()"
           :disabled="saving"
@@ -616,9 +649,16 @@ onBeforeUnmount(async () => {
 
       <!-- Tab Content -->
       <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        <div v-show="activeTab === 'headers'" role="tabpanel">
+        <div v-show="activeTab === 'headers'" role="tabpanel" class="flex flex-col gap-4">
           <DefaultHeadersTable :items="defaultHeaders" @toggle="toggleDefaultHeader" />
-          <KvpEditor v-model="headers" />
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between px-1">
+              <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                Headers
+              </span>
+            </div>
+            <KvpEditor v-model="headers" />
+          </div>
         </div>
         <div v-show="activeTab === 'auth'" role="tabpanel">
           <AuthEditor v-model="auth" v-model:authEnvs="auth_envs" :path-nodes="parentNodes" :is-folder="true" />

@@ -18,6 +18,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   DeleteFolder: vi.fn(),
   DeleteRequest: vi.fn(),
   DuplicateRequest: vi.fn(),
+  MoveFolder: vi.fn(),
   MoveRequest: vi.fn(),
   SelectPostmanFile: vi.fn(),
   ImportPostman: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   DeleteCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
   DuplicateCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
   UpdateCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  ReorderNodes: vi.fn().mockResolvedValue({ success: true, data: {} }),
   GetRequest: vi.fn(),
   SaveRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
   ListEnvironments: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -45,11 +47,13 @@ import {
   DeleteCollection,
   DuplicateCollection,
   UpdateCollection,
+  ReorderNodes,
   GetCollectionTree,
   SaveRequest,
   ListEnvironments,
   GetRequest,
-  CreateRequest
+  CreateRequest,
+  MoveFolder
 } from '../../../wailsjs/go/main/App'
 
 function resSuccess(data: any = {}): model.Result {
@@ -1035,6 +1039,192 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
 
       expect(reqStore.current.name).toBe(truncatedName)
       expect(reqStore.original.name).toBe(truncatedName)
+    })
+
+    it('isDescendantFolder, findParentFolderId and canMoveNodeTo validate hierarchy properly', () => {
+      const store = useCollectionStore()
+      store.tree = [
+        {
+          id: 'f1',
+          name: 'Folder 1',
+          type: 'folder',
+          path: '/f1',
+          created_at: '',
+          children: [
+            {
+              id: 'f1_sub',
+              name: 'Sub 1',
+              type: 'folder',
+              path: '/f1/sub',
+              created_at: '',
+              children: [
+                {
+                  id: 'req_nested',
+                  name: 'Nested Req',
+                  type: 'request',
+                  method: 'GET',
+                  path: '/f1/sub/req',
+                  created_at: ''
+                }
+              ]
+            }
+          ]
+        },
+        {
+          id: 'f2',
+          name: 'Folder 2',
+          type: 'folder',
+          path: '/f2',
+          created_at: '',
+          children: []
+        },
+        {
+          id: 'req_root',
+          name: 'Root Req',
+          type: 'request',
+          method: 'GET',
+          path: '/req_root',
+          created_at: ''
+        }
+      ]
+
+      // isDescendantFolder
+      expect(store.isDescendantFolder('f1', 'f1')).toBe(true)
+      expect(store.isDescendantFolder('f1', 'f1_sub')).toBe(true)
+      expect(store.isDescendantFolder('f1', 'f2')).toBe(false)
+      expect(store.isDescendantFolder('f2', 'f1')).toBe(false)
+
+      // findParentFolderId
+      expect(store.findParentFolderId(store.tree, 'f1')).toBe('')
+      expect(store.findParentFolderId(store.tree, 'req_root')).toBe('')
+      expect(store.findParentFolderId(store.tree, 'f1_sub')).toBe('f1')
+      expect(store.findParentFolderId(store.tree, 'req_nested')).toBe('f1_sub')
+      expect(store.findParentFolderId(store.tree, 'nonexistent')).toBeNull()
+
+      // canMoveNodeTo
+      expect(store.canMoveNodeTo('', 'folder', 'f2')).toBe(false)
+      expect(store.canMoveNodeTo('nonexistent', 'folder', 'f2')).toBe(false)
+      // Cannot move to current parent
+      expect(store.canMoveNodeTo('f1', 'folder', '')).toBe(false) // already at root
+      expect(store.canMoveNodeTo('f1_sub', 'folder', 'f1')).toBe(false) // already in f1
+      // Folder cannot move to self or descendant
+      expect(store.canMoveNodeTo('f1', 'folder', 'f1')).toBe(false)
+      expect(store.canMoveNodeTo('f1', 'folder', 'f1_sub')).toBe(false)
+      // Valid moves
+      expect(store.canMoveNodeTo('f1', 'folder', 'f2')).toBe(true)
+      expect(store.canMoveNodeTo('f1_sub', 'folder', '')).toBe(true)
+      expect(store.canMoveNodeTo('f1_sub', 'folder', 'f2')).toBe(true)
+      expect(store.canMoveNodeTo('req_nested', 'request', '')).toBe(true)
+      expect(store.canMoveNodeTo('req_nested', 'request', 'f2')).toBe(true)
+    })
+
+    it('moveFolder calls MoveFolder, reloads tree, auto-expands target path and shows toast', async () => {
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+
+      const updatedTree = [
+        {
+          id: 'f-target',
+          name: 'Target Folder',
+          type: 'folder' as const,
+          path: '/target',
+          created_at: '',
+          children: [
+            {
+              id: 'f-moved',
+              name: 'Moved Folder',
+              type: 'folder' as const,
+              path: '/target/moved',
+              created_at: '',
+              children: []
+            }
+          ]
+        }
+      ]
+
+      vi.mocked(MoveFolder).mockResolvedValueOnce(resSuccess(null))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess(updatedTree))
+
+      await store.moveFolder('f-moved', 'f-target')
+
+      expect(MoveFolder).toHaveBeenCalledWith('f-moved', 'f-target')
+      expect(toastSpy).toHaveBeenCalledWith('Đã di chuyển')
+      expect(store.expandedFolders.has('f-target')).toBe(true)
+    })
+  })
+
+  describe('Reorder & Sort nodes', () => {
+    it('reorderNodes calls backend and updates local tree order', async () => {
+      const store = useCollectionStore()
+      store.tree = [
+        { id: '1', name: 'Req 1', type: 'request', path: '', created_at: '' },
+        { id: '2', name: 'Req 2', type: 'request', path: '', created_at: '' },
+        { id: '3', name: 'Req 3', type: 'request', path: '', created_at: '' }
+      ]
+
+      vi.mocked(ReorderNodes).mockResolvedValueOnce(resSuccess(null))
+
+      const success = await store.reorderNodes('', ['3', '1', '2'])
+      expect(success).toBe(true)
+      expect(ReorderNodes).toHaveBeenCalledWith('', ['3', '1', '2'])
+      expect(store.tree.map(n => n.id)).toEqual(['3', '1', '2'])
+    })
+
+    it('sortNodes sorts folders first then requests, toggling asc and desc', async () => {
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+
+      store.tree = [
+        { id: 'req-z', name: 'Zebra', type: 'request', path: '', created_at: '' },
+        { id: 'f-b', name: 'Beta Folder', type: 'folder', path: '', created_at: '', children: [] },
+        { id: 'req-a', name: 'Apple', type: 'request', path: '', created_at: '' },
+        { id: 'f-a', name: 'Alpha Folder', type: 'folder', path: '', created_at: '', children: [] }
+      ]
+
+      vi.mocked(ReorderNodes).mockResolvedValue(resSuccess(null))
+
+      // First sort -> A-Z
+      const res1 = await store.sortNodes('', 'asc')
+      expect(res1).toBe(true)
+      expect(store.tree.map(n => n.id)).toEqual(['f-a', 'f-b', 'req-a', 'req-z'])
+      expect(toastSpy).toHaveBeenCalledWith('Đã sắp xếp A-Z')
+
+      // Second sort -> toggle to Z-A
+      const res2 = await store.sortNodes('')
+      expect(res2).toBe(true)
+      expect(store.tree.map(n => n.id)).toEqual(['f-b', 'f-a', 'req-z', 'req-a'])
+      expect(toastSpy).toHaveBeenCalledWith('Đã sắp xếp Z-A')
+    })
+
+    it('canReorderNode validates cyclical drops and self drops', () => {
+      const store = useCollectionStore()
+      store.tree = [
+        {
+          id: 'f-parent',
+          name: 'Parent',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: [
+            { id: 'f-child', name: 'Child', type: 'folder', path: '', created_at: '', children: [] }
+          ]
+        },
+        { id: 'req-1', name: 'Req 1', type: 'request', path: '', created_at: '' }
+      ]
+
+      // Self
+      expect(store.canReorderNode('req-1', 'request', 'req-1', 'before')).toBe(false)
+      expect(store.canReorderNode('f-parent', 'folder', 'f-parent', 'inside')).toBe(false)
+
+      // Folder into descendant
+      expect(store.canReorderNode('f-parent', 'folder', 'f-child', 'inside')).toBe(false)
+      expect(store.canReorderNode('f-parent', 'folder', 'f-child', 'before')).toBe(false)
+
+      // Valid reorders
+      expect(store.canReorderNode('req-1', 'request', 'f-parent', 'before')).toBe(true)
+      expect(store.canReorderNode('f-child', 'folder', 'req-1', 'after')).toBe(true)
     })
   })
 })

@@ -391,6 +391,33 @@ func TestGitSyncService_ListLocalBranchesAndPushToBranch(t *testing.T) {
 	if !strings.Contains(remoteFiles, "feat.json") {
 		t.Fatalf("expected feat.json to be pushed to remote feature-branch, got tree: %s", remoteFiles)
 	}
+
+	// Verify CheckoutBranch switches to new branch
+	coRes := gitSvc.CheckoutBranch(collectionsRoot, collID, "another-branch")
+	if !coRes.Success {
+		t.Fatalf("CheckoutBranch failed: %+v", coRes.Error)
+	}
+	status := coRes.Data.(model.GitSyncStatus)
+	if status.Branch != "another-branch" {
+		t.Fatalf("expected Branch=another-branch, got %s", status.Branch)
+	}
+
+	// Verify ListLocalBranches now includes another-branch
+	branchesRes2 := gitSvc.ListLocalBranches(collectionsRoot, collID)
+	if !branchesRes2.Success {
+		t.Fatalf("ListLocalBranches failed: %+v", branchesRes2.Error)
+	}
+	branches2 := branchesRes2.Data.([]string)
+	hasAnother := false
+	for _, b := range branches2 {
+		if b == "another-branch" {
+			hasAnother = true
+			break
+		}
+	}
+	if !hasAnother {
+		t.Fatalf("expected another-branch in ListLocalBranches, got %v", branches2)
+	}
 }
 
 func TestGitSyncService_InitialPushAndPullWithUnrelatedHistoryAndCollectionMeta(t *testing.T) {
