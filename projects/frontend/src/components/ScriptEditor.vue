@@ -33,6 +33,8 @@ const preOverlayRef = ref<HTMLElement | null>(null)
 const postOverlayRef = ref<HTMLElement | null>(null)
 const preGutterRef = ref<HTMLElement | null>(null)
 const postGutterRef = ref<HTMLElement | null>(null)
+const preGutterContentRef = ref<HTMLElement | null>(null)
+const postGutterContentRef = ref<HTMLElement | null>(null)
 
 const suggestions = ref<ScriptSuggestionItem[]>([])
 const activeSuggestionIdx = ref(0)
@@ -74,6 +76,12 @@ function resolveDefaultPhase(): 'pre_request' | 'post_response' {
 function selectPhase(phase: 'pre_request' | 'post_response') {
   selectedPhase.value = phase
   suggestions.value = []
+  nextTick(() => {
+    const el = phase === 'pre_request' ? preTextareaRef.value : postTextareaRef.value
+    if (el) {
+      syncScroll({ target: el } as any, phase)
+    }
+  })
 }
 
 watch(
@@ -81,6 +89,12 @@ watch(
   () => {
     selectedPhase.value = resolveDefaultPhase()
     suggestions.value = []
+    nextTick(() => {
+      const el = selectedPhase.value === 'pre_request' ? preTextareaRef.value : postTextareaRef.value
+      if (el) {
+        syncScroll({ target: el } as any, selectedPhase.value)
+      }
+    })
   },
   { immediate: true }
 )
@@ -127,6 +141,7 @@ function insertTemplate(template: string) {
       el.focus()
       const newPos = before.length + textToInsert.length
       el.setSelectionRange(newPos, newPos)
+      syncScroll({ target: el } as any, isPre ? 'pre_request' : 'post_response')
     })
   } else {
     insertSnippet(isPre ? 'pre' : 'post', template)
@@ -425,16 +440,39 @@ function onEditorKeydown(e: KeyboardEvent, phase: 'pre_request' | 'post_response
 function syncScroll(e: Event, phase: 'pre_request' | 'post_response') {
   const target = e.target as HTMLElement
   const overlay = phase === 'pre_request' ? preOverlayRef.value : postOverlayRef.value
-  const gutter = phase === 'pre_request' ? preGutterRef.value : postGutterRef.value
+  const gutterContent = phase === 'pre_request' ? preGutterContentRef.value : postGutterContentRef.value
   if (target) {
     if (overlay) {
       overlay.scrollTop = target.scrollTop
       overlay.scrollLeft = target.scrollLeft
     }
-    if (gutter) {
-      gutter.scrollTop = target.scrollTop
+    if (gutterContent) {
+      gutterContent.style.transform = `translateY(-${target.scrollTop}px)`
     }
   }
+}
+
+function onGutterWheel(e: WheelEvent, phase: 'pre_request' | 'post_response') {
+  const el = phase === 'pre_request' ? preTextareaRef.value : postTextareaRef.value
+  if (el) {
+    el.scrollTop += e.deltaY
+    el.scrollLeft += e.deltaX
+    syncScroll({ target: el } as any, phase)
+    e.preventDefault()
+  }
+}
+
+function onGutterLineClick(lineNum: number, phase: 'pre_request' | 'post_response') {
+  const el = phase === 'pre_request' ? preTextareaRef.value : postTextareaRef.value
+  const code = phase === 'pre_request' ? preRequestCode.value : postResponseCode.value
+  if (!el) return
+  const lines = code.split('\n')
+  let pos = 0
+  for (let i = 0; i < Math.min(lineNum - 1, lines.length); i++) {
+    pos += lines[i].length + 1
+  }
+  el.focus()
+  el.setSelectionRange(pos, pos)
 }
 
 function onEditorBlur() {
@@ -640,7 +678,7 @@ async function runScriptPreview() {
       <div
         v-show="selectedPhase === 'pre_request'"
         data-test="pre-script-panel"
-        class="relative flex w-full min-h-[160px] rounded border border-border-default bg-surface-input focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/40 overflow-hidden"
+        class="relative flex w-full min-h-[160px] h-[220px] max-h-[600px] resize-y rounded border border-border-default bg-surface-input focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/40 overflow-hidden"
         :class="{ 'is-ime-composing': isComposing }"
       >
         <!-- Line Number Gutter -->
@@ -648,13 +686,23 @@ async function runScriptPreview() {
           ref="preGutterRef"
           data-test="pre-script-gutter"
           aria-hidden="true"
-          class="select-none overflow-hidden bg-surface-base/80 border-r border-border-default/60 py-2.5 px-2 font-mono text-xs leading-relaxed text-text-muted/60 text-right shrink-0"
+          class="select-none overflow-hidden bg-surface-base/80 border-r border-border-default/60 py-2.5 px-2 font-mono text-xs leading-relaxed text-text-muted/60 text-right shrink-0 h-full min-h-0"
           :style="{ minWidth: gutterWidth(preLineCount) }"
+          @wheel="e => onGutterWheel(e, 'pre_request')"
         >
-          <div v-for="line in preLineCount" :key="line">{{ line }}</div>
+          <div ref="preGutterContentRef">
+            <div
+              v-for="line in preLineCount"
+              :key="line"
+              class="cursor-pointer hover:text-text-primary transition-colors"
+              @click="onGutterLineClick(line, 'pre_request')"
+            >
+              {{ line }}
+            </div>
+          </div>
         </div>
 
-        <div class="relative flex-1 min-w-0 h-full">
+        <div class="relative flex-1 min-w-0 h-full min-h-0">
           <pre
             ref="preOverlayRef"
             data-test="pre-script-syntax-overlay"
@@ -666,10 +714,10 @@ async function runScriptPreview() {
             ref="preTextareaRef"
             v-model="preRequestCode"
             data-test="pre-request-script-input"
-            rows="7"
             spellcheck="false"
             autocomplete="off"
-            class="transparent-selection relative z-10 w-full min-h-[160px] resize-y rounded-r bg-transparent py-2.5 px-3 font-mono text-xs leading-relaxed text-transparent caret-text-primary focus:outline-none whitespace-pre overflow-auto"
+            wrap="off"
+            class="transparent-selection relative z-10 w-full h-full min-h-0 resize-none rounded-r bg-transparent py-2.5 px-3 font-mono text-xs leading-relaxed text-transparent caret-text-primary focus:outline-none whitespace-pre overflow-auto"
             @compositionstart="onCompositionStart"
             @compositionupdate="onCompositionUpdate"
             @compositionend="e => onCompositionEnd(e, 'pre_request')"
@@ -686,7 +734,7 @@ async function runScriptPreview() {
       <div
         v-show="selectedPhase === 'post_response'"
         data-test="post-script-panel"
-        class="relative flex w-full min-h-[160px] rounded border border-border-default bg-surface-input focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/40 overflow-hidden"
+        class="relative flex w-full min-h-[160px] h-[220px] max-h-[600px] resize-y rounded border border-border-default bg-surface-input focus-within:border-brand-primary focus-within:ring-1 focus-within:ring-brand-primary/40 overflow-hidden"
         :class="{ 'is-ime-composing': isComposing }"
       >
         <!-- Line Number Gutter -->
@@ -694,13 +742,23 @@ async function runScriptPreview() {
           ref="postGutterRef"
           data-test="post-script-gutter"
           aria-hidden="true"
-          class="select-none overflow-hidden bg-surface-base/80 border-r border-border-default/60 py-2.5 px-2 font-mono text-xs leading-relaxed text-text-muted/60 text-right shrink-0"
+          class="select-none overflow-hidden bg-surface-base/80 border-r border-border-default/60 py-2.5 px-2 font-mono text-xs leading-relaxed text-text-muted/60 text-right shrink-0 h-full min-h-0"
           :style="{ minWidth: gutterWidth(postLineCount) }"
+          @wheel="e => onGutterWheel(e, 'post_response')"
         >
-          <div v-for="line in postLineCount" :key="line">{{ line }}</div>
+          <div ref="postGutterContentRef">
+            <div
+              v-for="line in postLineCount"
+              :key="line"
+              class="cursor-pointer hover:text-text-primary transition-colors"
+              @click="onGutterLineClick(line, 'post_response')"
+            >
+              {{ line }}
+            </div>
+          </div>
         </div>
 
-        <div class="relative flex-1 min-w-0 h-full">
+        <div class="relative flex-1 min-w-0 h-full min-h-0">
           <pre
             ref="postOverlayRef"
             data-test="post-script-syntax-overlay"
@@ -712,10 +770,10 @@ async function runScriptPreview() {
             ref="postTextareaRef"
             v-model="postResponseCode"
             data-test="post-response-script-input"
-            rows="7"
             spellcheck="false"
             autocomplete="off"
-            class="transparent-selection relative z-10 w-full min-h-[160px] resize-y rounded-r bg-transparent py-2.5 px-3 font-mono text-xs leading-relaxed text-transparent caret-text-primary focus:outline-none whitespace-pre overflow-auto"
+            wrap="off"
+            class="transparent-selection relative z-10 w-full h-full min-h-0 resize-none rounded-r bg-transparent py-2.5 px-3 font-mono text-xs leading-relaxed text-transparent caret-text-primary focus:outline-none whitespace-pre overflow-auto"
             @compositionstart="onCompositionStart"
             @compositionupdate="onCompositionUpdate"
             @compositionend="e => onCompositionEnd(e, 'post_response')"
@@ -975,45 +1033,45 @@ async function runScriptPreview() {
           <button
             type="button"
             data-test="snippet-post-json"
-            title="Parse JSON và lưu Token vào Environment"
+            title="Parse nội dung JSON body: ha.response.json()"
             class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('{\n  const body = ha.response.json();\n  ha.env().set({ auth_token: body?.data?.token || body?.token });\n}')"
+            @click="insertTemplate('ha.response.json()')"
           >
-            <strong class="text-emerald-300">.json()</strong> &amp; Lưu Token
+            <strong class="text-emerald-300">.json()</strong>
           </button>
           <button
             type="button"
             data-test="snippet-post-folder-auth"
-            title="Lưu Token từ Response vào Folder Auth theo Environment"
+            title="Dữ liệu response (tự động parse JSON): ha.response.data"
             class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('{\n  const token = ha.response.data?.access_token || ha.response.data?.token;\n  if (token) {\n    ha.folder().auth.set({ type: \'bearer\', value: token });\n  }\n}')"
+            @click="insertTemplate('ha.response.data')"
           >
-            <strong class="text-emerald-300">.data</strong> &rarr; Folder Auth
+            <strong class="text-emerald-300">.data</strong>
+          </button>
+          <button
+            type="button"
+            data-test="snippet-post-text"
+            title="Lấy body dạng text: ha.response.text()"
+            class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
+            @click="insertTemplate('ha.response.text()')"
+          >
+            <strong class="text-emerald-300">.text()</strong>
           </button>
           <button
             type="button"
             data-test="snippet-post-set-env"
-            title="Lưu HTTP Status Code vào Environment"
+            title="Mã trạng thái HTTP: ha.response.code"
             class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('ha.env().set({ status_code: ha.response.code });')"
+            @click="insertTemplate('ha.response.code')"
           >
-            <strong class="text-emerald-300">.code</strong> &rarr; Env
-          </button>
-          <button
-            type="button"
-            data-test="snippet-post-all-envs"
-            title="Lưu dữ liệu vào Environment và Folder"
-            class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('{\n  const data = ha.response.data;\n  ha.env().set({ env_token: data?.token });\n  ha.folder().set({ folder_secret: data?.secret });\n}')"
-          >
-            <strong class="text-emerald-300">Set All Scopes</strong>
+            <strong class="text-emerald-300">.code</strong>
           </button>
           <button
             type="button"
             data-test="snippet-post-response-time"
-            title="Log thời gian phản hồi: ha.response.responseTime"
+            title="Thời gian phản hồi (ms): ha.response.responseTime"
             class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('console.info(\'Response time:\', ha.response.responseTime + \'ms\');')"
+            @click="insertTemplate('ha.response.responseTime')"
           >
             <strong class="text-emerald-300">.responseTime</strong>
           </button>
@@ -1022,16 +1080,16 @@ async function runScriptPreview() {
             data-test="snippet-post-headers-get"
             title="Lấy response header: ha.response.headers.get('content-type')"
             class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('const contentType = ha.response.headers.get(\'content-type\');')"
+            @click="insertTemplate('ha.response.headers.get(\'content-type\')')"
           >
             <strong class="text-emerald-300">.headers.get</strong>(...)
           </button>
           <button
             type="button"
             data-test="snippet-pre-log"
-            title="Ghi log chi tiết ra bảng Console / Logs"
+            title="Ghi log dữ liệu ra bảng Console / Logs: console.log(ha.response.data)"
             class="px-1.5 py-0.5 rounded border border-border-default bg-surface-base text-text-secondary hover:bg-surface-hover hover:text-emerald-300 hover:border-emerald-400/50 cursor-pointer transition-colors"
-            @click="insertTemplate('console.log(\'Response:\', ha.response.code, ha.response.data);')"
+            @click="insertTemplate('console.log(ha.response.data);')"
           >
             <strong class="text-emerald-300">console.log</strong>(...)
           </button>

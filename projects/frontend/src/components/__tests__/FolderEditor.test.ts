@@ -563,7 +563,10 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
           'env-dev': [{ key: 'bearer_token', value: 'env-specific-jwt', enabled: true }]
         },
         headers: [{ key: 'X-Custom', value: '{{coll_var}}', enabled: true }],
-        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } }
+        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } },
+        auth_envs: {
+          'env-dev': { type: 'bearer', bearer: { token: '{{bearer_token}}' } }
+        }
       }
     } as any)
 

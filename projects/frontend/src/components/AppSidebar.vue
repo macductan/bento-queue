@@ -82,6 +82,15 @@ watch(
   }
 )
 
+watch(
+  () => uiStore.filterTreeClearTrigger,
+  () => {
+    if (filterQuery.value) {
+      clearFilter()
+    }
+  }
+)
+
 const addDropdownOpen = ref(false)
 const addMenuContainerRef = ref<HTMLElement | null>(null)
 

@@ -9,6 +9,7 @@ import {
   type FolderNodeLike
 } from '@/utils/resolveHierarchyVariables'
 import { LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
+import CustomSelect, { type SelectOption } from '@/components/CustomSelect.vue'
 
 export interface AnchorRectLike {
   top: number
@@ -140,13 +141,22 @@ watch(
   { flush: 'sync' }
 )
 
-const handleScopeChange = (e: Event) => {
-  const target = e.target as HTMLSelectElement | null
-  if (target) {
-    selectedScopeId.value = target.value
-    inputValue.value = inspection.value.valuesByScopeId[target.value] ?? ''
+const handleScopeChange = (eOrVal?: any) => {
+  const targetVal = eOrVal && typeof eOrVal === 'object' && 'target' in eOrVal
+    ? (eOrVal.target as HTMLSelectElement)?.value
+    : (typeof eOrVal === 'string' ? eOrVal : selectedScopeId.value)
+  if (targetVal) {
+    selectedScopeId.value = targetVal
+    inputValue.value = inspection.value.valuesByScopeId[targetVal] ?? ''
   }
 }
+
+const scopeSelectOptions = computed<SelectOption[]>(() =>
+  inspection.value.options.map(opt => ({
+    value: opt.id,
+    label: opt.label
+  }))
+)
 
 const popoverStyle = computed(() => {
   const rect = props.anchorRect
@@ -397,28 +407,14 @@ const handleSave = async () => {
             {{ showAllEnvs ? 'Thu gọn' : 'Tất cả Env/Folder' }}
           </button>
         </div>
-        <div class="relative flex items-center">
-          <select
-            v-model="selectedScopeId"
-            data-test="variable-scope-select"
-            class="peer appearance-none w-full bg-surface-raised border border-border-default rounded px-2.5 py-1.5 pr-7 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
-            @change="handleScopeChange"
-          >
-            <option
-              v-for="opt in inspection.options"
-              :key="opt.id"
-              :value="opt.id"
-              class="bg-surface-overlay text-text-primary"
-            >
-              {{ opt.label }}
-            </option>
-          </select>
-          <div class="absolute right-2 pointer-events-none text-text-muted flex items-center justify-center">
-            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m6 9 6 6 6-6"/>
-            </svg>
-          </div>
-        </div>
+        <CustomSelect
+          v-model="selectedScopeId"
+          data-test="variable-scope-select"
+          :options="scopeSelectOptions"
+          full-width
+          size="xs"
+          @change="handleScopeChange"
+        />
       </div>
 
       <!-- Value Input + Save Button -->

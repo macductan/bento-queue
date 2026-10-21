@@ -7,6 +7,7 @@ import { useTabStore } from '@/stores/tabStore'
 import KvpEditor from '@/components/KvpEditor.vue'
 import AuthEditor from '@/components/AuthEditor.vue'
 import DefaultHeadersTable from '@/components/DefaultHeadersTable.vue'
+import CustomSelect, { type SelectOption } from '@/components/CustomSelect.vue'
 import { LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import { getInheritedHeaders, getDefaultHeaders, type DefaultHeaderItem } from '@/utils/headers'
@@ -532,6 +533,23 @@ onBeforeUnmount(async () => {
     await saveFolderData({ silent: true })
   }
 })
+
+const folderEnvScopeOptions = computed<SelectOption[]>(() => {
+  const list: SelectOption[] = [
+    {
+      value: '__folder_global__',
+      label: `Folder Global Env (Dùng chung) ${folderGlobalVarsCount.value > 0 ? `(${folderGlobalVarsCount.value})` : ''}`.trim()
+    }
+  ]
+  for (const env of envStore.environments) {
+    const count = getEnvVarsCount(env.id)
+    list.push({
+      value: env.id,
+      label: `${env.name} ${count > 0 ? `(${count})` : ''}`.trim()
+    })
+  }
+  return list
+})
 </script>
 
 <template>
@@ -669,26 +687,13 @@ onBeforeUnmount(async () => {
               <label for="folder-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
                 Phạm vi môi trường:
               </label>
-              <div class="relative flex items-center">
-                <select
-                  id="folder-env-scope-select"
-                  v-model="selectedEnvScope"
-                  class="peer appearance-none bg-surface-overlay border border-border-default rounded-md h-[32px] pl-2.5 pr-7 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
-                  data-test="folder-env-scope-select"
-                >
-                  <option value="__folder_global__" class="bg-surface-overlay text-text-primary">
-                    Folder Global Env (Dùng chung) {{ folderGlobalVarsCount > 0 ? `(${folderGlobalVarsCount})` : '' }}
-                  </option>
-                  <option v-for="env in envStore.environments" :key="env.id" :value="env.id" class="bg-surface-overlay text-text-primary">
-                    {{ env.name }} {{ getEnvVarsCount(env.id) > 0 ? `(${getEnvVarsCount(env.id)})` : '' }}
-                  </option>
-                </select>
-                <div class="absolute right-2 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
-                  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="m6 9 6 6 6-6"/>
-                  </svg>
-                </div>
-              </div>
+              <CustomSelect
+                id="folder-env-scope-select"
+                v-model="selectedEnvScope"
+                data-test="folder-env-scope-select"
+                :options="folderEnvScopeOptions"
+                size="sm"
+              />
             </div>
             <span class="text-xs text-text-muted">
               {{ selectedEnvScope === '__folder_global__' ? 'Có hiệu lực cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}

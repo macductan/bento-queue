@@ -22,6 +22,7 @@ watch(() => uiStore.renameTrigger, (newVal) => {
 
 const isFolder = computed(() => props.node.type === 'folder')
 const isExpanded = computed(() => store.expandedFolders.has(props.node.id))
+const isHighlighted = computed(() => uiStore.highlightedNodeId === props.node.id)
 const isActive = computed(() => {
   if (isFolder.value) {
     return store.activeFolderId === props.node.id && !store.activeRequestId
@@ -308,6 +309,8 @@ const onDrop = async (e: DragEvent) => {
     <div 
       class="relative flex items-center py-1.5 pr-2 cursor-pointer select-none group outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary border-l-2"
       data-tree-row="true"
+      :data-node-id="props.node.id"
+      :data-highlighted="isHighlighted ? 'true' : undefined"
       :draggable="!isEditing"
       :data-active="isActive ? 'true' : undefined"
       :data-depth="depth"
@@ -318,9 +321,10 @@ const onDrop = async (e: DragEvent) => {
         'opacity-50': isDragging,
         'ring-2 ring-inset ring-brand-primary bg-brand-primary/15 border-brand-primary': isDragOver && dropPosition === 'inside',
         'cursor-not-allowed opacity-60 border-transparent': isInvalidTarget,
-        'border-brand-primary bg-surface-hover text-text-primary': isActive && !(isDragOver && dropPosition === 'inside'),
-        'border-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary': !isActive && !isFolder && !(isDragOver && dropPosition === 'inside'),
-        'border-transparent text-text-primary hover:bg-surface-hover': !isActive && isFolder && !(isDragOver && dropPosition === 'inside')
+        'ring-2 ring-inset ring-brand-primary bg-brand-primary/30 !text-brand-primary font-bold shadow-md shadow-brand-primary/20 animate-pulse': isHighlighted,
+        'border-brand-primary bg-surface-hover text-text-primary': !isHighlighted && isActive && !(isDragOver && dropPosition === 'inside'),
+        'border-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary': !isHighlighted && !isActive && !isFolder && !(isDragOver && dropPosition === 'inside'),
+        'border-transparent text-text-primary hover:bg-surface-hover': !isHighlighted && !isActive && isFolder && !(isDragOver && dropPosition === 'inside')
       }"
       :style="{ paddingLeft }"
       @click="toggle"
@@ -334,6 +338,12 @@ const onDrop = async (e: DragEvent) => {
       @drop="onDrop"
       tabindex="0"
     >
+      <!-- Highlight Active Indicator -->
+      <span
+        v-if="isHighlighted"
+        data-test="tree-row-highlight-bar"
+        class="absolute left-0 top-0 bottom-0 w-1 bg-brand-primary z-30 pointer-events-none"
+      />
       <!-- Drop Line Indicators -->
       <div
         v-if="isDragOver && dropPosition === 'before'"

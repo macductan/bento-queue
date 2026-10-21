@@ -1226,5 +1226,74 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       expect(store.canReorderNode('req-1', 'request', 'f-parent', 'before')).toBe(true)
       expect(store.canReorderNode('f-child', 'folder', 'req-1', 'after')).toBe(true)
     })
+
+    it('expandPathToNode expands all ancestor folders of the target node', () => {
+      const store = useCollectionStore()
+      store.tree = [
+        {
+          id: 'f-level1',
+          name: 'Level 1',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: [
+            {
+              id: 'f-level2',
+              name: 'Level 2',
+              type: 'folder',
+              path: '',
+              created_at: '',
+              children: [
+                { id: 'req-nested', name: 'Nested Req', type: 'request', path: '', created_at: '' }
+              ]
+            }
+          ]
+        }
+      ]
+
+      store.expandPathToNode('req-nested')
+      expect(store.expandedFolders.has('f-level1')).toBe(true)
+      expect(store.expandedFolders.has('f-level2')).toBe(true)
+    })
+
+    it('revealNodeInTree collapses unrelated folders, expands target path, clears filter and triggers highlight', async () => {
+      const store = useCollectionStore()
+      store.tree = [
+        {
+          id: 'f-unrelated',
+          name: 'Unrelated Folder',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: []
+        },
+        {
+          id: 'f-1',
+          name: 'Folder 1',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: [
+            { id: 'req-target', name: 'Target Req', type: 'request', path: '', created_at: '' }
+          ]
+        }
+      ]
+
+      store.expandedFolders.add('f-unrelated')
+      expect(store.expandedFolders.has('f-unrelated')).toBe(true)
+
+      const { useUiStore } = await import('../uiStore')
+      const uiStore = useUiStore()
+      const clearFilterSpy = vi.spyOn(uiStore, 'clearTreeFilter')
+      const highlightSpy = vi.spyOn(uiStore, 'highlightTreeNode')
+
+      await store.revealNodeInTree('req-target')
+      // f-unrelated should be collapsed
+      expect(store.expandedFolders.has('f-unrelated')).toBe(false)
+      // target ancestor f-1 should be expanded
+      expect(store.expandedFolders.has('f-1')).toBe(true)
+      expect(clearFilterSpy).toHaveBeenCalled()
+      expect(highlightSpy).toHaveBeenCalledWith('req-target', 2500)
+    })
   })
 })

@@ -119,4 +119,40 @@ describe('EnvSelector', () => {
     expect(setActiveSpy).toHaveBeenCalledWith(null)
     expect(envStore.activeEnvId).toBeNull()
   })
+
+  it('supports opening custom dropdown menu and selecting an environment', async () => {
+    const envStore = useEnvironmentStore()
+    const uiStore = useUiStore()
+    envStore.environments = [
+      { id: 'env-staging', name: 'Staging', variables: [], created_at: '', updated_at: '' } as any
+    ]
+    const setActiveSpy = vi.spyOn(envStore, 'setActive')
+
+    const wrapper = mount(EnvSelector)
+    const trigger = wrapper.find('[data-test="env-selector-trigger"]')
+    expect(trigger.exists()).toBe(true)
+    expect(trigger.text()).toContain('Không dùng env')
+
+    // Click to open custom dropdown
+    await trigger.trigger('click')
+    const menu = wrapper.find('[data-test="env-dropdown-menu"]')
+    expect(menu.exists()).toBe(true)
+
+    // Select Staging
+    const stagingOption = wrapper.find('[data-test="env-option-env-staging"]')
+    expect(stagingOption.exists()).toBe(true)
+    await stagingOption.trigger('click')
+
+    expect(setActiveSpy).toHaveBeenCalledWith('env-staging')
+    expect(envStore.activeEnvId).toBe('env-staging')
+    expect(wrapper.find('[data-test="env-dropdown-menu"]').exists()).toBe(false)
+
+    // Open again and click open env modal button
+    await trigger.trigger('click')
+    const manageBtn = wrapper.find('[data-test="open-env-modal-btn"]')
+    expect(manageBtn.exists()).toBe(true)
+    await manageBtn.trigger('click')
+    expect(uiStore.envModalOpen).toBe(true)
+    expect(wrapper.find('[data-test="env-dropdown-menu"]').exists()).toBe(false)
+  })
 })

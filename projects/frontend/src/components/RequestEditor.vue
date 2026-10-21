@@ -40,6 +40,46 @@ const requestPath = computed(() => {
   return collName ? [collName, ...names] : names
 })
 
+interface BreadcrumbPart {
+  id?: string
+  name: string
+  type: 'collection' | 'folder'
+}
+
+const breadcrumbParts = computed<BreadcrumbPart[]>(() => {
+  if (!req.value) return []
+  const items: BreadcrumbPart[] = []
+  const collName = collectionStore.activeCollection?.name
+  if (collName) {
+    items.push({
+      id: collectionStore.activeCollection?.id,
+      name: collName,
+      type: 'collection'
+    })
+  }
+  const full = collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []
+  for (const node of full) {
+    if (node.type === 'folder') {
+      items.push({
+        id: node.id,
+        name: node.name,
+        type: 'folder'
+      })
+    }
+  }
+  return items
+})
+
+const handleFolderClick = async (folderId?: string) => {
+  if (!folderId) return
+  await collectionStore.selectFolder(folderId)
+}
+
+const handleRequestClick = async () => {
+  if (!req.value) return
+  await collectionStore.revealNodeInTree(req.value.id)
+}
+
 const req = computed(() => requestStore.current)
 const loading = computed(() => requestStore.loading)
 
@@ -170,14 +210,33 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
     </div>
     <div v-else-if="req" class="flex-1 flex flex-col min-h-0 space-y-2">
       <!-- Breadcrumb Header with Request Name & Save Status Indicator -->
-      <div class="shrink-0 flex items-center justify-between gap-2 min-w-0 py-0.5">
-        <div class="flex items-center gap-1.5 text-xs font-medium text-text-muted min-w-0 truncate">
-          <template v-for="(part, idx) in requestPath.slice(0, -1)" :key="idx">
-            <span class="opacity-80 shrink-0">{{ part }}</span>
-            <span class="opacity-40 shrink-0">/</span>
+      <div class="shrink-0 flex items-center justify-between gap-2 min-w-0 py-1 min-h-[28px]">
+        <div class="flex items-center gap-1.5 text-xs font-medium text-text-muted min-w-0 flex-1 overflow-x-hidden py-0.5">
+          <template v-for="(part, idx) in breadcrumbParts" :key="part.id || idx">
+            <button
+              v-if="part.type === 'folder'"
+              type="button"
+              data-test="breadcrumb-folder"
+              :data-folder-id="part.id"
+              class="opacity-80 shrink-0 hover:opacity-100 hover:text-text-primary hover:underline cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded px-0.5 -mx-0.5 py-0.5 leading-normal"
+              :title="`Cấu hình thư mục '${part.name}'`"
+              @click="handleFolderClick(part.id)"
+            >
+              {{ part.name }}
+            </button>
+            <span v-else class="opacity-80 shrink-0 select-none py-0.5 leading-normal">{{ part.name }}</span>
+            <span class="opacity-40 shrink-0 select-none">/</span>
           </template>
-          <h1 class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-primary min-w-0 truncate m-0 p-0 leading-none" :title="req.name">
-            <span class="truncate">{{ req.name }}</span>
+          <h1 class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-primary min-w-0 m-0 p-0 leading-normal">
+            <button
+              type="button"
+              data-test="breadcrumb-request"
+              class="truncate hover:underline hover:text-brand-primary cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded px-0.5 -mx-0.5 font-semibold text-text-primary leading-normal py-0.5"
+              :title="`Xem vị trí '${req.name}' trong cây thư mục`"
+              @click="handleRequestClick"
+            >
+              {{ req.name }}
+            </button>
             <span
               v-if="requestStore.saveStatus === 'unsaved'"
               class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"

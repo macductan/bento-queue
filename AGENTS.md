@@ -56,6 +56,8 @@ When testing Epic 2 features visually, verify the following:
 
 ## Release, Versioning & Commit Squashing
 
+- **Lịch sử & Ngữ cảnh Kiến trúc (`CHANGELOG.md`)**:
+  - File `CHANGELOG.md` ở thư mục gốc lưu giữ toàn bộ lịch sử tiến hóa, kiến trúc cốt lõi và thay đổi của tất cả các phiên bản từ `v1.0.0` đến hiện tại. AI Agents nên đọc `CHANGELOG.md` khi cần nắm bắt bối cảnh lịch sử hoặc hành vi của các tính năng qua các phiên bản.
 - **Single Source of Truth cho Version**:
   - Toàn bộ ứng dụng và các script đóng gói (`projects/build-dmg.sh`, `projects/build-deb.sh`,...) BẮT BUỘC lấy version từ `projects/frontend/package.json`. Tuyệt đối không hardcode version ở từng script riêng rẽ.
   - Giao diện UI (`AppHeader.vue`) import trực tiếp version từ `package.json`.
@@ -66,7 +68,7 @@ When testing Epic 2 features visually, verify the following:
     - Thay đổi phá vỡ tương thích (breaking changes) -> tăng MAJOR.
 - **Quy trình gom và chuẩn hóa commit khi chốt tính năng**:
   - Khi hoàn thành chốt một đợt tính năng / milestone:
-    1. Cập nhật version mới trong `projects/frontend/package.json`.
+    1. Cập nhật version mới trong `projects/frontend/package.json` và bổ sung mục release mới vào đầu file `CHANGELOG.md`.
     2. Chạy kiểm tra toàn diện (`bun run type-check`, `bun run test`, `go test ./...`) đảm bảo pass 100%.
     3. Tiến hành gom (squash) toàn bộ các commit lẻ trên nhánh `develop` tính từ commit chuẩn gần nhất (`v1.x.x`) thành 1 commit duy nhất chuẩn hóa: **Tiêu đề BẮT BUỘC chỉ là `v<version>`** (ví dụ: `v1.2.0`, `v1.1.0`), phần thân là danh sách bullet points thay đổi. Tuyệt đối không dùng prefix `feat: release ...`.
     4. **Push & Tạo MR vào `main`**: Push force nhánh `develop` và tự động tạo Merge Request vào `main` qua Git push options (`git push -o merge_request.create -o merge_request.target=main -o merge_request.title="v<version>" origin develop --force`).

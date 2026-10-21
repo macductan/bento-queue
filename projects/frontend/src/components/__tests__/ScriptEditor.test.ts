@@ -203,7 +203,7 @@ describe('ScriptEditor.vue', () => {
     expect(wrapper.find('[data-test="script-error-banner"]').exists()).toBe(false)
   })
 
-  it('supports duplicate snippet insertion with block scoping without throwing syntax error', async () => {
+  it('supports response commands insertion without arbitrary variable assignments without throwing syntax error', async () => {
     const reqStore = useRequestStore()
     reqStore.current = createMockRequest()
 
@@ -218,7 +218,7 @@ describe('ScriptEditor.vue', () => {
     const code = reqStore.current.scripts?.post_response || ''
     expect(code).toContain('ha.response.json()')
 
-    // Verify code execution does not collide with duplicate identifier error
+    // Verify code execution does not collide with syntax error
     const { executeScript } = await import('@/utils/scriptRunner')
     const result = executeScript(code, {
       variables: new Map(),
@@ -237,7 +237,6 @@ describe('ScriptEditor.vue', () => {
 
     expect(result.success).toBe(true)
     expect(result.error).toBeUndefined()
-    expect(result.envUpdates['auth_token']).toBe('test-token')
   })
 
   it('supports setting environment variables across all scopes (Global, Collection, Folder, Folder-Env) and mutating request params/query/pathParams', async () => {
@@ -465,5 +464,70 @@ describe('ScriptEditor.vue', () => {
     await nextTick()
 
     expect(reqStore.current.scripts?.post_response).toBe('const b = 10;')
+  })
+
+  it('synchronizes line number gutter with textarea scroll via translateY transform and supports wheel scrolling', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      scripts: {
+        pre_request: Array.from({ length: 30 }, (_, i) => `console.log("line ${i + 1}");`).join('\n'),
+        post_response: ''
+      }
+    })
+
+    const wrapper = mount(ScriptEditor)
+    await nextTick()
+
+    const textarea = wrapper.find('[data-test="pre-request-script-input"]')
+    const el = textarea.element as HTMLTextAreaElement
+    Object.defineProperty(el, 'scrollTop', { value: 120, writable: true })
+
+    await textarea.trigger('scroll')
+    await nextTick()
+
+    const gutter = wrapper.find('[data-test="pre-script-gutter"]')
+    const gutterContent = gutter.find('div')
+    expect(gutterContent.attributes('style')).toContain('translateY(-120px)')
+
+    // Test wheel on gutter forwards scroll to textarea
+    const wheelEvent = new WheelEvent('wheel', { deltaY: 40 })
+    await gutter.trigger('wheel', wheelEvent)
+    await nextTick()
+
+    expect(gutterContent.attributes('style')).toContain('translateY(-160px)')
+  })
+
+  it('inserts clean, versatile ha.response commands for Section 4 buttons without arbitrary variable assignment', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      scripts: { pre_request: '', post_response: '' }
+    })
+
+    const wrapper = mount(ScriptEditor)
+    await wrapper.find('[data-test="script-tab-post-response"]').trigger('click')
+
+    // Test .data
+    const dataBtn = wrapper.find('[data-test="snippet-post-folder-auth"]')
+    expect(dataBtn.exists()).toBe(true)
+    await dataBtn.trigger('click')
+    expect(reqStore.current.scripts?.post_response).toContain('ha.response.data')
+
+    // Test .text()
+    const textBtn = wrapper.find('[data-test="snippet-post-text"]')
+    expect(textBtn.exists()).toBe(true)
+    await textBtn.trigger('click')
+    expect(reqStore.current.scripts?.post_response).toContain('ha.response.text()')
+
+    // Test .responseTime
+    const rtBtn = wrapper.find('[data-test="snippet-post-response-time"]')
+    expect(rtBtn.exists()).toBe(true)
+    await rtBtn.trigger('click')
+    expect(reqStore.current.scripts?.post_response).toContain('ha.response.responseTime')
+
+    // Test .headers.get(...)
+    const headersBtn = wrapper.find('[data-test="snippet-post-headers-get"]')
+    expect(headersBtn.exists()).toBe(true)
+    await headersBtn.trigger('click')
+    expect(reqStore.current.scripts?.post_response).toContain("ha.response.headers.get('content-type')")
   })
 })

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { nextTick } from 'vue'
 import { EventsOn } from '../../wailsjs/runtime/runtime'
 import { model } from '../../wailsjs/go/models'
 import {
@@ -991,6 +992,52 @@ export const useCollectionStore = defineStore('collection', {
         }
       }
       return null
+    },
+    expandPathToNode(nodeId: string, opts?: { collapseOthers?: boolean }) {
+      const path = this.findFolderPath(this.tree, nodeId)
+      const ancestorFolderIds = new Set<string>()
+      if (path && path.length > 0) {
+        for (const node of path) {
+          if (node.type === 'folder' && node.id !== nodeId) {
+            ancestorFolderIds.add(node.id)
+          }
+        }
+      }
+      if (opts?.collapseOthers) {
+        this.expandedFolders = ancestorFolderIds
+      } else {
+        for (const id of ancestorFolderIds) {
+          this.expandedFolders.add(id)
+        }
+        this.expandedFolders = new Set(this.expandedFolders)
+      }
+    },
+    async revealNodeInTree(nodeId: string) {
+      // Collapse all other folders and only expand ancestor folders to this node
+      this.expandPathToNode(nodeId, { collapseOthers: true })
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      uiStore.clearTreeFilter()
+      uiStore.highlightTreeNode(nodeId, 2500)
+      await nextTick()
+      if (typeof document !== 'undefined') {
+        let el: HTMLElement | null = null
+        for (let i = 0; i < 15; i++) {
+          el = document.querySelector<HTMLElement>(`[data-tree-row][data-node-id="${nodeId}"]`)
+          if (el) break
+          await new Promise(r => setTimeout(r, 40))
+        }
+        if (el) {
+          if (typeof el.scrollIntoView === 'function') {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+          try {
+            el.focus({ preventScroll: true })
+          } catch {
+            // Ignore focus error
+          }
+        }
+      }
     },
     setDraggingNode(node: { id: string; type: 'folder' | 'request' } | null) {
       this.draggingNode = node

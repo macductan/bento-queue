@@ -60,11 +60,21 @@ const activeTab = computed({
   set: (val) => uiStore.activeRequestTab = val
 })
 
+import CustomSelect from './CustomSelect.vue'
+
 const bodyType = computed(() => req.value?.body?.type || 'none')
 
-const onBodyTypeChange = (e: Event) => {
-  const val = (e.target as HTMLSelectElement).value as 'none' | 'json' | 'text' | 'xml' | 'urlencoded' | 'formdata'
-  requestStore.setBodyType(val)
+const bodyTypeOptions = [
+  { value: 'none', label: 'None' },
+  { value: 'json', label: 'JSON' },
+  { value: 'xml', label: 'XML' },
+  { value: 'urlencoded', label: 'x-www-form-urlencoded' },
+  { value: 'formdata', label: 'multipart/form-data' },
+  { value: 'text', label: 'Text' }
+]
+
+const onBodyTypeSelect = (val: string) => {
+  requestStore.setBodyType(val as any)
   if (uiStore.activeRequestTab !== 'body') {
     uiStore.activeRequestTab = 'body'
   }
@@ -105,28 +115,16 @@ const onBodyTypeChange = (e: Event) => {
       <label for="body-type-select" class="text-[11px] font-medium text-text-muted select-none">
         Body:
       </label>
-      <div class="relative flex items-center">
-        <select
-          id="body-type-select"
-          data-test="body-type-select"
-          aria-label="Body type"
-          :value="bodyType"
-          @change="onBodyTypeChange"
-          class="peer appearance-none bg-surface-overlay border border-border-default rounded px-2.5 py-1 pr-7 text-xs font-medium text-text-primary focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
-        >
-          <option value="none" class="bg-surface-overlay text-text-primary">None</option>
-          <option value="json" class="bg-surface-overlay text-text-primary">JSON</option>
-          <option value="xml" class="bg-surface-overlay text-text-primary">XML</option>
-          <option value="urlencoded" class="bg-surface-overlay text-text-primary">x-www-form-urlencoded</option>
-          <option value="formdata" class="bg-surface-overlay text-text-primary">multipart/form-data</option>
-          <option value="text" class="bg-surface-overlay text-text-primary">Text</option>
-        </select>
-        <div class="absolute right-2 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
-          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m6 9 6 6 6-6"/>
-          </svg>
-        </div>
-      </div>
+      <CustomSelect
+        id="body-type-select"
+        data-test="body-type-select"
+        aria-label="Body type"
+        :model-value="bodyType"
+        :options="bodyTypeOptions"
+        size="xs"
+        align="right"
+        @update:model-value="onBodyTypeSelect"
+      />
     </div>
   </div>
 </template>

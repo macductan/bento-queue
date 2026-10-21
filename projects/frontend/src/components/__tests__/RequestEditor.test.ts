@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import RequestEditor from '../RequestEditor.vue'
 import { useRequestStore, type Request } from '@/stores/requestStore'
+import { useCollectionStore } from '@/stores/collectionStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetRequest: vi.fn(),
@@ -549,6 +550,76 @@ describe('RequestEditor.vue - Save State Indicator', () => {
     const reqCol = wrapper.find('.flex-1.flex.flex-col.min-h-0')
     expect(reqCol.classes()).toContain('space-y-2')
     expect(reqCol.classes()).not.toContain('space-y-6')
+  })
+
+  it('clicking folder in breadcrumb calls collectionStore.selectFolder', async () => {
+    const colStore = useCollectionStore()
+    colStore.collections = [{ id: 'col-1', name: 'My API Collection', is_default: true } as any]
+    colStore.activeCollectionId = 'col-1'
+    colStore.tree = [
+      {
+        id: 'f-auth',
+        name: 'Auth Folder',
+        type: 'folder',
+        path: 'auth',
+        created_at: '',
+        children: [
+          {
+            id: 'req-login',
+            name: 'Login User',
+            type: 'request',
+            method: 'POST',
+            path: 'auth/login',
+            url: 'https://api.example.com/v1/auth/tokens',
+            body: { type: 'none', content: '' },
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({ id: 'req-login', name: 'Login User' })
+    const selectFolderSpy = vi.spyOn(colStore, 'selectFolder').mockResolvedValue()
+
+    const wrapper = mountEditor()
+    const folderBtn = wrapper.find('[data-test="breadcrumb-folder"]')
+    expect(folderBtn.exists()).toBe(true)
+    expect(folderBtn.text()).toBe('Auth Folder')
+    expect(folderBtn.attributes('data-folder-id')).toBe('f-auth')
+
+    await folderBtn.trigger('click')
+    expect(selectFolderSpy).toHaveBeenCalledWith('f-auth')
+  })
+
+  it('clicking request in breadcrumb calls collectionStore.revealNodeInTree', async () => {
+    const colStore = useCollectionStore()
+    colStore.collections = [{ id: 'col-1', name: 'My API Collection', is_default: true } as any]
+    colStore.activeCollectionId = 'col-1'
+    colStore.tree = [
+      {
+        id: 'req-1',
+        name: 'Get Products API',
+        type: 'request',
+        method: 'GET',
+        path: 'products',
+        url: 'https://api.example.com/products',
+        body: { type: 'none', content: '' },
+        created_at: ''
+      }
+    ]
+
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({ id: 'req-1', name: 'Get Products API' })
+    const revealSpy = vi.spyOn(colStore, 'revealNodeInTree').mockResolvedValue()
+
+    const wrapper = mountEditor()
+    const reqBtn = wrapper.find('[data-test="breadcrumb-request"]')
+    expect(reqBtn.exists()).toBe(true)
+    expect(reqBtn.text()).toBe('Get Products API')
+
+    await reqBtn.trigger('click')
+    expect(revealSpy).toHaveBeenCalledWith('req-1')
   })
 })
 

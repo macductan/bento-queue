@@ -178,6 +178,28 @@ export const useUiStore = defineStore('ui', () => {
     focusEnvRequested.value++
   }
 
+  // Highlighted tree node trigger (e.g. reveal request from breadcrumb)
+  const highlightedNodeId = ref<string | null>(null)
+  let highlightTimer: ReturnType<typeof setTimeout> | null = null
+
+  function highlightTreeNode(nodeId: string, durationMs = 2000) {
+    if (highlightTimer) {
+      clearTimeout(highlightTimer)
+      highlightTimer = null
+    }
+    highlightedNodeId.value = nodeId
+    highlightTimer = setTimeout(() => {
+      highlightedNodeId.value = null
+      highlightTimer = null
+    }, durationMs)
+  }
+
+  // Trigger to clear sidebar tree filter when revealing a node
+  const filterTreeClearTrigger = ref(0)
+  function clearTreeFilter() {
+    filterTreeClearTrigger.value++
+  }
+
   // Active tab in request editor
   const activeRequestTab = ref<'params' | 'headers' | 'body' | 'auth' | 'scripts' | 'curl'>('params')
 
@@ -326,6 +348,10 @@ export const useUiStore = defineStore('ui', () => {
     triggerFocusUrl,
     focusEnvRequested,
     triggerFocusEnv,
+    highlightedNodeId,
+    highlightTreeNode,
+    filterTreeClearTrigger,
+    clearTreeFilter,
     activeRequestTab,
     activeFolderTab,
     getFolderActiveTab,

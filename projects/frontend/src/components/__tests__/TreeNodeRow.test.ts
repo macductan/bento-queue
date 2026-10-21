@@ -709,4 +709,37 @@ describe('TreeNodeRow.vue', () => {
     expect(sortNodesSpy).toHaveBeenCalledWith('f-target')
     expect(uiStore.contextMenu).toBeNull()
   })
+
+  it('renders data-node-id and reflects highlighted state when highlighted in uiStore', async () => {
+    const uiStore = useUiStore()
+    const node: TreeNode = {
+      id: 'req-target',
+      name: 'Target Request',
+      type: 'request',
+      method: 'GET',
+      path: '/req-target',
+      created_at: '2026-10-13'
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: {
+        node,
+        depth: 0
+      }
+    })
+
+    const row = wrapper.find('[data-tree-row="true"]')
+    expect(row.attributes('data-node-id')).toBe('req-target')
+    expect(row.attributes('data-highlighted')).toBeUndefined()
+    expect(row.classes()).not.toContain('animate-pulse')
+
+    // Trigger highlight
+    uiStore.highlightTreeNode('req-target')
+    await flushPromises()
+
+    expect(row.attributes('data-highlighted')).toBe('true')
+    expect(row.classes()).toContain('animate-pulse')
+    expect(row.classes()).toContain('bg-brand-primary/30')
+    expect(wrapper.find('[data-test="tree-row-highlight-bar"]').exists()).toBe(true)
+  })
 })

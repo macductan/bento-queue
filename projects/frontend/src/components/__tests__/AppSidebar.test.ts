@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import AppSidebar from '../AppSidebar.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   CreateRequest: vi.fn(),
@@ -303,5 +304,24 @@ describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
     store.setDraggingNode(null)
     await nextTick()
     expect(rootDropZone.attributes('data-root-drop-active')).toBeUndefined()
+  })
+
+  it('clears filter query when uiStore.clearTreeFilter is called', async () => {
+    setupTree()
+    const uiStore = useUiStore()
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: { TreeNodeRow: true }
+      }
+    })
+
+    const input = wrapper.find<HTMLInputElement>('[data-test="tree-filter-input"]')
+    await input.setValue('inventory')
+    expect(input.element.value).toBe('inventory')
+
+    // Call clearTreeFilter from uiStore
+    uiStore.clearTreeFilter()
+    await nextTick()
+    expect(input.element.value).toBe('')
   })
 })
