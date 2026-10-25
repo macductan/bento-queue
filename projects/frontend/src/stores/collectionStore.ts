@@ -84,9 +84,12 @@ interface CollectionState {
   gitBranches: string[]
   draggingNode: { id: string; type: 'folder' | 'request' } | null
   sortDirectionMap: Record<string, 'asc' | 'desc'>
+  hasExternalChanges: boolean
 }
 
-export const useCollectionStore = defineStore('collection', {
+const externalChangeBoundStores = new WeakSet<object>()
+
+const useBaseCollectionStore = defineStore('collection', {
   state: (): CollectionState => ({
     tree: [],
     expandedFolders: new Set<string>(),
@@ -104,7 +107,8 @@ export const useCollectionStore = defineStore('collection', {
     gitConflictError: null,
     gitBranches: [],
     draggingNode: null,
-    sortDirectionMap: {}
+    sortDirectionMap: {},
+    hasExternalChanges: false
   }),
   getters: {
     activeCollection(state): model.Collection | null {
@@ -117,7 +121,167 @@ export const useCollectionStore = defineStore('collection', {
     }
   },
   actions: {
+    initExternalChangeListener() {
+      if (externalChangeBoundStores.has(this)) return
+      externalChangeBoundStores.add(this)
+      try {
+        EventsOn('collection:external-change', () => {
+          this.hasExternalChanges = true
+        })
+      } catch {
+        // Ignore when Wails runtime is not injected in unit test environment
+      }
+    },
+    async smartReload() {
+      this.hasExternalChanges = false
+
+      const { useEnvironmentStore } = await import('./environmentStore')
+      const envStore = useEnvironmentStore()
+      const { useRequestStore } = await import('./requestStore')
+      const reqStore = useRequestStore()
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const tabStore = useTabStore()
+
+      await Promise.all([
+        this.loadCollections({ skipEnvSync: true }),
+        this.loadTree(),
+        envStore.loadAll()
+      ])
+      envStore.syncActiveEnvFromCollection()
+
+      if (this.error) {
+        return
+      }
+
+      const existingFolders = new Map<string, TreeNode>()
+      const existingRequests = new Map<string, TreeNode>()
+      const walkTree = (nodes: TreeNode[]) => {
+        for (const node of nodes) {
+          if (node.type === 'folder') {
+            existingFolders.set(node.id, node)
+            if (node.children) walkTree(node.children)
+          } else {
+            existingRequests.set(node.id, node)
+          }
+        }
+      }
+      walkTree(this.tree)
+
+      // Preserve expandedFolders: remove only folder IDs that no longer exist on disk
+      for (const folderId of Array.from(this.expandedFolders)) {
+        if (!existingFolders.has(folderId)) {
+          this.expandedFolders.delete(folderId)
+        }
+      }
+
+      // Close tabs whose underlying entities were deleted on disk
+      const activeTabIdBeforeClose = tabStore.activeTabId
+      let hadDirtyDeletedTab = false
+      const deletedEntities: Array<{ type: TabEntityType; entityId: string }> = []
+      for (const tab of tabStore.tabs) {
+        if (tab.type === 'folder' && !existingFolders.has(tab.entityId)) {
+          if (tab.isDirty) hadDirtyDeletedTab = true
+          deletedEntities.push({ type: 'folder', entityId: tab.entityId })
+        } else if (tab.type === 'request' && !existingRequests.has(tab.entityId)) {
+          if (tab.isDirty || (reqStore.current?.id === tab.entityId && reqStore.isDirty)) {
+            hadDirtyDeletedTab = true
+          }
+          deletedEntities.push({ type: 'request', entityId: tab.entityId })
+        }
+      }
+      if (this.activeRequestId && !existingRequests.has(this.activeRequestId)) {
+        if (reqStore.isDirty) hadDirtyDeletedTab = true
+        reqStore.cancelAutoSave()
+      }
+      if (this.activeFolderId && !existingFolders.has(this.activeFolderId)) {
+        tabStore.registerFolderFlush(null)
+      }
+      const activeTabWasDeleted = Boolean(
+        activeTabIdBeforeClose &&
+        deletedEntities.some(e => `${e.type}:${e.entityId}` === activeTabIdBeforeClose)
+      )
+      if (deletedEntities.length > 0) {
+        await tabStore.closeTabsByEntities(deletedEntities)
+      }
+      if (this.activeRequestId && !existingRequests.has(this.activeRequestId)) {
+        this.activeRequestId = null
+        reqStore.clearRequest()
+      }
+      if (this.activeFolderId && !existingFolders.has(this.activeFolderId)) {
+        this.activeFolderId = null
+      }
+      if (hadDirtyDeletedTab) {
+        uiStore.showToast('Mục đang chỉnh sửa đã bị xóa khỏi đĩa.')
+      }
+
+      // Update name/method on surviving open tabs (preserving dirty in-memory request meta)
+      for (const tab of tabStore.tabs) {
+        if (tab.type === 'folder') {
+          const node = existingFolders.get(tab.entityId)
+          if (node) {
+            tab.name = node.name
+          }
+        } else if (tab.type === 'request') {
+          const isDirtyActiveReq =
+            reqStore.current?.id === tab.entityId && (reqStore.isDirty || tab.isDirty)
+          if (!isDirtyActiveReq) {
+            const node = existingRequests.get(tab.entityId)
+            if (node) {
+              tab.name = node.name
+              tab.method = node.method || tab.method || 'GET'
+            }
+          }
+        }
+      }
+
+      // If closing a deleted active tab already activated & loaded the next surviving tab, avoid double-loading
+      if (activeTabWasDeleted) {
+        return
+      }
+
+      // Reload active tab if clean, or protect unsaved changes if dirty
+      const activeTab = tabStore.activeTab
+      if (activeTab?.type === 'request' || (!activeTab && this.activeRequestId)) {
+        const targetReqId = activeTab?.type === 'request' ? activeTab.entityId : this.activeRequestId
+        if (targetReqId && existingRequests.has(targetReqId)) {
+          const isDirty = Boolean(reqStore.isDirty || activeTab?.isDirty)
+          if (!isDirty) {
+            await reqStore.loadRequest(targetReqId)
+            if (reqStore.current && reqStore.current.id === targetReqId) {
+              const node = existingRequests.get(targetReqId)
+              tabStore.updateTabMeta('request', targetReqId, {
+                name: reqStore.current.name || node?.name || targetReqId,
+                method: reqStore.current.method || node?.method || 'GET'
+              })
+              tabStore.setTabDirty('request', targetReqId, false)
+            }
+          } else {
+            uiStore.showToast(
+              'Dữ liệu trên đĩa đã thay đổi, nhưng tab hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+            )
+          }
+        }
+      } else if (activeTab?.type === 'folder' || (!activeTab && this.activeFolderId)) {
+        const targetFolderId = activeTab?.type === 'folder' ? activeTab.entityId : this.activeFolderId
+        if (targetFolderId && existingFolders.has(targetFolderId)) {
+          const isDirty = Boolean(activeTab?.isDirty)
+          if (isDirty) {
+            uiStore.showToast(
+              'Dữ liệu trên đĩa đã thay đổi, nhưng tab hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+            )
+          } else if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('hecto:folder-updated', {
+                detail: { folderId: targetFolderId, reload: true }
+              })
+            )
+          }
+        }
+      }
+    },
     async refresh() {
+      this.hasExternalChanges = false
       this.tree = []
       this.activeRequestId = null
       this.activeFolderId = null
@@ -146,7 +310,7 @@ export const useCollectionStore = defineStore('collection', {
         this.loading = false
       }
     },
-    async loadCollections() {
+    async loadCollections(opts?: { skipEnvSync?: boolean }) {
       this.collectionsLoading = true
       try {
         const result = await ListCollections()
@@ -159,10 +323,12 @@ export const useCollectionStore = defineStore('collection', {
           } else if (!this.activeCollectionId || !list.some(c => c.id === this.activeCollectionId)) {
             this.activeCollectionId = 'default'
           }
-          const { useEnvironmentStore } = await import('./environmentStore')
-          const envStore = useEnvironmentStore()
-          if (envStore.loaded) {
-            envStore.syncActiveEnvFromCollection()
+          if (!opts?.skipEnvSync) {
+            const { useEnvironmentStore } = await import('./environmentStore')
+            const envStore = useEnvironmentStore()
+            if (envStore.loaded) {
+              envStore.syncActiveEnvFromCollection()
+            }
           }
         } else {
           this.collections = []
@@ -208,6 +374,7 @@ export const useCollectionStore = defineStore('collection', {
 
         const result = await SwitchCollection(targetId)
         if (result.success) {
+          this.hasExternalChanges = false
           this.activeCollectionId = targetId
           reqStore.clearRequest()
           const { useResponseStore } = await import('./responseStore')
@@ -1677,3 +1844,13 @@ export const useCollectionStore = defineStore('collection', {
     }
   }
 })
+
+export const useCollectionStore = Object.assign(
+  ((pinia?: any, hot?: any) => {
+    const store = useBaseCollectionStore(pinia, hot)
+    store.initExternalChangeListener()
+    return store
+  }) as typeof useBaseCollectionStore,
+  useBaseCollectionStore
+)
+

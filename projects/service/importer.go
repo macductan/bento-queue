@@ -126,6 +126,10 @@ func countTotalItems(items []postmanItem) int {
 }
 
 func (s *ImporterService) ImportPostman(rootPath, filePath string, onProgress func(count int, total int, text string)) model.Result {
+	return s.ImportPostmanWithOptions(rootPath, filePath, "", onProgress)
+}
+
+func (s *ImporterService) ImportPostmanWithOptions(targetDir, filePath, overrideName string, onProgress func(count int, total int, text string)) model.Result {
 	s.logger.Info("ImportPostman called", "file", filePath)
 
 	data, err := os.ReadFile(filePath)
@@ -148,19 +152,21 @@ func (s *ImporterService) ImportPostman(rootPath, filePath string, onProgress fu
 	var firstReqID string
 
 	// Wrap the entire collection in a folder so it doesn't spread out in the root
-	collName := coll.Info.Name
+	collName := strings.TrimSpace(overrideName)
+	if collName == "" {
+		collName = coll.Info.Name
+	}
 	if collName == "" {
 		collName = "Imported Collection"
 	}
-	
+
 	rootItem := postmanItem{
 		Name:     collName,
 		Item:     coll.Item,
 		Auth:     coll.Auth,
 		Variable: coll.Variable,
 	}
-	
-	
+
 	totalItems := countTotalItems(rootItem.Item)
 	if rootItem.Request != nil || len(rootItem.Item) > 0 {
 		totalItems++
@@ -169,7 +175,7 @@ func (s *ImporterService) ImportPostman(rootPath, filePath string, onProgress fu
 		totalItems = 1 // Prevent div by zero
 	}
 	processedCount := 0
-	
+
 	onItemProcessed := func(itemName string) {
 		processedCount++
 		if onProgress != nil {
@@ -177,14 +183,14 @@ func (s *ImporterService) ImportPostman(rootPath, filePath string, onProgress fu
 		}
 	}
 
-	c, fID := s.processItem(rootPath, rootItem, nil, onItemProcessed)
+	c, fID := s.processItem(targetDir, rootItem, nil, onItemProcessed)
 	if c > 0 {
 		count += c
 		firstReqID = fID
 	}
 
 	return model.NewSuccess(map[string]interface{}{
-		"count": count,
+		"count":          count,
 		"firstRequestId": firstReqID,
 	})
 }

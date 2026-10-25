@@ -1,11 +1,12 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build:headless": "bun build src/utils/headless-engine.ts --outfile ../engine/headless-engine.js --target browser --format iife",
+    "build": "bun run build:headless && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run",

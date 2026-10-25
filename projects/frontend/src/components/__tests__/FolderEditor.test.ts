@@ -715,9 +715,53 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     const tabButtons2 = wrapper2.findAll('div[role="tablist"] button[role="tab"]')
     expect(tabButtons2[1].attributes('aria-selected')).toBe('true')
   })
+
+  it('reloads folder data from disk on hecto:folder-updated with folderId when clean, and ignores when dirty', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    expect(LoadFolder).toHaveBeenCalledTimes(1)
+
+    // 1. Clean state -> reloads from disk
+    vi.mocked(LoadFolder).mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...mockFolder,
+        variables: [{ key: 'reloaded_var', value: 'from-cli', enabled: true }]
+      }
+    } as any)
+
+    window.dispatchEvent(
+      new CustomEvent('hecto:folder-updated', {
+        detail: { folderId: 'folder-1', reload: true }
+      })
+    )
+    await flushPromises()
+    await nextTick()
+
+    expect(LoadFolder).toHaveBeenCalledTimes(2)
+    expect((wrapper.vm as any).variables).toEqual([
+      { key: 'reloaded_var', value: 'from-cli', enabled: true }
+    ])
+
+    // 2. Dirty state -> does NOT reload from disk
+    ;(wrapper.vm as any).headers.push({ key: 'X-Unsaved', value: 'dirty', enabled: true })
+    await nextTick()
+    expect((wrapper.vm as any).isDirty).toBe(true)
+
+    window.dispatchEvent(
+      new CustomEvent('hecto:folder-updated', {
+        detail: { folderId: 'folder-1', reload: true }
+      })
+    )
+    await flushPromises()
+    await nextTick()
+
+    expect(LoadFolder).toHaveBeenCalledTimes(2)
+  })
 })
-
-
-
-
-

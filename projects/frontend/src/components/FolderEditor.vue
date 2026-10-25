@@ -503,11 +503,18 @@ const syncExternalFolderVariables = (updatedData: any) => {
   saveStatus.value = 'saved'
 }
 
-const handleExternalFolderUpdated = (e: Event) => {
+const handleExternalFolderUpdated = async (e: Event) => {
   const ce = e as CustomEvent
-  if (ce?.detail) {
-    syncExternalFolderVariables(ce.detail)
+  if (!ce?.detail || loading.value || saving.value) return
+  const targetId = folder.value?.id || collectionStore.activeFolderId
+  if (ce.detail.folderId) {
+    if (ce.detail.folderId === targetId && !isDirty.value) {
+      cancelAutoSave()
+      await loadFolderData()
+    }
+    return
   }
+  syncExternalFolderVariables(ce.detail)
 }
 
 onMounted(() => {

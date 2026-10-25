@@ -254,6 +254,38 @@ const onRootDrop = async (e: DragEvent) => {
 
       <!-- Action buttons -->
       <div class="flex items-center gap-0.5 shrink-0">
+        <!-- Reload Data from Disk -->
+        <button
+          type="button"
+          data-test="sidebar-reload-btn"
+          :title="store.hasExternalChanges ? 'Phát hiện thay đổi từ bên ngoài — Nhấn để tải lại (Ctrl+R)' : 'Tải lại dữ liệu từ đĩa (Ctrl+R)'"
+          aria-label="Tải lại dữ liệu từ đĩa"
+          class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+          @click="store.smartReload()"
+        >
+          <svg
+            class="w-3.5 h-3.5"
+            :class="{ 'animate-spin text-brand-primary': store.loading }"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+            <path d="M16 16h5v5" />
+          </svg>
+          <!-- Badge báo hiệu có thay đổi từ CLI/Git -->
+          <span
+            v-if="store.hasExternalChanges"
+            data-test="external-change-badge"
+            class="absolute top-1 right-1 w-2 h-2 rounded-full bg-brand-primary ring-2 ring-surface-raised animate-pulse"
+          />
+        </button>
+
         <!-- Collapse All -->
         <button
           type="button"

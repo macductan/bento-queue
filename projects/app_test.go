@@ -477,3 +477,60 @@ func TestApp_NFRStartupAndMemory(t *testing.T) {
 	assert.True(t, evidence.BootPassed, "Cold start bootTimeMs (%d ms) must be <= %d ms", evidence.BootTimeMs, evidence.MaxBootTimeMs)
 	assert.True(t, evidence.RAMPassed, "RAM consumption (baseline=%d B, peak=%d B) must be <= %d B", evidence.BaselineRAMBytes, evidence.PeakRAMBytes, backendMaxRAMBytes)
 }
+
+func TestApp_SyncActiveCollectionFromDisk_And_WatcherEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
+
+	app := NewApp()
+	ctx := context.Background()
+	app.startup(ctx)
+	defer app.shutdown(ctx)
+
+	assert.Equal(t, "default", app.activeCollection)
+	require.NotNil(t, app.watcher)
+
+	// 1. Create a second collection "CLI-Created"
+	createRes := app.CreateCollection("CLI-Created")
+	require.True(t, createRes.Success)
+	newColl := createRes.Data.(model.Collection)
+
+	// Simulate external CLI switching active_collection in config.json on disk without calling app.SwitchCollection
+	_, err := app.cfgSvc.SwitchActiveCollection(ctx, newColl.ID)
+	require.NoError(t, err)
+
+	// Calling app.ListCollections() or app.GetCollectionTree() must sync app.activeCollection, app.collRoot, and watcher root
+	listRes := app.ListCollections()
+	require.True(t, listRes.Success)
+	assert.Equal(t, newColl.ID, app.activeCollection)
+	expectedRoot := filepath.Join(app.collectionsRoot, newColl.ID)
+	assert.Equal(t, expectedRoot, app.collRoot)
+	assert.Equal(t, filepath.Clean(expectedRoot), app.watcher.RootDir())
+
+	// 2. Wait for self-write window to expire, then simulate external CLI writing a file inside newColl
+	time.Sleep(450 * time.Millisecond)
+
+	eventCh := make(chan map[string]interface{}, 1)
+	app.onEvent = func(eventName string, data ...interface{}) {
+		if eventName == "collection:external-change" && len(data) > 0 {
+			if m, ok := data[0].(map[string]interface{}); ok {
+				select {
+				case eventCh <- m:
+				default:
+				}
+			}
+		}
+	}
+
+	err = os.WriteFile(filepath.Join(expectedRoot, "cli-req.json"), []byte(`{"id":"cli-1","name":"FromCLI","method":"GET","url":"https://example.com"}`), 0644)
+	require.NoError(t, err)
+
+	select {
+	case payload := <-eventCh:
+		assert.Equal(t, newColl.ID, payload["collectionId"])
+		assert.NotEmpty(t, payload["timestamp"])
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("expected collection:external-change event after external file write")
+	}
+}
+

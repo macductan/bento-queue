@@ -22,6 +22,34 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
   - Ở mỗi cấp, cấu hình riêng theo môi trường (`auth_envs[activeEnvId]`) luôn được ưu tiên hơn cấu hình chung (`auth`) của cấp đó.
 - **Nguồn duy nhất cho Version (Single Source of Truth)**:
   - Trường `"version"` trong `projects/frontend/package.json`.
+- **AI Agent CLI (`hecto`) & Shared TypeScript Engine (`goja` - từ `v1.14.0`)**:
+  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`), `hecto run` và `hecto import`.
+  - Shared TypeScript Execution Engine (`projects/frontend/src/utils/headless-engine.ts` $\rightarrow$ `projects/engine/headless-engine.js`) nhúng qua `//go:embed` trên pure-Go `github.com/dop251/goja` đảm bảo đồng nhất 100% logic giải biến 4 tầng, kế thừa Auth/Header, `btoa`/`atob` Latin-1 (hỗ trợ tiếng Việt/Unicode) và thực thi `ha.*` Pre-request/Post-response scripts giữa Desktop UI và CLI.
+  - Đồng bộ file 3 lớp (`projects/storage/watcher.go` dùng `fsnotify` + lọc self-write 400ms + debounce 300ms + `collectionStore.smartReload()`): tự động phát hiện thay đổi từ CLI/Git/Editor ngoài, giữ nguyên trạng thái mở cây thư mục (`expandedFolders`) và bảo vệ các tab đang chỉnh sửa dở (`isDirty`).
+
+---
+
+## [v1.14.0] - 2026-10-25
+
+### Added
+- **Standalone `hecto` CLI Binary for AI Coding Agents (`projects/cmd/hecto/`)**:
+  - Xây dựng binary CLI độc lập hoàn toàn với Wails/GTK/WebKit, tích hợp tài liệu tự định hướng `hecto agent-guide` (`//go:embed SKILL.md`) và dòng chỉ dẫn AI Agent ở dòng đầu tiên của `hecto --help`.
+  - Cung cấp hệ lệnh trực giao đầy đủ cho `collection` (`list`, `get`, `create`, `update`, `delete`, `switch`), `env` (`list`, `get`, `create`, `update`, `delete`, `activate`), `folder` (`list`, `tree`, `get`, `create`, `update`, `delete`, `move`), `req` (`list`, `get`, `create`, `update`, `delete`, `move`), cùng lệnh thực thi `hecto run` và nhập dữ liệu `hecto import` (hỗ trợ Postman v2.1 JSON và cURL).
+  - Hỗ trợ linh hoạt vị trí truyền cờ trước hoặc sau đối số vị trí, cơ chế cập nhật Read-Merge-Write (`FlagSet.Visit`) giữ nguyên các trường không truyền cờ, xóa trường khi truyền `""`, chuẩn hóa `--auth-type apikey` sang `apiKey`, và tự động dọn `active_env_id` / reset `active_collection` về `"default"` khi xóa thực thể đang active.
+  - Bổ sung script cài đặt nhanh `./projects/install-cli.sh` đọc version tự động từ `projects/frontend/package.json`.
+- **Shared TypeScript Headless Execution Engine on Pure-Go `goja` (`projects/engine/`)**:
+  - Đóng gói logic thực thi dùng chung từ `projects/frontend/src/utils/headless-engine.ts` thành `projects/engine/headless-engine.js` qua `bun run build:headless` và nhúng vào Go (`//go:embed headless-engine.js`) chạy trên `github.com/dop251/goja`.
+  - Trang bị đầy đủ polyfills `btoa`/`atob` chuẩn Latin-1 byte-per-rune (đảm bảo Basic Auth chứa ký tự tiếng Việt/Unicode sinh header `Authorization` giống hệt trình duyệt), `TextEncoder`, `TextDecoder`, `console`.
+  - Hiện thực hóa `ExecuteRequestFlow`, `ParseCurl` và `ApplyScriptUpdatesToDisk` lưu bền vững các thay đổi biến và Auth (`envUpdates`, `scopedEnvUpdates`, `scopedAuthUpdates` với `__nearest__`, `__active__` hoặc tên folder/môi trường) xuống đĩa và ghi lịch sử vào `.history/`.
+- **Wails-Free Storage, Self-Healing UUID Index, Single-Walk `GetTree` & Path/UUID Selector (`projects/service/`, `projects/storage/`)**:
+  - Tách bỏ hoàn toàn Wails runtime khỏi `ConfigService` (sử dụng callback `SetStartupErrorHandler` và hỗ trợ ghi đè thư mục cấu hình qua `SetCustomConfigDir` / `HECTO_CONFIG_DIR`).
+  - Nâng cấp `FileSystem.FindByUUID` tự phục hồi (self-healing) khi file hoặc thư mục (`_folder.json`) bị di chuyển/xóa từ bên ngoài và làm sạch index khi chuyển collection root.
+  - Tối ưu `CollectionService.GetTree` vừa dựng cây vừa nạp UUID index trong một lần duyệt đĩa duy nhất.
+  - Bổ sung bộ phân giải `projects/service/selector.go` (`ResolveCollectionSelector`, `ResolveEnvironmentSelector`, `ResolveFolderSelector`, `ResolveRequestSelector`) hỗ trợ cả UUID lẫn đường dẫn phân cấp bằng dấu `/` (xử lý dấu `/` dư thừa và tên chứa `/`).
+- **3-Layer File Synchronization (`fsnotify` Watcher & UI Smart Data Reload)**:
+  - Hiện thực hóa `CollectionWatcher` (`projects/storage/watcher.go`) theo dõi đệ quy thư mục collection đang active (tự động gắn watcher cho thư mục con mới tạo), kết hợp cơ chế lọc self-write 400ms (`RecordSelfWrite` / `IsWithinSelfWriteWindow`, bỏ qua `.history/` và `config.json`) và debounce 300ms để phát sự kiện Wails `"collection:external-change"`.
+  - Đồng bộ tự động thay đổi `active_collection` từ `config.json` khi CLI chuyển hoặc xóa collection từ bên ngoài.
+  - Bổ sung `collectionStore.smartReload()`, nút Reload kèm chấm cam cảnh báo (`data-test="sidebar-reload-btn"`, `data-test="external-change-badge"`) trên `AppSidebar.vue`, và tổ hợp phím `Ctrl+R` / `Cmd+R` / `F5` trên `App.vue` giúp nạp lại dữ liệu từ đĩa mà không reload trang trình duyệt, giữ nguyên `expandedFolders`, đồng bộ `activeEnvId`, cập nhật các tab Request/Folder sạch (`hecto:folder-updated` trong `FolderEditor.vue`) và bảo vệ các tab đang `isDirty` kèm toast cảnh báo.
 
 ---
 

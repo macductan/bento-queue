@@ -324,4 +324,29 @@ describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
     await nextTick()
     expect(input.element.value).toBe('')
   })
+
+  it('renders sidebar-reload-btn, displays external-change-badge when store.hasExternalChanges is true, and invokes smartReload on click', async () => {
+    const store = setupTree()
+    const smartReloadSpy = vi.spyOn(store, 'smartReload').mockResolvedValue()
+
+    const wrapper = mount(AppSidebar, {
+      global: {
+        stubs: { TreeNodeRow: true }
+      }
+    })
+
+    const reloadBtn = wrapper.find('[data-test="sidebar-reload-btn"]')
+    expect(reloadBtn.exists()).toBe(true)
+    expect(reloadBtn.attributes('title')).toBe('Tải lại dữ liệu từ đĩa (Ctrl+R)')
+    expect(wrapper.find('[data-test="external-change-badge"]').exists()).toBe(false)
+
+    store.hasExternalChanges = true
+    await nextTick()
+
+    expect(reloadBtn.attributes('title')).toBe('Phát hiện thay đổi từ bên ngoài — Nhấn để tải lại (Ctrl+R)')
+    expect(wrapper.find('[data-test="external-change-badge"]').exists()).toBe(true)
+
+    await reloadBtn.trigger('click')
+    expect(smartReloadSpy).toHaveBeenCalledTimes(1)
+  })
 })

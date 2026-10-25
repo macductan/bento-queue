@@ -348,6 +348,41 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
     wrapper.unmount()
   })
 
+  it('handles Ctrl+R, Cmd+R, and F5 in App.vue by calling collectionStore.smartReload() instead of reloading the window', async () => {
+    const colStore = useCollectionStore()
+    const smartReloadSpy = vi.spyOn(colStore, 'smartReload').mockResolvedValue()
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          AppHeader: true,
+          AppSidebar: true,
+          ContentArea: true,
+          ToastNotification: true,
+          ConfirmDialog: true,
+          TreeContextMenu: true,
+          UnsavedChangesDialog: true,
+          EnvModal: true
+        }
+      }
+    })
+    await flushPromises()
+
+    for (const init of [
+      { key: 'r', ctrlKey: true, cancelable: true },
+      { key: 'R', metaKey: true, cancelable: true },
+      { key: 'F5', cancelable: true }
+    ]) {
+      const ev = new KeyboardEvent('keydown', init)
+      const preventSpy = vi.spyOn(ev, 'preventDefault')
+      window.dispatchEvent(ev)
+      expect(preventSpy).toHaveBeenCalled()
+    }
+
+    expect(smartReloadSpy).toHaveBeenCalledTimes(3)
+    wrapper.unmount()
+  })
+
   it('scrolls tabs horizontally when mouse wheel events occur', async () => {
     const tabStore = useTabStore()
     tabStore.tabs = [

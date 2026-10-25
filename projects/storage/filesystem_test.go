@@ -172,16 +172,90 @@ func TestMoveFile_SourceNotFound(t *testing.T) {
 }
 
 func TestFindByUUID_IndexHit(t *testing.T) {
+	dir := t.TempDir()
+	existingPath := filepath.Join(dir, "req.json")
 	fs := NewFileSystem()
 
-	fs.IndexSet("uuid-123", "/some/path.json")
+	if err := fs.WriteJSON(existingPath, entityFile{ID: "uuid-123", Name: "Test"}); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	fs.IndexSet("uuid-123", existingPath)
 
 	path, err := fs.FindByUUID("uuid-123")
 	if err != nil {
 		t.Fatalf("FindByUUID should succeed: %v", err)
 	}
-	if path != "/some/path.json" {
-		t.Errorf("expected /some/path.json, got: %s", path)
+	if path != existingPath {
+		t.Errorf("expected %s, got: %s", existingPath, path)
+	}
+}
+
+func TestFindByUUID_SelfHealing_MovedAndDeletedRequest(t *testing.T) {
+	root, fs := setupCollectionTree(t)
+	fs.SetCollectionRoot(root)
+
+	oldPath := filepath.Join(root, "auth", "dang-nhap.json")
+	newPath := filepath.Join(root, "san-pham", "dang-nhap.json")
+
+	// Prime the index with the original path
+	fs.IndexSet("uuid-req-1", oldPath)
+
+	// Simulate external CLI move (bypassing fs.IndexSet)
+	if err := os.Rename(oldPath, newPath); err != nil {
+		t.Fatalf("os.Rename failed: %v", err)
+	}
+
+	// FindByUUID should self-heal: detect oldPath is gone, walk root, and return newPath
+	found, err := fs.FindByUUID("uuid-req-1")
+	if err != nil {
+		t.Fatalf("FindByUUID should self-heal after external move: %v", err)
+	}
+	if found != newPath {
+		t.Errorf("expected self-healed path %q, got %q", newPath, found)
+	}
+
+	// Simulate external CLI delete
+	if err := os.Remove(newPath); err != nil {
+		t.Fatalf("os.Remove failed: %v", err)
+	}
+
+	if _, err := fs.FindByUUID("uuid-req-1"); err == nil {
+		t.Fatal("FindByUUID should return NOT_FOUND after external delete")
+	}
+}
+
+func TestFindByUUID_SelfHealing_FolderLostMetadataOrMoved(t *testing.T) {
+	root, fs := setupCollectionTree(t)
+	fs.SetCollectionRoot(root)
+
+	oldFolderDir := filepath.Join(root, "auth")
+	fs.IndexSet("folder-1", oldFolderDir)
+
+	// Move _folder.json to a new folder directory, leaving oldFolderDir as an empty shell
+	newFolderDir := filepath.Join(root, "san-pham", "auth-moved")
+	if err := os.MkdirAll(newFolderDir, 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.Rename(filepath.Join(oldFolderDir, "_folder.json"), filepath.Join(newFolderDir, "_folder.json")); err != nil {
+		t.Fatalf("os.Rename _folder.json failed: %v", err)
+	}
+
+	// Even though oldFolderDir still exists on disk, its _folder.json is gone, so FindByUUID must self-heal
+	found, err := fs.FindByUUID("folder-1")
+	if err != nil {
+		t.Fatalf("FindByUUID should self-heal when folder loses _folder.json and moves: %v", err)
+	}
+	if found != newFolderDir {
+		t.Errorf("expected %q, got %q", newFolderDir, found)
+	}
+
+	// Now delete _folder.json completely while keeping directory shell
+	if err := os.Remove(filepath.Join(newFolderDir, "_folder.json")); err != nil {
+		t.Fatalf("os.Remove _folder.json failed: %v", err)
+	}
+	if _, err := fs.FindByUUID("folder-1"); err == nil {
+		t.Fatal("FindByUUID should return NOT_FOUND when folder has no _folder.json anywhere")
 	}
 }
 
@@ -492,3 +566,25 @@ func TestIndexUpdatePrefix(t *testing.T) {
 		t.Errorf("other should not be updated, got %s", fs.index["other"])
 	}
 }
+
+func TestSetCollectionRoot_ClearsStaleIndexOnRootSwitch(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	fs := NewFileSystem()
+
+	fs.SetCollectionRoot(rootA)
+	reqAPath := filepath.Join(rootA, "req-a.json")
+	if err := fs.WriteJSON(reqAPath, entityFile{ID: "shared-uuid", Name: "Req A"}); err != nil {
+		t.Fatalf("failed to write req-a: %v", err)
+	}
+	fs.IndexSet("shared-uuid", reqAPath)
+
+	// Switch to rootB (where "shared-uuid" does not exist)
+	fs.SetCollectionRoot(rootB)
+
+	// Because SetCollectionRoot switched from rootA to rootB, the cached entry for "shared-uuid" in rootA must be cleared
+	if _, err := fs.FindByUUID("shared-uuid"); err == nil {
+		t.Fatalf("expected FindByUUID to miss after switching collectionRoot from rootA to rootB")
+	}
+}
+

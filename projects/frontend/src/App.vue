@@ -61,7 +61,7 @@ const handleWindowResize = () => {
 const handleKeyDown = (e: KeyboardEvent) => {
   if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') || e.key === 'F5') {
     e.preventDefault()
-    window.location.reload()
+    void collectionStore.smartReload()
     return
   }
 

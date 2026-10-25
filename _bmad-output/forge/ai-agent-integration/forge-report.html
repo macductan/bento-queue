@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BMad Forge Report — Hecto-API AI Agent CLI</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #111827;
+      --surface-2: #1f2937;
+      --border: #374151;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --accent: #f59e0b;
+      --emerald: #10b981;
+      --crimson: #ef4444;
+      --sky: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2.5rem 1.5rem;
+    }
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: linear-gradient(135deg, #111827 0%, #1e293b 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem 2.5rem;
+      margin-bottom: 2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .header-content {
+      max-width: 70%;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-size: 1.85rem;
+      font-weight: 800;
+      margin-bottom: 0.75rem;
+      color: #ffffff;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+    .seal-wrapper {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.75rem 2rem;
+      margin-bottom: 1.5rem;
+    }
+    .section-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.75rem;
+    }
+    .card-list {
+      display: grid;
+      gap: 1rem;
+    }
+    .card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--emerald);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+    .card.rejected {
+      border-left-color: var(--crimson);
+    }
+    .card.crack {
+      border-left-color: var(--accent);
+    }
+    .card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+      color: #fff;
+    }
+    .card p {
+      font-size: 0.92rem;
+      color: #d1d5db;
+    }
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(255,255,255,0.08);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+      color: var(--sky);
+    }
+    .persona-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .persona-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .persona-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.5rem;
+    }
+    .persona-icon {
+      font-size: 1.4rem;
+    }
+    .persona-name {
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: #fff;
+    }
+    .persona-role {
+      font-size: 0.78rem;
+      color: var(--accent);
+    }
+    .persona-voice {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="header-content">
+        <div class="eyebrow">BMad Forge Idea • Báo cáo kết quả phản biện</div>
+        <h1>Công cụ CLI cho AI Agent tích hợp vào <code>hecto-api</code></h1>
+        <p class="subtitle">
+          Thực thi HTTP Request headless (4-Tier Variable Resolution, Auth Inheritance, Script Runner) và CRUD Collection/Env/Folder/Request đồng bộ an toàn với Wails Desktop.
+        </p>
+      </div>
+      <div class="seal-wrapper">
+        <svg width="150" height="150" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="wax" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#34d399"/>
+              <stop offset="70%" stop-color="#059669"/>
+              <stop offset="100%" stop-color="#065f46"/>
+            </radialGradient>
+          </defs>
+          <circle cx="80" cy="80" r="72" fill="url(#wax)" stroke="#a7f3d0" stroke-width="3" stroke-dasharray="6,4"/>
+          <circle cx="80" cy="80" r="58" fill="none" stroke="#ffffff" stroke-width="2" opacity="0.85"/>
+          <text x="80" y="64" text-anchor="middle" fill="#ffffff" font-family="monospace" font-size="11" font-weight="bold" letter-spacing="2">BMAD FORGE</text>
+          <text x="80" y="88" text-anchor="middle" fill="#ffffff" font-family="sans-serif" font-size="18" font-weight="900" letter-spacing="2">HARDENED</text>
+          <text x="80" y="108" text-anchor="middle" fill="#d1fae5" font-family="monospace" font-size="10" font-weight="bold">2026-10-23</text>
+        </svg>
+      </div>
+    </header>
+
+    <section class="section">
+      <h2 class="section-title">🔒 Các quyết định đã khóa (Locked Decisions)</h2>
+      <div class="card-list">
+        <div class="card">
+          <h3>1. Binary CLI độc lập trong cùng Repo (<code>projects/cmd/hecto/main.go</code>)</h3>
+          <p>Biên dịch ra file thực thi riêng <code>hecto</code> (thuần Go, không phụ thuộc Wails/GTK/WebKit). Người dùng hoặc CI có thể cài lẻ chỉ CLI mà không cần cài Desktop App, trong khi mã nguồn tái sử dụng 100% các package Go sẵn có (<code>model</code>, <code>storage</code>, <code>service</code>, <code>slug</code>).</p>
+        </div>
+        <div class="card">
+          <h3>2. Shared TS Execution Engine qua <code>//go:embed</code> + <code>goja</code></h3>
+          <p>Giữ nguyên 1 bản code TypeScript duy nhất cho 4-Tier Variable Resolution, Auth Inheritance, Request Builder và Script Runner tại <code>frontend/src/utils/</code> để Vue gọi đồng bộ 0ms trên UI. Khi build, đóng gói thêm <code>headless-engine.js</code> (~25KB) nhúng vào Go và thực thi trên <code>goja</code> (pure Go JS engine). Tầng Go chỉ tiêm polyfill Base64, gọi <code>ExecutorService.Send</code> và lưu các biến/auth bị script mutate xuống đĩa.</p>
+        </div>
+        <div class="card">
+          <h3>3. Giao thức Stateless CLI (<code>--json</code>) + Tự khám phá qua <code>hecto agent-guide</code></h3>
+          <p>Dùng CLI stateless (mỗi lệnh đọc mới từ đĩa rồi thoát) kèm cờ <code>--json</code> trả về chuẩn <code>model.Result</code>. Lệnh <code>hecto agent-guide</code> in trực tiếp nội dung chuẩn <code>SKILL.md</code> (nhúng sẵn trong binary) ra <code>stdout</code> và được nhắc ngay ở dòng đầu của <code>hecto --help</code> để mọi AI Agent tự đọc hoặc tự import vào thư mục skill riêng.</p>
+        </div>
+        <div class="card">
+          <h3>4. Ma trận lệnh trực giao <code>hecto &lt;entity&gt; &lt;verb&gt;</code></h3>
+          <p>Bao phủ đủ 4 thực thể (<code>collection</code>, <code>env</code>, <code>folder</code>, <code>req</code>) với các động từ tường minh (<code>list</code>/<code>tree</code>, <code>get</code>, <code>create</code>, <code>update</code>, <code>delete</code>, <code>move</code>), cùng 3 lệnh top-level (<code>hecto run</code>, <code>hecto import</code>, <code>hecto agent-guide</code>). Lệnh <code>create</code> nhận trọn bộ cấu hình trong 1 bước; lệnh <code>update</code> thực hiện Read-Merge-Write (patch) để tránh mất dữ liệu; hỗ trợ định danh bằng cả UUID lẫn đường dẫn tên.</p>
+        </div>
+        <div class="card">
+          <h3>5. Đồng bộ 3 lớp + Nút Smart Reload riêng biệt trên Desktop UI</h3>
+          <p>Giữ Atomic Write (<code>.tmp-*</code> → <code>fsync</code> → <code>rename</code>); sửa <code>FindByUUID</code> tự kiểm tra <code>Exists(path)</code> để tự chữa lành cache RAM và bỏ <code>IndexRebuild</code> quét lặp trong <code>GetTree</code>. Trên UI: không reload toàn cửa sổ và không tự động reload ngầm gây lag; cung cấp <strong>nút Reload dữ liệu riêng</strong> (kèm chấm báo hiệu khi <code>fsnotify</code> phát hiện thay đổi ngoài) để thực thi Smart Data Reload (giữ nguyên <code>expandedFolders</code>, đồng bộ <code>tabStore</code>, bảo vệ tab đang gõ dở <code>isDirty</code>).</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">⚡ Các điểm mù thực tế đã phát hiện và vượt qua (Cracks Survived)</h2>
+      <div class="card-list">
+        <div class="card crack">
+          <h3>Điểm mù 1: 4-Tier Variable, Auth Inheritance & Script Runner nằm 100% ở Vue Frontend</h3>
+          <p>Trái với giả định ban đầu rằng Go Backend đã có sẵn bộ máy này, <code>ExecutorService.Send</code> ở Go chỉ bắn HTTP thô, còn 2.300 dòng xử lý biến/auth/script nằm ở <code>frontend/src/utils/*.ts</code> và được các component Vue gọi đồng bộ (<code>computed</code>) trên từng phím gõ. Giải pháp nhúng bundle TS vào <code>goja</code> giải quyết triệt để mà không phải viết 2 bộ code song song.</p>
+        </div>
+        <div class="card crack">
+          <h3>Điểm mù 2: Lỗi Stale Index trong <code>FileSystem.FindByUUID</code> & Quét đĩa kép trong <code>GetTree</code></h3>
+          <p><code>FindByUUID</code> trả về đường dẫn từ map RAM mà không kiểm tra <code>Exists(path)</code>, sẽ gây lỗi <code>NOT_FOUND</code> trên UI khi CLI di chuyển file. Đồng thời <code>GetTree</code> gọi cả <code>IndexRebuild</code> lẫn <code>buildTree</code> làm đọc toàn bộ file JSON 2 lần.</p>
+        </div>
+        <div class="card crack">
+          <h3>Điểm mù 3: Bẫy Auto-Save 800ms đè dữ liệu trong <code>requestStore.ts</code></h3>
+          <p>UI có bộ đếm <code>scheduleAutoSave(800ms)</code>. Nếu không kiểm tra trạng thái <code>isDirty</code> và không tách nút Smart Data Reload riêng, UI và CLI có thể ghi đè lẫn nhau hoặc gây khựng giao diện.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">🚫 Các phương án đã bác bỏ & Lý do (Rejected Options)</h2>
+      <div class="card-list">
+        <div class="card rejected">
+          <h3>Viết lại toàn bộ bộ máy biến 4 tầng & Auth bằng Go thuần rồi xóa bản TS</h3>
+          <p>Không thể xóa bản TS vì <code>VariableHighlighter.vue</code> và <code>VariableHoverPopover.vue</code> cần chạy đồng bộ tức thì trên UI; giữ cả bản Go và bản TS sẽ dẫn tới lệch hành vi (dual-engine drift).</p>
+        </div>
+        <div class="card rejected">
+          <h3>Tách CLI ra một Project/Repo riêng không liên quan</h3>
+          <p>Phải viết lại từ đầu toàn bộ <code>model</code>, <code>storage</code>, <code>slug</code>, <code>service</code> và tự đồng bộ thủ công khi nâng cấp cấu trúc file JSON, nguy cơ cao gây mất dữ liệu (schema drift).</p>
+        </div>
+        <div class="card rejected">
+          <h3>Làm MCP Server (<code>hecto mcp</code>) làm giao thức chính hoặc hardcode đường dẫn <code>skill install</code></h3>
+          <p>MCP tiêu tốn hàng nghìn tokens cố định ở mọi lượt hội thoại và giữ state trong RAM dễ bị lệch index; hardcode đường dẫn skill không thể bao phủ hết mọi AI Agent trên thị trường.</p>
+        </div>
+        <div class="card rejected">
+          <h3>Tự động reload toàn bộ cửa sổ hoặc reload liên tục mỗi 200ms/on-focus</h3>
+          <p>Gây khựng giao diện (lag) khi Agent chạy chuỗi lệnh liên tiếp và tạo trải nghiệm UX giật cục không mong muốn.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">🎭 Hội đồng Personas tham gia phản biện</h2>
+      <div class="persona-grid">
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">🏗️</span>
+            <div>
+              <div class="persona-name">Winston</div>
+              <div class="persona-role">System Architect (BMad)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Chỉ ra rủi ro Dual-Engine Drift nếu duy trì hai bộ resolver ở Go và TypeScript.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">🎯</span>
+            <div>
+              <div class="persona-name">Yui</div>
+              <div class="persona-role">The Craftsman (Code Review Crew)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Đề xuất dùng chung bundle TS trên <code>goja</code>, cơ chế Read-Merge-Write khi update và quy trình Smart Data Reload.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">😤</span>
+            <div>
+              <div class="persona-name">Grumbal</div>
+              <div class="persona-role">The Adversary (Code Review Crew)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Bóc trần thiếu hụt Web API (<code>btoa</code>/<code>TextEncoder</code>) trong <code>goja</code>, lỗi stale cache ở <code>FindByUUID</code> và bẫy Auto-Save 800ms.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">🪵</span>
+            <div>
+              <div class="persona-name">Splinter</div>
+              <div class="persona-role">Consensus Challenger (Anti-Consensus Club)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Bóc tách sự nhầm lẫn giữa độc lập Binary và độc lập Codebase; cảnh báo nguy cơ mất dữ liệu khi lệch schema JSON.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">🚢</span>
+            <div>
+              <div class="persona-name">Dana</div>
+              <div class="persona-role">The Pragmatist (Code Review Crew)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Giữ phạm vi MVP gọn gàng với CLI-First thay vì ôm cả MCP ngay từ đầu.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">📋</span>
+            <div>
+              <div class="persona-name">John &amp; 💻 Amelia</div>
+              <div class="persona-role">PM &amp; Senior SWE (BMad)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Chuẩn hóa luồng Compact Tree, <code>resolved_request</code> output và ma trận trực giao <code>hecto &lt;entity&gt; &lt;verb&gt;</code>.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">🌶️</span>
+            <div>
+              <div class="persona-name">Boundary &amp; 🧪 Murat</div>
+              <div class="persona-role">Edge-Case Hunter &amp; Test Architect</div>
+            </div>
+          </div>
+          <p class="persona-voice">Phát hiện bẫy định danh UUID vô nghĩa, quét đĩa kép trong <code>GetTree</code> và chốt chặn Self-Write Suppression.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">
+            <span class="persona-icon">🤖</span>
+            <div>
+              <div class="persona-name">Kael, Vera &amp; 📦 Marcus</div>
+              <div class="persona-role">Khách mời chuyên gia (Agent Tooling &amp; DevOps)</div>
+            </div>
+          </div>
+          <p class="persona-voice">Phân tích Token Economics của MCP vs <code>SKILL.md</code> và kỹ thuật đóng gói Multi-Binary trong Go.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

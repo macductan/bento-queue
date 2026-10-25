@@ -12,15 +12,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"hecto-api/model"
 )
 
 // FileSystem provides file-based storage operations for JSON entities.
 type FileSystem struct {
-	mu             sync.RWMutex
-	index          map[string]string // UUID → absolute path (AR-10)
-	collectionRoot string            // root dir for fallback walk in FindByUUID
+	mu                sync.RWMutex
+	index             map[string]string // UUID → absolute path (AR-10)
+	collectionRoot    string            // root dir for fallback walk in FindByUUID
+	lastSelfWriteNano atomic.Int64      // unix nano timestamp of most recent self-write
 }
 
 // NewFileSystem creates a new FileSystem instance.
@@ -30,11 +33,65 @@ func NewFileSystem() *FileSystem {
 	}
 }
 
+func shouldRecordSelfWrite(path string) bool {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if cleaned == "" || cleaned == "." {
+		return false
+	}
+	if filepath.Base(cleaned) == "config.json" {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(cleaned), "/")
+	for _, p := range parts {
+		if p == ".history" {
+			return false
+		}
+	}
+	return true
+}
+
+// RecordSelfWrite marks the current timestamp as an in-app disk write so CollectionWatcher
+// can suppress self-generated filesystem notifications.
+func (f *FileSystem) RecordSelfWrite() {
+	f.lastSelfWriteNano.Store(time.Now().UnixNano())
+}
+
+func (f *FileSystem) recordSelfWriteForPath(path string) {
+	if !shouldRecordSelfWrite(path) {
+		return
+	}
+	f.mu.RLock()
+	collRoot := strings.TrimSpace(f.collectionRoot)
+	f.mu.RUnlock()
+	if collRoot != "" {
+		cleanRoot := filepath.Clean(collRoot)
+		cleanPath := filepath.Clean(strings.TrimSpace(path))
+		if cleanPath != cleanRoot && !strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator)) {
+			return
+		}
+	}
+	f.RecordSelfWrite()
+}
+
+// IsWithinSelfWriteWindow returns true if a self-write was recorded within the given duration window.
+func (f *FileSystem) IsWithinSelfWriteWindow(window time.Duration) bool {
+	last := f.lastSelfWriteNano.Load()
+	if last == 0 {
+		return false
+	}
+	elapsed := time.Since(time.Unix(0, last))
+	return elapsed <= window
+}
+
 // SetCollectionRoot sets the collection root directory used for
 // fallback walk when FindByUUID has an index miss.
+// If switching from a different non-empty collection root, clears stale index entries.
 func (f *FileSystem) SetCollectionRoot(root string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.collectionRoot != "" && root != "" && filepath.Clean(f.collectionRoot) != filepath.Clean(root) {
+		f.index = make(map[string]string)
+	}
 	f.collectionRoot = root
 }
 
@@ -59,6 +116,9 @@ func (f *FileSystem) ReadJSON(path string, dest interface{}) error {
 // WriteJSON marshals data to JSON and writes it to the given path atomically.
 // Uses temp file → fsync → rename pattern to prevent corruption (AR-9).
 func (f *FileSystem) WriteJSON(path string, data interface{}) error {
+	f.recordSelfWriteForPath(path)
+	defer f.recordSelfWriteForPath(path)
+
 	content, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("%s: %w", model.ErrParse, err)
@@ -113,6 +173,9 @@ func (f *FileSystem) WriteJSON(path string, data interface{}) error {
 // Delete removes a file or empty directory at the given path.
 // Returns NOT_FOUND if the path does not exist.
 func (f *FileSystem) Delete(path string) error {
+	f.recordSelfWriteForPath(path)
+	defer f.recordSelfWriteForPath(path)
+
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s: %s", model.ErrNotFound, path)
@@ -131,6 +194,11 @@ func (f *FileSystem) Delete(path string) error {
 // MoveFile moves a file from src to dest.
 // Returns NOT_FOUND if src does not exist.
 func (f *FileSystem) MoveFile(src, dest string) error {
+	if shouldRecordSelfWrite(src) || shouldRecordSelfWrite(dest) {
+		f.RecordSelfWrite()
+		defer f.RecordSelfWrite()
+	}
+
 	if _, err := os.Stat(src); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s: %s", model.ErrNotFound, src)
@@ -167,6 +235,9 @@ func (f *FileSystem) ListDir(path string) ([]os.DirEntry, error) {
 
 // MakeDir creates a directory and all necessary parents.
 func (f *FileSystem) MakeDir(path string) error {
+	f.recordSelfWriteForPath(path)
+	defer f.recordSelfWriteForPath(path)
+
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return fmt.Errorf("%s: %w", model.ErrIO, err)
 	}
@@ -228,9 +299,9 @@ func (f *FileSystem) IndexUpdatePrefix(oldPrefix, newPrefix string) {
 }
 
 // FindByUUID returns the path for the given UUID from the in-memory index.
-// On index miss, performs a fallback walk of the collection root directory,
-// scanning JSON files for a matching "id" field. If found, the index is
-// updated and the path is returned. Returns NOT_FOUND if not found anywhere.
+// On index miss or stale cache entry (file moved/deleted externally), performs a
+// fallback walk of the collection root directory, scanning JSON files for a matching
+// "id" field. If found, the index is updated and the path is returned.
 func (f *FileSystem) FindByUUID(uuid string) (string, error) {
 	if uuid == "" {
 		return "", fmt.Errorf("%s: uuid empty", model.ErrNotFound)
@@ -242,7 +313,12 @@ func (f *FileSystem) FindByUUID(uuid string) (string, error) {
 	f.mu.RUnlock()
 
 	if ok {
-		return path, nil
+		isRootDir := collRoot != "" && filepath.Clean(path) == filepath.Clean(collRoot)
+		if f.Exists(path) && (strings.HasSuffix(path, ".json") || f.Exists(filepath.Join(path, "_folder.json")) || isRootDir) {
+			return path, nil
+		}
+		// Self-healing: cached path no longer exists on disk (or folder lost _folder.json)
+		f.IndexDelete(uuid)
 	}
 
 	// Fallback walk if collection root is set

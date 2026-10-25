@@ -38,9 +38,13 @@ func (s *CollectionService) GetTree(rootPath string) model.Result {
 		return model.NewError(model.ErrIO, ErrCollectionRootEmpty)
 	}
 
-	if err := s.fs.IndexRebuild(rootPath); err != nil {
-		s.logger.Warn("failed to rebuild index", "error", err)
+	if _, err := s.fs.ListDir(rootPath); err != nil {
+		s.logger.Error("failed to build tree", "error", err)
+		return model.NewError(model.ErrIO, "Không thể tải cấu trúc thư mục")
 	}
+
+	s.fs.SetCollectionRoot(rootPath)
+	s.fs.IndexClear()
 
 	tree, err := s.buildTree(rootPath)
 	if err != nil {
@@ -181,6 +185,8 @@ func (s *CollectionService) buildRequestNode(fullPath string) (model.TreeNode, b
 		s.logger.Warn("skipping json file with empty request ID", "path", fullPath)
 		return model.TreeNode{}, false
 	}
+
+	s.fs.IndexSet(req.ID, fullPath)
 
 	if req.Auth == nil {
 		req.Auth = &model.AuthConfig{Type: "inherit"}
