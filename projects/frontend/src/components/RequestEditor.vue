@@ -32,14 +32,6 @@ const pathNodes = computed(() => {
   return full.filter(n => n.type === 'folder')
 })
 
-const requestPath = computed(() => {
-  if (!req.value) return []
-  const full = collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []
-  const names = full.map(n => n.name)
-  const collName = collectionStore.activeCollection?.name
-  return collName ? [collName, ...names] : names
-})
-
 interface BreadcrumbPart {
   id?: string
   name: string

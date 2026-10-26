@@ -180,9 +180,10 @@ const handleValueInput = (branch: model.FlowBranch, e: Event) => {
 const handleDeleteBranch = (branchId: string) => {
   if (effectiveNodeId.value) {
     flowStore.deleteBranchFromNode(effectiveNodeId.value, branchId)
-  } else if (Array.isArray(props.branches)) {
-    const idx = props.branches.findIndex(b => b.id === branchId)
-    if (idx !== -1) props.branches.splice(idx, 1)
+  } else {
+    const list = branchList.value
+    const idx = list.findIndex(b => b.id === branchId)
+    if (idx !== -1) list.splice(idx, 1)
   }
 }
 
