@@ -131,23 +131,33 @@ onUnmounted(() => {
   document.removeEventListener('click', onClickOutside)
 })
 
-const methodColors: Record<string, string> = {
+const methodTextColors: Record<string, string> = {
   get: 'text-method-get',
   post: 'text-method-post',
   put: 'text-method-put',
   patch: 'text-method-patch',
   delete: 'text-method-delete',
-  head: 'text-cyan-400',
-  options: 'text-purple-400'
+  head: 'text-method-head',
+  options: 'text-method-options'
+}
+
+const methodTriggerColors: Record<string, string> = {
+  get: 'text-method-get method-badge-get',
+  post: 'text-method-post method-badge-post',
+  put: 'text-method-put method-badge-put',
+  patch: 'text-method-patch method-badge-patch',
+  delete: 'text-method-delete method-badge-delete',
+  head: 'text-method-head method-badge-head',
+  options: 'text-method-options method-badge-options'
 }
 
 const currentMethodColorClass = computed(() => {
-  if (!req.value?.method) return ''
-  return methodColors[req.value.method.toLowerCase()] || ''
+  if (!req.value?.method) return 'text-method-get method-badge-get'
+  return methodTriggerColors[req.value.method.toLowerCase()] || 'method-badge-options text-text-primary'
 })
 
 const getMethodColorClass = (method: string) => {
-  return methodColors[method.toLowerCase()] || ''
+  return methodTextColors[method.toLowerCase()] || 'text-text-primary'
 }
 
 // Ensure unknown methods keep their case but we fallback gracefully
@@ -211,18 +221,25 @@ const onUrlPaste = (e: ClipboardEvent) => {
     
     <!-- Method Dropdown -->
     <button
+      id="http-method-select"
       ref="buttonRef"
       type="button"
-      class="h-full px-3 pt-2 pb-3 font-mono text-sm font-bold shrink-0 border-r hover:bg-surface-hover outline-none"
-      :class="[responseStore.urlInvalid ? 'border-error-border' : 'border-border-default', isUnknownMethod ? 'text-text-secondary' : currentMethodColorClass]"
+      data-test="method-selector"
+      class="h-full px-3.5 flex items-center justify-between gap-2 font-mono text-xs font-bold tracking-wide shrink-0 rounded-l-[5px] border-t-0 border-b-0 border-l-0 border-r hover:bg-surface-hover cursor-pointer transition-colors outline-none"
+      :class="[responseStore.urlInvalid ? 'border-error-border' : 'border-border-default', isUnknownMethod ? 'method-badge-options text-text-primary' : currentMethodColorClass]"
       aria-haspopup="listbox"
       :aria-expanded="isOpen"
       @click="toggleDropdown"
       @keydown="onButtonKeyDown"
     >
-      {{ displayMethod }}
+      <span>{{ displayMethod }}</span>
       <!-- Minimal caret -->
-      <svg class="w-3 h-3 inline-block ml-1 opacity-50" viewBox="0 0 16 16" fill="none">
+      <svg
+        class="w-3 h-3 opacity-60 transition-transform duration-150 shrink-0"
+        :class="{ 'rotate-180': isOpen }"
+        viewBox="0 0 16 16"
+        fill="none"
+      >
         <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
@@ -232,7 +249,7 @@ const onUrlPaste = (e: ClipboardEvent) => {
       v-show="isOpen"
       ref="listboxRef"
       role="listbox"
-      class="absolute top-full left-0 mt-1 bg-surface-overlay border border-border-default rounded-md shadow-lg z-10 min-w-44 py-1 outline-none"
+      class="absolute top-full left-0 mt-1.5 bg-zinc-900 border border-zinc-700/80 rounded-lg shadow-2xl z-30 min-w-44 py-1.5 outline-none"
       tabindex="-1"
       @keydown="onListboxKeyDown"
     >
@@ -242,27 +259,43 @@ const onUrlPaste = (e: ClipboardEvent) => {
         role="option"
         :aria-selected="req.method === method"
         :data-method="method"
-        class="px-3 pt-2 pb-3 font-mono text-sm font-bold cursor-pointer hover:bg-surface-hover outline-none focus:bg-surface-hover"
-        :class="getMethodColorClass(method)"
+        class="mx-1 px-2.5 py-1.5 rounded-md font-mono text-xs font-bold cursor-pointer flex items-center justify-between transition-colors hover:bg-zinc-800 focus:bg-zinc-800 outline-none"
+        :class="[
+          getMethodColorClass(method),
+          req.method === method ? 'bg-zinc-800/70' : ''
+        ]"
         tabindex="0"
         @click="selectMethod(method)"
       >
-        {{ method }}
+        <span>{{ method }}</span>
+        <svg
+          v-if="req.method === method"
+          class="w-3.5 h-3.5 opacity-80 shrink-0"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
       </div>
-      <div class="border-t border-border-default mt-1 pt-1.5 px-2 pb-1 flex items-center gap-1" @click.stop>
+      <div class="border-t border-zinc-800 mt-1.5 pt-2 px-2 pb-0.5 flex items-center gap-1.5" @click.stop>
         <input
           v-model="customMethodInput"
           type="text"
           data-test="custom-method-input"
           placeholder="Custom (VD: PURGE)"
           aria-label="Custom HTTP Method"
-          class="w-full min-w-0 px-2 py-1 bg-surface-input border border-border-default rounded font-mono text-xs text-text-primary uppercase placeholder:normal-case placeholder:text-text-muted focus:border-brand-primary outline-none"
+          class="w-full min-w-0 px-2 py-1 bg-zinc-950 border border-zinc-700/80 rounded-md font-mono text-[11px] text-zinc-100 uppercase placeholder:normal-case placeholder:text-zinc-500 focus:border-indigo-500 outline-none transition-colors"
           @keydown.enter.prevent="applyCustomMethod"
         />
         <button
           type="button"
           data-test="custom-method-apply"
-          class="px-2 py-1 bg-brand-primary text-white rounded text-xs font-semibold hover:opacity-90 shrink-0 cursor-pointer outline-none"
+          class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md text-[11px] font-semibold shrink-0 cursor-pointer transition-colors outline-none"
           @click="applyCustomMethod"
         >
           OK
@@ -311,10 +344,13 @@ const onUrlPaste = (e: ClipboardEvent) => {
       v-if="responseStore.loading"
       type="button"
       data-test="abort-request-btn"
-      class="h-full px-4 py-2 flex items-center justify-center font-semibold shrink-0 rounded-r bg-error-bg text-error-text border-l border-error-border outline-none"
+      class="h-full px-4 py-2 flex items-center justify-center gap-1.5 font-semibold shrink-0 rounded-r bg-rose-600 hover:bg-rose-500 text-white border-l border-rose-500 outline-none cursor-pointer transition-colors text-xs"
       @click="responseStore.abort"
     >
-      Hủy
+      <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+      </svg>
+      <span>Hủy</span>
     </button>
     <button
       v-else
@@ -322,13 +358,15 @@ const onUrlPaste = (e: ClipboardEvent) => {
       data-test="send-request-btn"
       title="Gửi (Ctrl+Enter)"
       aria-label="Gửi"
-      class="h-full px-4 py-2 flex items-center justify-center bg-brand-primary text-white font-semibold shrink-0 rounded-r border-l border-brand-primary hover:opacity-90 outline-none cursor-pointer transition-opacity"
+      class="h-full px-4 py-2 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shrink-0 rounded-r border-l border-indigo-500 outline-none cursor-pointer transition-colors text-xs shadow-lg shadow-indigo-600/20"
       @click="responseStore.send"
     >
-      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <line x1="22" y1="2" x2="11" y2="13"></line>
         <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
       </svg>
+      <span>Gửi</span>
+      <kbd class="text-[10px] bg-indigo-700/80 text-indigo-200 px-1.5 py-0.5 rounded border border-indigo-400/30 font-mono">^Enter</kbd>
     </button>
   </div>
 </template>

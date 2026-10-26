@@ -26,18 +26,19 @@ const getTabFullPath = (tab: TabItem): string => {
 }
 
 const methodColors: Record<string, string> = {
-  get: 'text-method-get',
-  post: 'text-method-post',
-  put: 'text-method-put',
-  patch: 'text-method-patch',
-  delete: 'text-method-delete',
-  head: 'text-cyan-400',
-  options: 'text-purple-400'
+  get: 'text-method-get method-badge-get',
+  post: 'text-method-post method-badge-post',
+  put: 'text-method-put method-badge-put',
+  patch: 'text-method-patch method-badge-patch',
+  delete: 'text-method-delete method-badge-delete',
+  head: 'text-method-head method-badge-head',
+  options: 'text-method-options method-badge-options'
 }
 
 const getMethodColorClass = (method?: string) => {
-  if (!method) return 'text-method-get'
-  return methodColors[method.toLowerCase()] || 'text-text-secondary'
+  const normalized = method?.trim().toLowerCase()
+  if (!normalized) return 'text-method-get method-badge-get'
+  return methodColors[normalized] || 'text-text-secondary method-badge-options'
 }
 
 const displayName = (name?: string) => {

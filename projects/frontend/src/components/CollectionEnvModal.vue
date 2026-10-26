@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUiStore } from '@/stores/uiStore'
 import KvpEditor from './KvpEditor.vue'
 import AuthEditor from './AuthEditor.vue'
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const collectionStore = useCollectionStore()
+const envStore = useEnvironmentStore()
 const uiStore = useUiStore()
 
 const targetCollection = computed(() => {
@@ -26,8 +28,24 @@ const activeTab = ref<'variables' | 'auth'>('variables')
 const variables = ref<{ key: string; value: string; enabled: boolean }[]>([])
 const collectionAuth = ref<AuthConfig>({ type: 'none' })
 const collectionAuthEnvs = ref<Record<string, AuthConfig>>({})
-const collectionAuthEnvScope = ref<string>('__global__')
+
+const resolveDefaultCollectionAuthEnvScope = (): string => {
+  const activeId = envStore.activeEnvId
+  if (activeId && envStore.environments.some(e => e.id === activeId)) {
+    return activeId
+  }
+  return '__global__'
+}
+
+const collectionAuthEnvScope = ref<string>(resolveDefaultCollectionAuthEnvScope())
 const saving = ref(false)
+
+watch(
+  () => envStore.activeEnvId,
+  () => {
+    collectionAuthEnvScope.value = resolveDefaultCollectionAuthEnvScope()
+  }
+)
 
 watch(
   () => [props.modelValue, targetCollection.value] as const,
@@ -36,7 +54,7 @@ watch(
       variables.value = JSON.parse(JSON.stringify(coll.variables || []))
       collectionAuth.value = coll.auth ? JSON.parse(JSON.stringify(coll.auth)) : { type: 'none' }
       collectionAuthEnvs.value = coll.auth_envs ? JSON.parse(JSON.stringify(coll.auth_envs)) : {}
-      collectionAuthEnvScope.value = '__global__'
+      collectionAuthEnvScope.value = resolveDefaultCollectionAuthEnvScope()
     }
   },
   { immediate: true }

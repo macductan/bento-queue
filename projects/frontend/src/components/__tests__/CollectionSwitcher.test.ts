@@ -405,4 +405,30 @@ describe('CollectionSwitcher.vue', () => {
     expect(envModal.props('modelValue')).toBe(true)
     expect(envModal.props('collectionId')).toBe('proj-ecom-123')
   })
+
+  it('displays collection-default-badge on trigger button when active collection is default, and hides it for non-default or loading state (CAP-2)', async () => {
+    const store = useCollectionStore()
+    store.collections = [...mockCollections]
+    store.activeCollectionId = 'default'
+
+    const wrapper = mount(CollectionSwitcher)
+    const trigger = wrapper.find('[data-test="collection-switcher-btn"]')
+    expect(trigger.exists()).toBe(true)
+
+    const defaultBadge = trigger.find('[data-test="collection-default-badge"]')
+    expect(defaultBadge.exists()).toBe(true)
+    expect(defaultBadge.text()).toBe('Default')
+
+    // Switch to non-default collection -> hides badge
+    store.activeCollectionId = 'proj-ecom-123'
+    await wrapper.vm.$nextTick()
+    expect(trigger.find('[data-test="collection-default-badge"]').exists()).toBe(false)
+
+    // Loading with empty collections -> hides badge
+    store.collections = []
+    store.collectionsLoading = true
+    store.activeCollectionId = 'default'
+    await wrapper.vm.$nextTick()
+    expect(trigger.find('[data-test="collection-default-badge"]').exists()).toBe(false)
+  })
 })

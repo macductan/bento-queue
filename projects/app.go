@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -31,7 +32,10 @@ type App struct {
 	gitSyncSvc       *service.GitSyncService
 	historySvc       *service.HistoryService
 	mockServerSvc    *service.MockServerService
+	flowSvc          *service.FlowService
 	logger           *slog.Logger
+	watcher          *storage.CollectionWatcher
+	onEvent          func(eventName string, data ...interface{})
 	collRoot         string
 	collectionsRoot  string
 	activeCollection string
@@ -41,10 +45,10 @@ type App struct {
 func NewApp() *App {
 	logger := slog.Default()
 	fs := storage.NewFileSystem()
-
-	return &App{
+	cfgSvc := service.NewConfigService(fs, logger)
+	app := &App{
 		fs:            fs,
-		cfgSvc:        service.NewConfigService(fs, logger),
+		cfgSvc:        cfgSvc,
 		reqSvc:        service.NewRequestService(fs, logger),
 		collSvc:       service.NewCollectionService(fs, logger),
 		envSvc:        service.NewEnvironmentService(fs, logger),
@@ -53,7 +57,73 @@ func NewApp() *App {
 		gitSyncSvc:    service.NewGitSyncService(fs, logger),
 		historySvc:    service.NewHistoryService(fs, logger),
 		mockServerSvc: service.NewMockServerService(fs, logger),
+		flowSvc:       service.NewFlowService(fs, logger),
 		logger:        logger,
+	}
+	cfgSvc.SetStartupErrorHandler(func(ctx context.Context, msg string) {
+		app.emitEvent("startup-error", msg)
+	})
+
+	return app
+}
+
+func (a *App) emitEvent(eventName string, data ...interface{}) {
+	if a.onEvent != nil {
+		a.onEvent(eventName, data...)
+	}
+	if a.ctx != nil && a.ctx.Value("events") != nil {
+		runtime.EventsEmit(a.ctx, eventName, data...)
+	}
+}
+
+func (a *App) notifyExternalChange() {
+	a.mu.RLock()
+	activeColl := a.activeCollection
+	a.mu.RUnlock()
+	a.emitEvent("collection:external-change", map[string]interface{}{
+		"collectionId": activeColl,
+		"timestamp":    time.Now().Format(time.RFC3339),
+	})
+}
+
+func (a *App) syncActiveCollectionFromDisk() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfgSvc == nil || strings.TrimSpace(a.collectionsRoot) == "" {
+		return
+	}
+	cfg, err := a.cfgSvc.GetConfig()
+	if err != nil || cfg == nil {
+		return
+	}
+	diskActive := strings.TrimSpace(cfg.ActiveCollection)
+	diskCollsRoot := strings.TrimSpace(cfg.CollectionsRoot)
+	if diskActive == "" || diskCollsRoot == "" {
+		return
+	}
+	if filepath.Base(diskActive) != diskActive || strings.ContainsAny(diskActive, "/\\") || diskActive == "." || diskActive == ".." {
+		diskActive = "default"
+	}
+	targetRoot := filepath.Join(diskCollsRoot, diskActive)
+	if filepath.Clean(targetRoot) == filepath.Clean(diskCollsRoot) || !a.fs.Exists(targetRoot) {
+		defaultRoot := filepath.Join(diskCollsRoot, "default")
+		if a.fs.Exists(defaultRoot) {
+			diskActive = "default"
+			targetRoot = defaultRoot
+			_, _ = a.cfgSvc.SwitchActiveCollection(a.ctx, "default")
+		} else {
+			return
+		}
+	}
+
+	if a.activeCollection != diskActive || filepath.Clean(a.collRoot) != filepath.Clean(targetRoot) {
+		a.collectionsRoot = diskCollsRoot
+		a.activeCollection = diskActive
+		a.collRoot = targetRoot
+		a.fs.SetCollectionRoot(a.collRoot)
+		if a.watcher != nil {
+			_ = a.watcher.SwitchRoot(a.collRoot)
+		}
 	}
 }
 
@@ -72,18 +142,37 @@ func (a *App) startup(ctx context.Context) {
 		a.collectionsRoot = cfg.CollectionsRoot
 		a.activeCollection = cfg.ActiveCollection
 		a.fs.SetCollectionRoot(a.collRoot)
+		if a.watcher != nil {
+			_ = a.watcher.Close()
+			a.watcher = nil
+		}
+		if cw, wErr := storage.NewCollectionWatcher(a.fs, a.logger, a.collRoot, a.notifyExternalChange); wErr != nil {
+			a.logger.Warn("failed to initialize collection watcher", "error", wErr)
+		} else {
+			a.watcher = cw
+		}
 		a.mu.Unlock()
 	}
 
 	a.logger.Info("hecto-api started")
 }
 
+// shutdown is called when the app exits to release watcher resources.
+func (a *App) shutdown(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.watcher != nil {
+		_ = a.watcher.Close()
+		a.watcher = nil
+	}
+}
+
 // --- Wails Bindings: Entity-oriented CRUD (AD-2) ---
 // Each binding = one operation on one entity. Name = Verb + Entity.
 
-// GetCollectionTree returns the collection tree structure.
 // GetCollectionRoot returns the current collection root path.
 func (a *App) GetCollectionRoot() string {
+	a.syncActiveCollectionFromDisk()
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.collRoot
@@ -91,6 +180,7 @@ func (a *App) GetCollectionRoot() string {
 
 // GetCollectionTree returns the collection tree structure.
 func (a *App) GetCollectionTree() model.Result {
+	a.syncActiveCollectionFromDisk()
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
@@ -99,6 +189,7 @@ func (a *App) GetCollectionTree() model.Result {
 
 // GetRequest retrieves a request by UUID.
 func (a *App) GetRequest(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
 	return a.reqSvc.Get(id)
 }
 
@@ -225,6 +316,7 @@ func (a *App) ReorderNodes(parentFolderId string, nodeIds []string) model.Result
 
 // ListEnvironments returns all environments.
 func (a *App) ListEnvironments() model.Result {
+	a.syncActiveCollectionFromDisk()
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
@@ -233,6 +325,7 @@ func (a *App) ListEnvironments() model.Result {
 
 // GetEnvironment retrieves an environment by UUID.
 func (a *App) GetEnvironment(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
@@ -297,7 +390,7 @@ func (a *App) ImportPostman(filePath string) model.Result {
 	root := a.collRoot
 	a.mu.RUnlock()
 	return a.impSvc.ImportPostman(root, filePath, func(count int, total int, text string) {
-		runtime.EventsEmit(a.ctx, "import:progress", map[string]interface{}{
+		a.emitEvent("import:progress", map[string]interface{}{
 			"count": count,
 			"total": total,
 			"text":  text,
@@ -336,12 +429,16 @@ func (a *App) UpdateCollectionRoot(newRoot string) model.Result {
 	a.activeCollection = "default"
 	a.collRoot = updatedRoot
 	a.fs.SetCollectionRoot(a.collRoot)
+	if a.watcher != nil {
+		_ = a.watcher.SwitchRoot(a.collRoot)
+	}
 	_ = a.fs.IndexRebuild(a.collRoot)
 	return model.NewSuccess(a.collRoot)
 }
 
 // ListCollections returns all collections in the collections root.
 func (a *App) ListCollections() model.Result {
+	a.syncActiveCollectionFromDisk()
 	a.mu.RLock()
 	cRoot := a.collectionsRoot
 	active := a.activeCollection
@@ -469,6 +566,9 @@ func (a *App) switchCollectionLocked(id string) model.Result {
 	a.activeCollection = cfg.ActiveCollection
 	a.collRoot = cfg.CollectionRoot
 	a.fs.SetCollectionRoot(a.collRoot)
+	if a.watcher != nil {
+		_ = a.watcher.SwitchRoot(a.collRoot)
+	}
 	if err := a.fs.IndexRebuild(a.collRoot); err != nil {
 		a.logger.Warn("failed to rebuild index after switch", "error", err)
 	}
@@ -478,6 +578,7 @@ func (a *App) switchCollectionLocked(id string) model.Result {
 
 // LoadFolder loads a folder's details (including variables).
 func (a *App) LoadFolder(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
 	return a.collSvc.LoadFolder(id)
 }
 
@@ -535,6 +636,8 @@ func (a *App) GetCollectionGitStatus(collectionID string) model.Result {
 
 // GitPullCollectionFromBranch executes git pull from the specified branch in the collection directory.
 func (a *App) GitPullCollectionFromBranch(collectionID, branch string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	res := a.gitSyncSvc.Pull(cRoot, id, branch)
 	if res.Success {
@@ -555,6 +658,8 @@ func (a *App) GitPullCollection(collectionID string) model.Result {
 
 // GitClearAndPullCollection clears local uncommitted/untracked files, resets hard to remote, and rebuilds index.
 func (a *App) GitClearAndPullCollection(collectionID string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	res := a.gitSyncSvc.ClearAndPull(cRoot, id)
 	if res.Success {
@@ -570,6 +675,8 @@ func (a *App) GitClearAndPullCollection(collectionID string) model.Result {
 
 // GitStashAndPullCollection stashes local changes, pulls from remote, pops stash, and rebuilds index.
 func (a *App) GitStashAndPullCollection(collectionID string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	res := a.gitSyncSvc.StashAndPull(cRoot, id)
 	if res.Success {
@@ -591,6 +698,8 @@ func (a *App) GitListLocalBranches(collectionID string) model.Result {
 
 // GitPushCollectionToBranch stages, commits, and pushes the collection directory to the specified branch on origin.
 func (a *App) GitPushCollectionToBranch(collectionID, branch string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	return a.gitSyncSvc.Push(cRoot, id, branch)
 }
@@ -602,6 +711,8 @@ func (a *App) GitPushCollection(collectionID string) model.Result {
 
 // GitCheckoutBranch switches the collection repository to the specified branch.
 func (a *App) GitCheckoutBranch(collectionID, branch string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	res := a.gitSyncSvc.CheckoutBranch(cRoot, id, branch)
 	if res.Success {
@@ -617,6 +728,8 @@ func (a *App) GitCheckoutBranch(collectionID, branch string) model.Result {
 
 // ResolveGitConflict writes user-resolved conflict files, stages them, completes the merge commit, and rebuilds the index.
 func (a *App) ResolveGitConflict(collectionID string, resolvedFiles map[string]interface{}) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	res := a.gitSyncSvc.ResolveConflict(cRoot, id, resolvedFiles)
 	if res.Success {
@@ -632,6 +745,8 @@ func (a *App) ResolveGitConflict(collectionID string, resolvedFiles map[string]i
 
 // AbortGitMerge aborts an in-progress git merge or stash conflict and restores the collection to its pre-pull state.
 func (a *App) AbortGitMerge(collectionID string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	res := a.gitSyncSvc.AbortMerge(cRoot, id)
 	if res.Success {
@@ -726,5 +841,158 @@ func (a *App) ExportGitSyncStatus(status model.GitSyncStatus) model.GitSyncStatu
 	return status
 }
 
+// ExportFlowTypes ensures model.FlowTreeNode, model.FlowFolder, and model.Flow are exported to Wails TypeScript bindings.
+func (a *App) ExportFlowTypes(treeNode model.FlowTreeNode, folder model.FlowFolder) model.Flow {
+	return model.Flow{}
+}
 
+// --- Wails Bindings: Flow & FlowFolder CRUD (CAP-1, CAP-4, CAP-5) ---
 
+// GetFlowTree returns the hierarchical FlowFolder and Flow tree structure in <collection>/flows/.
+func (a *App) GetFlowTree() model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.flowSvc.GetTree(root)
+}
+
+// GetFlow retrieves a Flow by UUID.
+func (a *App) GetFlow(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	return a.flowSvc.GetFlow(id)
+}
+
+// CreateFlow creates a new Flow in <collection>/flows/ (or inside parentFolderId).
+func (a *App) CreateFlow(parentFolderId string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.CreateFlow(root, parentFolderId)
+	if res.Success {
+		if flow, ok := res.Data.(model.Flow); ok {
+			a.recordChangelog("flow", flow.ID, flow.Name, "create", "Tạo flow "+flow.Name)
+		}
+	}
+	return res
+}
+
+// SaveFlow persists a Flow to disk.
+func (a *App) SaveFlow(flow model.Flow) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.SaveFlow(flow)
+	if res.Success {
+		a.recordChangelog("flow", flow.ID, flow.Name, "update", "Cập nhật flow "+flow.Name)
+	}
+	return res
+}
+
+// RenameFlow updates the name of a Flow.
+func (a *App) RenameFlow(id, newName string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.RenameFlow(id, newName)
+	if res.Success {
+		a.recordChangelog("flow", id, newName, "rename", "Đổi tên flow thành "+newName)
+	}
+	return res
+}
+
+// DeleteFlow removes a Flow from disk.
+func (a *App) DeleteFlow(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.DeleteFlow(id)
+	if res.Success {
+		a.recordChangelog("flow", id, id, "delete", "Xóa flow "+id)
+	}
+	return res
+}
+
+// DuplicateFlow creates a copy of a Flow in the same folder.
+func (a *App) DuplicateFlow(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.DuplicateFlow(id)
+	if res.Success {
+		if flow, ok := res.Data.(model.Flow); ok {
+			a.recordChangelog("flow", flow.ID, flow.Name, "duplicate", "Nhân bản flow "+flow.Name)
+		}
+	}
+	return res
+}
+
+// CreateFlowFolder creates a new FlowFolder inside <collection>/flows/.
+func (a *App) CreateFlowFolder(parentFolderId string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.CreateFlowFolder(root, parentFolderId)
+	if res.Success {
+		if folder, ok := res.Data.(model.FlowFolder); ok {
+			a.recordChangelog("flow_folder", folder.ID, folder.Name, "create", "Tạo thư mục flow "+folder.Name)
+		}
+	}
+	return res
+}
+
+// RenameFlowFolder updates the name of a FlowFolder.
+func (a *App) RenameFlowFolder(id, newName string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.RenameFlowFolder(id, newName)
+	if res.Success {
+		a.recordChangelog("flow_folder", id, newName, "rename", "Đổi tên thư mục flow thành "+newName)
+	}
+	return res
+}
+
+// DeleteFlowFolder removes a FlowFolder and all its contents from disk.
+func (a *App) DeleteFlowFolder(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.DeleteFlowFolder(root, id)
+	if res.Success {
+		a.recordChangelog("flow_folder", id, id, "delete", "Xóa thư mục flow "+id)
+	}
+	return res
+}
+
+// ReorderFlowNodes updates the order of items within a FlowFolder (or at flows/ root if parentFolderId is empty).
+func (a *App) ReorderFlowNodes(parentFolderId string, orderedIds []string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.ReorderNodes(root, parentFolderId, orderedIds)
+	if res.Success {
+		a.recordChangelog("flow_order", parentFolderId, parentFolderId, "reorder", "Sắp xếp lại danh sách flow")
+	}
+	return res
+}
+
+// MoveFlowNode moves a Flow or FlowFolder to targetFolderId at targetIndex.
+func (a *App) MoveFlowNode(nodeId, targetFolderId string, targetIndex int) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.MoveNode(root, nodeId, targetFolderId, targetIndex)
+	if res.Success {
+		a.recordChangelog("flow", nodeId, nodeId, "move", "Di chuyển mục trong cây flow")
+	}
+	return res
+}
+
+// SortFlowNodes sorts items alphabetically within a FlowFolder (or at flows/ root if parentFolderId is empty).
+func (a *App) SortFlowNodes(parentFolderId string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.SortNodes(root, parentFolderId)
+	if res.Success {
+		a.recordChangelog("flow_order", parentFolderId, parentFolderId, "sort", "Sắp xếp danh sách flow theo tên")
+	}
+	return res
+}

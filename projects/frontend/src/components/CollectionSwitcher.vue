@@ -34,6 +34,15 @@ const activeCollectionName = computed(() => {
   return collectionStore.activeCollection?.name || 'Default Collection'
 })
 
+const showActiveDefaultBadge = computed(() => {
+  if (collectionStore.collectionsLoading && collectionStore.collections.length === 0) {
+    return false
+  }
+  const active = collectionStore.activeCollection
+  if (!active) return false
+  return Boolean(active.is_default || active.id === 'default')
+})
+
 const toggleDropdown = () => {
   isOpen.value = !isOpen.value
 }
@@ -139,19 +148,27 @@ onUnmounted(() => {
     <!-- Trigger Button -->
     <button
       type="button"
+      data-test="collection-switcher-btn"
       @click="toggleDropdown"
-      class="w-full flex items-center justify-between gap-1.5 px-2 py-1 rounded text-text-primary hover:bg-surface-hover transition-colors min-w-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-primary"
+      class="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md bg-zinc-800/70 hover:bg-zinc-800 border border-zinc-700/80 text-text-primary transition-colors min-w-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-primary"
       :title="activeCollectionName"
       :aria-expanded="isOpen"
       aria-haspopup="true"
       aria-label="Chọn collection"
     >
       <div class="flex items-center gap-1.5 min-w-0">
-        <svg class="w-4 h-4 shrink-0 text-brand-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="w-4 h-4 shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
         </svg>
-        <span class="truncate ui-xs font-semibold text-text-primary">
+        <span class="truncate max-w-[160px] ui-xs font-semibold text-text-primary">
           {{ activeCollectionName }}
+        </span>
+        <span
+          v-if="showActiveDefaultBadge"
+          data-test="collection-default-badge"
+          class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-medium shrink-0"
+        >
+          Default
         </span>
       </div>
       <svg

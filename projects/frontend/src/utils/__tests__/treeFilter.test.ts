@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { filterTree } from '../treeFilter'
+import { filterTree, filterFlowTree, matchesFlowTreeNode } from '../treeFilter'
 import type { TreeNode } from '@/stores/collectionStore'
+import type { FlowTreeNode } from '@/stores/flowStore'
 
 describe('treeFilter utility', () => {
   const mockTree: TreeNode[] = [
@@ -163,4 +164,65 @@ describe('treeFilter utility', () => {
     expect(res.filtered.length).toBe(0)
     expect(res.expandedFolderIds.size).toBe(0)
   })
+
+  describe('filterFlowTree and matchesFlowTreeNode', () => {
+    const mockFlowTree: FlowTreeNode[] = [
+      {
+        id: 'ff-checkout',
+        name: 'Checkout Suites',
+        type: 'flow_folder',
+        path: 'flows/checkout',
+        created_at: '',
+        children: [
+          {
+            id: 'flow-payment',
+            name: 'Stripe Payment Flow',
+            type: 'flow',
+            description: 'Validates 3DS card charge and webhook callback',
+            path: 'flows/checkout/payment.json',
+            created_at: ''
+          }
+        ]
+      },
+      {
+        id: 'flow-smoke',
+        name: 'Smoke Test',
+        type: 'flow',
+        description: 'Quick sanity check',
+        path: 'flows/smoke.json',
+        created_at: ''
+      }
+    ]
+
+    it('matches flow by description and expands ancestor flow_folder', () => {
+      const res = filterFlowTree(mockFlowTree, 'webhook callback')
+      expect(res.filtered).toHaveLength(1)
+      expect(res.filtered[0].id).toBe('ff-checkout')
+      expect(res.filtered[0].children?.[0].id).toBe('flow-payment')
+      expect(res.expandedFolderIds.has('ff-checkout')).toBe(true)
+    })
+
+    it('matches flow_folder by name and preserves its children', () => {
+      const res = filterFlowTree(mockFlowTree, 'Checkout Suites')
+      expect(res.filtered).toHaveLength(1)
+      expect(res.filtered[0].id).toBe('ff-checkout')
+      expect(res.filtered[0].children).toHaveLength(1)
+      expect(res.expandedFolderIds.has('ff-checkout')).toBe(true)
+    })
+
+    it('respects activeFlowOverrides for unsaved in-memory name and description', () => {
+      const overrides = {
+        activeFlowId: 'flow-smoke',
+        activeFlowName: 'Renamed In Memory Smoke',
+        activeFlowDescription: 'Unsaved custom description token 999'
+      }
+      expect(matchesFlowTreeNode(mockFlowTree[1], 'renamed in memory', overrides)).toBe(true)
+      expect(matchesFlowTreeNode(mockFlowTree[1], 'token 999', overrides)).toBe(true)
+
+      const res = filterFlowTree(mockFlowTree, 'token 999', overrides)
+      expect(res.filtered).toHaveLength(1)
+      expect(res.filtered[0].id).toBe('flow-smoke')
+    })
+  })
 })
+

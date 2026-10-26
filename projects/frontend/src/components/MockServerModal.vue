@@ -3,12 +3,14 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useMockServerStore, type MockRoute } from '@/stores/mockServerStore'
 import KvpEditor from '@/components/KvpEditor.vue'
+import CustomSelect, { type SelectOption } from '@/components/CustomSelect.vue'
 
 const uiStore = useUiStore()
 const mockStore = useMockServerStore()
 
 const selectedRouteId = ref<string | null>(null)
 const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD', 'ANY']
+const methodOptions: SelectOption[] = methods.map(m => ({ value: m, label: m }))
 
 function handleKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape' && uiStore.mockServerModalOpen) {
@@ -223,13 +225,14 @@ async function handleToggleServer() {
                 <label class="mb-1 block text-[11px] font-medium text-text-secondary">
                   Method
                 </label>
-                <select
+                <CustomSelect
                   v-model="selectedRoute.method"
                   data-test="mock-route-method-select"
-                  class="w-full rounded border border-border-default bg-surface-input px-2.5 py-1.5 font-mono text-xs text-text-primary focus:border-brand-primary focus:outline-none"
-                >
-                  <option v-for="m in methods" :key="m" :value="m">{{ m }}</option>
-                </select>
+                  :options="methodOptions"
+                  full-width
+                  size="sm"
+                  button-class="font-mono text-xs bg-surface-input"
+                />
               </div>
 
               <div class="col-span-5">

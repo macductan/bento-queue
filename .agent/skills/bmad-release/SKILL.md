@@ -48,17 +48,18 @@ Chuẩn hóa và gom (squash) toàn bộ commit trên nhánh `develop` tính t�
   - Xác định các commit lẻ cần gom lại và mốc baseline commit hash.
 - Đảm bảo working tree sạch sẽ trước khi thao tác (`git status`).
 
-### Bước 2: Phân tích thay đổi & Xác định Version mới
-- Đọc git log để phân loại các thay đổi: `feat`, `fix`, `docs`, `test`, `chore`.
+### Bước 2: Phân tích thay đổi, Xác định Version mới & Cập nhật CHANGELOG.md
+- Đọc git log / diff để phân loại các thay đổi: `feat`, `fix`, `docs`, `test`, `chore`.
 - Đề xuất version SemVer mới (ví dụ `1.2.0`).
 - Cập nhật trường `version` trong `projects/frontend/package.json`.
+- Cập nhật file `CHANGELOG.md` ở thư mục gốc với chi tiết phiên bản mới (`## [v<version>] - YYYY-MM-DD`) để lưu trữ lịch sử phát triển cho dự án và AI Agents.
 
-### Bước 3: Chạy toàn bộ Test & Type-check
-Trước khi gom commit, bắt buộc kiểm tra chất lượng code:
+### Bước 3: Chạy toàn bộ Lint, Type-check, Unit Test & E2E Test
+Trước khi gom commit, bắt buộc kiểm tra chất lượng code đầy đủ giống hệt pipeline CI (`.gitlab-ci.yml`):
 ```bash
 source ~/.nvm/nvm.sh && nvm use
-cd projects/frontend && bun run type-check && bun run test
-cd ../ && go test ./...
+cd projects/frontend && bun run lint && bun run type-check && bun run test && bun run test:e2e
+cd ../ && go vet ./... && go test ./...
 ```
 Nếu có lỗi, báo cáo và dừng quy trình để khắc phục.
 

@@ -1,0 +1,64 @@
+- id: "1"
+  title: "Concurrent HTTP Executor (TimeoutMs), Flow & FlowFolder Storage Models, FlowService CRUD/Tree & Selector/Git Integration"
+  description: >-
+    Mở khóa ExecutorService.Send hỗ trợ bắn nhiều HTTP Request đồng thời kèm TimeoutMs cấp từng Request và hủy hàng loạt qua Abort() (CAP-2).
+    Xây dựng mô hình dữ liệu Flow/FlowFolder lưu trữ tách biệt tại <collection>/flows/, FlowService CRUD/Tree/Move/Reorder/Duplicate, bộ phân giải định danh Selector và tích hợp Git 3-Way JSON Merge (CAP-1).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trong projects/model/types.go: bổ sung trường TimeoutMs int (`json:"timeout_ms,omitempty"`) vào ExecuteRequest; định nghĩa các struct FlowBranchCondition, FlowBranch, FlowStep, FlowNode, Flow, FlowFolder, FlowTreeNode theo đúng schema trong flow-architecture-and-schema.md.
+    2. Trong projects/service/executor.go: xóa cờ chặn đơn luồng inflight bool và cancelFn đơn lẻ; thay bằng nextReqID uint64 và activeCancels map[uint64]context.CancelFunc có sync.Mutex bảo vệ để cho phép nhiều lệnh Send(req) chạy đồng thời; áp dụng req.TimeoutMs > 0 (tính bằng ms) cho context.WithTimeout (fallback về s.timeout mặc định 30s); cập nhật Abort() hủy toàn bộ cancelFunc đang có trong activeCancels. Cập nhật projects/service/executor_test.go (thay TestExecutorService_Send_Inflight bằng kiểm thử chạy đồng thời nhiều request + kiểm thử TimeoutMs và Abort nhiều request).
+    3. Trong projects/service/collection.go (buildTree): bỏ qua thư mục "flows" (`name == "environments" || name == "flows" || name == ".git" || name == ".history"`) để cây Request của màn APIs không đọc nhầm dữ liệu Flow.
+    4. Tạo projects/service/flow.go (FlowService): quản lý thư mục <collection>/flows/ với _folder.json cho FlowFolder ({ id, name, order, created_at, updated_at }) và <flow-uuid>.json cho Flow; cung cấp đầy đủ GetTree, GetFlow, CreateFlow, SaveFlow, RenameFlow, DeleteFlow, DuplicateFlow, CreateFlowFolder, RenameFlowFolder, DeleteFlowFolder, ReorderNodes, MoveNode, SortNodes; đăng ký IndexSet(id, fullPath) vào FileSystem cho mọi Flow và FlowFolder. Bổ sung Wails bindings tương ứng vào projects/app.go.
+    5. Trong projects/service/selector.go: bổ sung ResolveFlowSelector và ResolveFlowFolderSelector hỗ trợ tìm bằng cả UUID lẫn đường dẫn phân cấp tên trong <collection>/flows/ (báo lỗi VALIDATION kèm danh sách UUID nếu trùng tên cùng cấp). Trong projects/service/git_merge.go: cập nhật detectEntityMeta nhận diện đường dẫn bắt đầu bằng "flows/" là "flow_folder" (nếu là _folder.json) hoặc "flow", và bổ sung nhãn trường vào fieldLabels.
+    6. Viết đầy đủ unit tests trong projects/service/flow_test.go, projects/service/selector_test.go, projects/service/executor_test.go và projects/service/git_merge_test.go trên t.TempDir(); đảm bảo 'go test ./...' pass 100%.
+
+- id: "2"
+  title: "Shared TypeScript Flow Runner (flowRunner.ts), Go Headless Flow Execution (engine.ExecuteFlow) & CLI hecto flow"
+  description: >-
+    Xây dựng bộ hàm đánh giá kết quả Step, điều kiện rẽ nhánh 3 chế độ và gom biến Hàng Song song trong flowRunner.ts dùng chung qua headless-engine.js và package Go projects/engine (CAP-3).
+    Mở rộng CLI độc lập hecto với hệ lệnh trực giao hecto flow (list, tree, get, create, update, delete, move, folder, run) và cập nhật SKILL.md (CAP-6).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Tạo projects/frontend/src/utils/flowRunner.ts hiện thực hóa:
+       - evaluateStepVerdict (Failed nếu request gốc bị xóa, lỗi mạng/timeout/aborted, lỗi runtime script, hoặc có ha.test() fail; nếu không có ha.test() nào thì status_code >= 400 là Failed; nếu có ha.test() và tất cả pass thì Passed bất kể status_code).
+       - evaluateCustomBranchCondition (3 ô: source gồm status_code | body_json | variable, operator gồm == | != | > | < | contains | exists, và value có giải biến {{var}}).
+       - selectMatchingBranch (ưu tiên đánh giá các nhánh custom theo thứ tự khai báo trước, sau đó fallback sang nhánh success khi nodePassed=true hoặc error khi nodePassed=false; trả về matchedBranchId và skippedBranchIds).
+       - mergeParallelScriptUpdates (gom tuần tự envUpdates, scopedEnvUpdates, scopedAuthUpdates của các step trong Hàng Song song theo đúng thứ tự khai báo).
+    2. Xuất toàn bộ hàm và kiểu của flowRunner.ts qua projects/frontend/src/utils/headless-engine.ts và chạy 'bun run build:headless' để cập nhật projects/engine/headless-engine.js.
+    3. Tạo projects/engine/flow.go hiện thực hóa ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error): duyệt cây FlowNode[], tôn trọng giới hạn max_steps (mặc định 100), bỏ qua step có enabled=false (skipped), thực thi bước đơn hoặc Hàng Song song (chạy các goroutines song song trên bản sao ngữ cảnh đầu vào của hàng, đợi hoàn tất rồi gọi mergeParallelScriptUpdates qua goja và gọi ApplyScriptUpdatesToDisk đúng 1 lần sau khi hàng kết thúc), đánh giá rẽ nhánh qua selectMatchingBranch trên goja, dừng ngay khi gặp lỗi không có nhánh xử lý, và trả về FlowRunOutput đầy đủ.
+    4. Trong projects/cmd/hecto/: bổ sung lệnh 'hecto flow list|tree|get|create|update|delete|move|run' và 'hecto flow folder create|update|delete|move' (hỗ trợ cờ --steps "Req1,Req2||Req3" và --nodes-json <json|@file>, update theo Read-Merge-Write qua FlagSet.Visit, trả về chuẩn model.Result khi có --json). Cập nhật projects/cmd/hecto/SKILL.md bổ sung tài liệu hướng dẫn hecto flow cho AI Agent.
+    5. Viết Vitest unit tests trong projects/frontend/src/utils/__tests__/flowRunner.test.ts và Go tests trong projects/engine/flow_test.go cùng projects/cmd/hecto/main_test.go (kiểm thử tuần tự, hàng song song truyền biến không bị race condition, rẽ nhánh 3 chế độ, deleted request, timeout_ms, max_steps); đảm bảo 'bun run type-check', 'bun run test', 'go test ./...' pass 100%.
+
+- id: "3"
+  title: "[ APIs | Flows ] Workspace Mode Switcher, Flow Sidebar Tree, flowStore & Smart Reload Sync"
+  description: >-
+    Bổ sung chế độ chuyển đổi không gian làm việc [ APIs | Flows ] giữ nguyên bố cục 2 cột, xây dựng flowStore và cây quản lý Flow/FlowFolder trên AppSidebar hỗ trợ tìm kiếm, kéo-thả sắp xếp, CRUD (CAP-4).
+    Đồng bộ dữ liệu Flow với nút Smart Reload (Ctrl+R / F5), fsnotify watcher và Git Conflict Resolver (CAP-4, CAP-1).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trong projects/frontend/src/stores/uiStore.ts: bổ sung state workspaceMode ('apis' | 'flows', mặc định 'apis') và action setWorkspaceMode(mode).
+    2. Tạo projects/frontend/src/stores/flowStore.ts quản lý flowTree, expandedFlowFolders, activeFlowId, currentFlow, savedSnapshot, isDirty cùng các actions gọi Wails bindings: loadFlowTree, selectFlow, createFlow, saveCurrentFlow, renameFlow, deleteFlow, duplicateFlow, createFlowFolder, renameFlowFolder, deleteFlowFolder, moveFlowNode, reorderFlowNodes, sortFlowNodes.
+    3. Cập nhật projects/frontend/src/components/AppSidebar.vue: thêm thanh chuyển đổi [ APIs | Flows ] (data-test="workspace-mode-apis" và data-test="workspace-mode-flows"); khi ở chế độ 'flows', hiển thị ô tìm kiếm lọc cây Flow, nút '+' (New Flow / New Flow Folder), nút Thu gọn tất cả, nút Sắp xếp A-Z, nút Smart Reload kèm chấm báo hiệu, cây Flow/FlowFolder hỗ trợ kéo-thả sắp xếp/di chuyển, đổi tên tại chỗ và menu ngữ cảnh chuột phải.
+    4. Cập nhật projects/frontend/src/stores/collectionStore.ts (smartReload, switchCollection) và projects/frontend/src/App.vue (onMounted, Ctrl+S, Ctrl+N): nạp song song flowStore.loadFlowTree(); khi smartReload() chạy, tự động tải lại currentFlow nếu !flowStore.isDirty và giữ nguyên kèm hiện toast cảnh báo nếu flowStore.isDirty === true. Cập nhật GitConflictResolverModal.vue hiển thị badge cho entity_type 'flow' và 'flow_folder'.
+    5. Viết Vitest unit tests cho flowStore.test.ts và cập nhật AppSidebar.test.ts, collectionStore.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "4"
+  title: "Orthogonal 2-Axis Structured Flowchart UI ([ ↕ Dọc | ↔ Ngang ]), Live Execution, Searchable Request Picker & Step Inspector Panel"
+  description: >-
+    Xây dựng giao diện thiết kế và thực thi Structured Flowchart theo quy tắc 2 trục vuông góc tự động kèm nút đảo hướng toàn sơ đồ [ ↕ Dọc | ↔ Ngang ] và Searchable Request Picker (CAP-5).
+    Triển khai bộ chạy Flow trực tiếp trên UI (hỗ trợ Tuần tự, Hàng Song song Promise.all, Rẽ nhánh 3 chế độ, Stop/Abort) và Step Inspector Panel tái sử dụng ResponseViewer kèm nút 'Mở Request gốc ↗' (CAP-3, CAP-5).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Cập nhật projects/frontend/src/components/ResponseViewer.vue bổ sung prop tùy chọn overrideData (chứa response, error, executionLogs, scriptLogs, scriptError, testResults, loading) để vừa giữ nguyên hành vi mặc định đọc từ responseStore bên màn APIs, vừa cho phép StepInspectorPanel.vue tái sử dụng 100% giao diện hiển thị kết quả của từng bước trong Flow.
+    2. Tạo projects/frontend/src/components/flow/RequestPickerModal.vue (Searchable Request Picker): liệt kê toàn bộ Request từ collectionStore.tree kèm badge HTTP Method và đường dẫn Folder cha (VD: "Auth / Login"), hỗ trợ lọc nhanh theo từ khóa và chọn bằng bàn phím/chuột.
+    3. Tạo các component sơ đồ khối trong projects/frontend/src/components/flow/ (FlowEditor.vue, FlowToolbar.vue, FlowNodeList.vue, FlowStepCard.vue, FlowBranchEditor.vue, StepInspectorPanel.vue, EmptyStateFlow.vue) và tích hợp vào ContentArea.vue khi uiStore.workspaceMode === 'flows':
+       - FlowToolbar: sửa tên Flow, chỉnh Timeout (ms), nút gạt toàn cục 'Bố cục: [ ↕ Dọc | ↔ Ngang ]' (data-test="flow-layout-toggle"), nút Lưu (Ctrl+S), nút '▶ Chạy Flow' / '⏹ Dừng' và thanh tổng kết Passed/Failed/Skipped + tổng thời gian.
+       - Bố cục 2 trục vuông góc tự động: khi layout === 'vertical', chuỗi nối tiếp xếp dọc (flex-col), còn Hàng Song song (||) và Nhánh rẽ (↙ ↘) bung ngang (flex-row); khi layout === 'horizontal', chuỗi nối tiếp xếp ngang (flex-row), còn Hàng Song song và Nhánh rẽ bung dọc (flex-col).
+       - Thao tác trên khối: thêm bước nối tiếp (+), thêm bước song song cùng hàng (||), thêm/sửa/xóa nhánh rẽ 3 chế độ (✅ Thành công, ❌ Khi Lỗi, ⚡ Điều kiện tùy chỉnh 3 ô: Nguồn [Status Code | Body JSON path | Biến] -> Toán tử [==, !=, >, <, contains, exists] -> Giá trị), bật/tắt enabled, chỉnh timeout_ms riêng, kéo-thả sắp xếp khối, và hiển thị cảnh báo đỏ nếu Request gốc đã bị xóa.
+       - StepInspectorPanel: mở khi click vào một khối bước trên sơ đồ, hiển thị chi tiết kết quả bước qua ResponseViewer và nút 'Mở Request gốc ↗' (data-test="open-original-request-btn") chuyển sang chế độ 'apis' và mở đúng tab Request gốc.
+    4. Trong projects/frontend/src/stores/flowStore.ts: hiện thực hóa runCurrentFlow() và stopCurrentFlow() sử dụng các hàm từ flowRunner.ts + headless-engine.ts và Wails SendRequest/AbortRequest, chạy Promise.all cho Hàng Song song, gom biến tuần tự sau khi hàng kết thúc rồi lưu đĩa 1 lần, cập nhật màu sắc trạng thái thời gian thực (running/passed/failed/skipped) trên từng khối và nhánh.
+    5. Viết Vitest tests cho FlowEditor, RequestPickerModal, StepInspectorPanel và luồng chạy Flow (tuần tự, song song, rẽ nhánh 3 chế độ, đảo hướng Dọc/Ngang, nhảy sang Request gốc); đảm bảo 'bun run type-check', 'bun run test', 'go test ./...' pass 100%.

@@ -20,21 +20,27 @@ const (
 )
 
 var fieldLabels = map[string]string{
-	"name":                 "Tên (Name)",
-	"method":               "HTTP Method",
-	"url":                  "URL",
-	"description":          "Mô tả (Description)",
-	"active_env_id":        "Môi trường đang chọn (Active Environment)",
-	"body.type":            "Body Type",
-	"body.content":         "Body Content",
-	"auth.type":            "Auth Type",
-	"auth.bearer.token":    "Bearer Token",
-	"auth.basic.username":  "Basic Auth Username",
-	"auth.basic.password":  "Basic Auth Password",
-	"auth.apiKey.key":      "API Key Name",
-	"auth.apiKey.value":    "API Key Value",
-	"auth.apiKey.addTo":    "API Key Location (addTo)",
-	"scripts.pre_request":  "Pre-request Script",
+	"name":                  "Tên (Name)",
+	"method":                "HTTP Method",
+	"url":                   "URL",
+	"description":           "Mô tả (Description)",
+	"active_env_id":         "Môi trường đang chọn (Active Environment)",
+	"layout":                "Bố cục sơ đồ (Layout)",
+	"direction":             "Bố cục sơ đồ (Layout)",
+	"timeout_ms":            "Thời gian chờ mặc định (Timeout ms)",
+	"max_steps":             "Giới hạn số bước tối đa (Max Steps)",
+	"nodes":                 "Sơ đồ bước thực thi (Flow Nodes)",
+	"order":                 "Thứ tự sắp xếp (Order)",
+	"body.type":             "Body Type",
+	"body.content":          "Body Content",
+	"auth.type":             "Auth Type",
+	"auth.bearer.token":     "Bearer Token",
+	"auth.basic.username":   "Basic Auth Username",
+	"auth.basic.password":   "Basic Auth Password",
+	"auth.apiKey.key":       "API Key Name",
+	"auth.apiKey.value":     "API Key Value",
+	"auth.apiKey.addTo":     "API Key Location (addTo)",
+	"scripts.pre_request":   "Pre-request Script",
 	"scripts.post_response": "Post-response Script",
 }
 
@@ -165,6 +171,12 @@ func detectEntityMeta(relPath string, baseObj, oursObj, theirsObj map[string]int
 		entityType = "raw"
 	} else if slashPath == collectionFileName {
 		entityType = "collection"
+	} else if strings.HasPrefix(slashPath, "flows/") {
+		if slashPath == "flows/"+folderMetaFile || strings.HasSuffix(slashPath, "/"+folderMetaFile) {
+			entityType = "flow_folder"
+		} else {
+			entityType = "flow"
+		}
 	} else if slashPath == folderMetaFile || strings.HasSuffix(slashPath, "/"+folderMetaFile) {
 		entityType = "folder"
 	} else if strings.HasPrefix(slashPath, "environments/") {
@@ -182,7 +194,7 @@ func detectEntityMeta(relPath string, baseObj, oursObj, theirsObj map[string]int
 		}
 	}
 	if entityName == "" {
-		if entityType == "folder" {
+		if entityType == "folder" || entityType == "flow_folder" {
 			dir := filepath.Base(filepath.Dir(slashPath))
 			if dir != "." && dir != "/" {
 				entityName = dir

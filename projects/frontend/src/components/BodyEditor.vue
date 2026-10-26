@@ -114,10 +114,16 @@ const formatXml = () => {
   }
 }
 
+const lineCount = computed(() => bodyContent.value.split('\n').length)
+
 const lineNumbers = computed(() => {
-  const lines = bodyContent.value.split('\n').length
-  return Array.from({ length: lines }, (_, i) => i + 1).join('\n')
+  return Array.from({ length: lineCount.value }, (_, i) => i + 1).join('\n')
 })
+
+function gutterWidth(count: number): string {
+  const digits = Math.max(2, String(count).length)
+  return `${digits * 0.55 + 1.25}rem`
+}
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const lineNumbersRef = ref<HTMLDivElement | null>(null)
@@ -279,7 +285,8 @@ const handleKeydown = (e: KeyboardEvent) => {
         <!-- Line numbers -->
         <div 
           ref="lineNumbersRef"
-          class="w-[40px] flex-shrink-0 bg-surface-raised border-r border-default text-text-muted mono-base text-right pr-2 pt-2 pb-0 select-none overflow-hidden"
+          :style="{ width: gutterWidth(lineCount) }"
+          class="flex-shrink-0 bg-surface-raised border-r border-default text-text-muted mono-base text-right pr-2 pt-2 pb-0 select-none overflow-hidden"
         >
           <pre ref="preRef" class="mono-base m-0" style="margin: 0; line-height: 21px; font-size: 13px;">{{ lineNumbers }}</pre>
         </div>

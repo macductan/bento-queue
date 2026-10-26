@@ -63,10 +63,17 @@ export interface ScriptExecutionContext {
   allFolders?: FolderNodeLike[] | null
 }
 
+export interface ScriptTestResult {
+  name: string
+  passed: boolean
+  error?: string
+}
+
 export interface ScriptExecutionResult {
   success: boolean
   logs: string[]
   logEntries: ScriptLogEntry[]
+  testResults: ScriptTestResult[]
   envUpdates: Record<string, string>
   scopedEnvUpdates: ScopedEnvUpdates
   scopedAuthUpdates: ScopedAuthUpdates
@@ -180,6 +187,7 @@ export function executeScript(
 ): ScriptExecutionResult {
   const logs: string[] = []
   const logEntries: ScriptLogEntry[] = []
+  const testResults: ScriptTestResult[] = []
   const envUpdates: Record<string, string> = {}
   const scopedEnvUpdates: ScopedEnvUpdates = {
     collection: {},
@@ -199,6 +207,7 @@ export function executeScript(
       success: true,
       logs,
       logEntries,
+      testResults,
       envUpdates,
       scopedEnvUpdates,
       scopedAuthUpdates,
@@ -1357,6 +1366,7 @@ export function executeScript(
   const haResponse = context.response
     ? {
         code: context.response.status_code,
+        statusCode: context.response.status_code,
         status: context.response.status_text,
         responseTime: context.response.time_ms,
         responseSize: context.response.size_bytes,
@@ -1432,6 +1442,7 @@ export function executeScript(
     collectionVariables: collectionScopeApi,
     folderVariables: folderVariablesApi,
     folderEnv: folderEnvApi,
+    folderEnvVariables: folderEnvApi,
     folderAuth: folderAuthApi,
     folderAuthEnv: folderAuthEnvApi,
     collectionAuth: collectionAuthApi,
@@ -1444,7 +1455,16 @@ export function executeScript(
     },
     request: haRequest,
     response: haResponse,
-    log: (...args: unknown[]) => pushLog('log', args)
+    log: (...args: unknown[]) => pushLog('log', args),
+    test: (name: string, fn: () => void) => {
+      try {
+        fn()
+        testResults.push({ name: String(name), passed: true })
+      } catch (err: any) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        testResults.push({ name: String(name), passed: false, error: errMsg })
+      }
+    }
   }
 
   try {
@@ -1454,6 +1474,7 @@ export function executeScript(
       success: true,
       logs,
       logEntries,
+      testResults,
       envUpdates,
       scopedEnvUpdates,
       scopedAuthUpdates,
@@ -1471,6 +1492,7 @@ export function executeScript(
       success: false,
       logs,
       logEntries,
+      testResults,
       envUpdates,
       scopedEnvUpdates,
       scopedAuthUpdates,

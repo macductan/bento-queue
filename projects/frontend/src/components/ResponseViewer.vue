@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue"
-import { useResponseStore } from '@/stores/responseStore'
+import { useResponseStore, type ExecuteResponse, type ExecutionLogRecord } from '@/stores/responseStore'
 import EmptyStateResponse from './EmptyStateResponse.vue'
 import ResponseMetaBar from './ResponseMetaBar.vue'
 import JsonViewer from './JsonViewer.vue'
@@ -13,20 +13,66 @@ import { tryParseXml, formatXmlText } from '@/utils/xmlUtils'
 import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
 import { useUiStore } from '@/stores/uiStore'
 
+export interface ResponseViewerOverrideData {
+  response?: ExecuteResponse | null
+  error?: { code: string; message: string } | string | null
+  executionLogs?: ExecutionLogRecord[]
+  scriptLogs?: string[]
+  scriptError?: string | null
+  testResults?: Array<{ name: string; passed: boolean; error?: string }>
+  loading?: boolean
+}
+
+const props = defineProps<{
+  overrideData?: ResponseViewerOverrideData
+}>()
+
 const responseStore = useResponseStore()
 const uiStore = useUiStore()
-const activeTab = ref<'body' | 'headers' | 'logs'>('body')
+const activeTab = ref<'body' | 'headers' | 'logs' | 'tests'>('body')
 const expandedLogIds = ref<Record<string, boolean>>({})
 
-const headersCount = computed(() => flattenHeaders(responseStore.response?.headers).length)
+const isOverrideMode = computed(() => props.overrideData !== undefined)
+const currentLoading = computed(() =>
+  isOverrideMode.value ? Boolean(props.overrideData?.loading) : responseStore.loading
+)
+const currentResponse = computed(() =>
+  isOverrideMode.value ? (props.overrideData?.response ?? null) : responseStore.response
+)
+const currentError = computed<{ code: string; message: string } | null>(() => {
+  if (!isOverrideMode.value) return responseStore.error
+  const err = props.overrideData?.error
+  if (!err) return null
+  if (typeof err === 'string') {
+    return { code: 'EXECUTION_ERROR', message: err }
+  }
+  return err
+})
+const currentExecutionLogs = computed(() =>
+  isOverrideMode.value ? (props.overrideData?.executionLogs ?? []) : responseStore.executionLogs
+)
+const currentScriptLogs = computed(() =>
+  isOverrideMode.value ? (props.overrideData?.scriptLogs ?? []) : responseStore.scriptLogs
+)
+const currentScriptError = computed(() =>
+  isOverrideMode.value ? (props.overrideData?.scriptError ?? null) : responseStore.scriptError
+)
+const currentTestResults = computed(() =>
+  isOverrideMode.value ? (props.overrideData?.testResults ?? []) : []
+)
+const testsPassedCount = computed(() =>
+  currentTestResults.value.filter(t => t.passed).length
+)
+
+const headersCount = computed(() => flattenHeaders(currentResponse.value?.headers).length)
 const logsCount = computed(() =>
-  responseStore.executionLogs.length > 0
-    ? responseStore.executionLogs.length
-    : responseStore.scriptLogs.length
+  currentExecutionLogs.value.length > 0
+    ? currentExecutionLogs.value.length
+    : currentScriptLogs.value.length
 )
 
 const isEmptyResponse = computed(() => {
-  const res = responseStore.response
+  const res = currentResponse.value
   return res && (res.status_code === 204 || res.size_bytes === 0)
 })
 
@@ -34,12 +80,12 @@ const mode = ref<'pretty' | 'raw'>('raw')
 const copyStatus = ref<'idle' | 'copied'>('idle')
 
 const PRETTY_DEFAULT_MAX_BYTES = 15 * 1024 * 1024
-const isOversized = computed(() => (responseStore.response?.size_bytes || 0) > PRETTY_DEFAULT_MAX_BYTES)
-const isValidJson = computed(() => tryParseJson(responseStore.response?.body || ''))
-const isValidXml = computed(() => tryParseXml(responseStore.response?.body || ''))
+const isOversized = computed(() => (currentResponse.value?.size_bytes || 0) > PRETTY_DEFAULT_MAX_BYTES)
+const isValidJson = computed(() => tryParseJson(currentResponse.value?.body || ''))
+const isValidXml = computed(() => tryParseXml(currentResponse.value?.body || ''))
 const canBePretty = computed(() => !isOversized.value && (isValidJson.value || isValidXml.value))
 
-watch(() => responseStore.response, (newRes: any) => {
+watch(() => currentResponse.value, (newRes: any) => {
   if (newRes && canBePretty.value) {
     mode.value = 'pretty'
   } else {
@@ -47,8 +93,14 @@ watch(() => responseStore.response, (newRes: any) => {
   }
 }, { immediate: true })
 
+watch(() => currentTestResults.value.length, (len) => {
+  if (len === 0 && activeTab.value === 'tests') {
+    activeTab.value = 'body'
+  }
+})
+
 const copyBody = async () => {
-  const res = responseStore.response
+  const res = currentResponse.value
   if (!res) return
   try {
     let textToCopy = res.body
@@ -73,7 +125,7 @@ const copyBody = async () => {
 }
 
 const isBinaryResponse = computed(() => {
-  const res = responseStore.response
+  const res = currentResponse.value
   return res && res.is_binary
 })
 
@@ -82,7 +134,7 @@ const handleBodyKeydown = async (e: KeyboardEvent) => {
     const selection = window.getSelection()?.toString()
     if (selection && selection.length > 0) return
 
-    const body = responseStore.response?.body
+    const body = currentResponse.value?.body
     if (body) {
       e.preventDefault()
       try {
@@ -134,25 +186,29 @@ const levelBadgeClass = (level: string) => {
 
 <template>
   <div class="h-full flex flex-col overflow-hidden">
-    <div v-if="responseStore.loading" class="flex-1 flex flex-col items-center justify-center gap-3 p-4" aria-live="polite">
+    <div v-if="currentLoading" class="flex-1 flex flex-col items-center justify-center gap-3 p-4" aria-live="polite">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-primary"></div>
       <div class="text-text-secondary text-sm">Đang tải...</div>
     </div>
     
-    <div v-else-if="responseStore.response || responseStore.error || logsCount > 0 || responseStore.scriptError" class="flex-1 flex flex-col overflow-hidden">
+    <div v-else-if="currentResponse || currentError || logsCount > 0 || currentScriptError || currentTestResults.length > 0" class="flex-1 flex flex-col overflow-hidden">
       
-      <div class="flex items-center justify-between border-b border-border-default shrink-0 h-10 pr-4">
+      <div
+        class="flex border-b border-border-default shrink-0"
+        :class="isOverrideMode ? 'flex-col items-stretch' : 'h-10 pr-4 items-center justify-between'"
+      >
         <!-- Left: Tabs -->
-        <div class="flex items-center h-full">
-          <div class="flex h-full" role="tablist" aria-label="Response tabs">
+        <div class="flex items-center" :class="isOverrideMode ? 'h-9 px-1 overflow-x-auto' : 'h-full'">
+          <div class="flex h-full items-center" role="tablist" aria-label="Response tabs">
             <button
               role="tab"
               :aria-selected="activeTab === 'body'"
               aria-controls="panel-body"
               id="tab-body"
               @click="activeTab = 'body'"
-              class="flex items-center gap-2 px-4 h-10 border-b-2 outline-none font-medium ui-sm"
+              class="flex items-center gap-1.5 h-full border-b-2 outline-none font-medium whitespace-nowrap shrink-0"
               :class="[
+                isOverrideMode ? 'px-2.5 text-xs' : 'px-4 ui-sm',
                 activeTab === 'body' 
                   ? 'border-emerald-500 text-emerald-400' 
                   : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'
@@ -166,8 +222,9 @@ const levelBadgeClass = (level: string) => {
               aria-controls="panel-headers"
               id="tab-headers"
               @click="activeTab = 'headers'"
-              class="flex items-center gap-2 px-4 h-10 border-b-2 outline-none font-medium ui-sm"
+              class="flex items-center gap-1.5 h-full border-b-2 outline-none font-medium whitespace-nowrap shrink-0"
               :class="[
+                isOverrideMode ? 'px-2.5 text-xs' : 'px-4 ui-sm',
                 activeTab === 'headers' 
                   ? 'border-emerald-500 text-emerald-400' 
                   : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'
@@ -183,14 +240,39 @@ const levelBadgeClass = (level: string) => {
               </span>
             </button>
             <button
+              v-if="currentTestResults.length > 0"
+              role="tab"
+              data-test="response-tab-tests"
+              :aria-selected="activeTab === 'tests'"
+              aria-controls="panel-tests"
+              id="tab-tests"
+              @click="activeTab = 'tests'"
+              class="flex items-center gap-1.5 h-full border-b-2 outline-none font-medium whitespace-nowrap shrink-0"
+              :class="[
+                isOverrideMode ? 'px-2.5 text-xs' : 'px-4 ui-sm',
+                activeTab === 'tests' 
+                  ? 'border-emerald-500 text-emerald-400' 
+                  : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'
+              ]"
+            >
+              Tests ({{ testsPassedCount }}/{{ currentTestResults.length }})
+              <span
+                class="flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[9px] font-bold"
+                :class="testsPassedCount === currentTestResults.length ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'"
+              >
+                {{ testsPassedCount }}/{{ currentTestResults.length }}
+              </span>
+            </button>
+            <button
               role="tab"
               data-test="response-tab-logs"
               :aria-selected="activeTab === 'logs'"
               aria-controls="panel-logs"
               id="tab-logs"
               @click="activeTab = 'logs'"
-              class="flex items-center gap-2 px-4 h-10 border-b-2 outline-none font-medium ui-sm"
+              class="flex items-center gap-1.5 h-full border-b-2 outline-none font-medium whitespace-nowrap shrink-0"
               :class="[
+                isOverrideMode ? 'px-2.5 text-xs' : 'px-4 ui-sm',
                 activeTab === 'logs' 
                   ? 'border-emerald-500 text-emerald-400' 
                   : 'border-transparent text-text-secondary hover:text-text-primary hover:border-border-subtle'
@@ -209,9 +291,14 @@ const levelBadgeClass = (level: string) => {
         </div>
 
         <!-- Right: Meta & Actions -->
-        <div class="flex items-center gap-2">
-          <ResponseMetaBar v-if="responseStore.response" :response="responseStore.response" />
+        <div
+          v-if="currentResponse || !isOverrideMode"
+          class="flex items-center gap-2"
+          :class="isOverrideMode ? 'px-3 py-1.5 border-t border-border-default/60 bg-surface-base/40 justify-between' : ''"
+        >
+          <ResponseMetaBar v-if="currentResponse" :response="currentResponse" />
           <button
+            v-if="!isOverrideMode"
             type="button"
             data-test="collapse-response-btn"
             @click="uiStore.setResponsePaneCollapsed(true)"
@@ -228,7 +315,7 @@ const levelBadgeClass = (level: string) => {
 
       <!-- Sub-toolbar for Body Tab: Pretty/Raw & Copy -->
       <div 
-        v-if="activeTab === 'body' && responseStore.response && !isEmptyResponse && !isBinaryResponse" 
+        v-if="activeTab === 'body' && currentResponse && !isEmptyResponse && !isBinaryResponse" 
         data-test="response-body-subtoolbar"
         class="flex items-center justify-between px-4 py-1.5 border-b border-border-default bg-surface-base/60 shrink-0 min-h-[36px]"
       >
@@ -288,10 +375,10 @@ const levelBadgeClass = (level: string) => {
           tabindex="0"
           @keydown="handleBodyKeydown"
         >
-          <ResponseErrorState v-if="responseStore.error && !responseStore.response" :error="responseStore.error" />
-          <EmptyStateResponse v-else-if="!responseStore.response" />
+          <ResponseErrorState v-if="currentError && !currentResponse" :error="currentError" />
+          <EmptyStateResponse v-else-if="!currentResponse" />
           <template v-else>
-            <div v-if="responseStore.response.truncated" class="mx-4 mt-4 mb-3 p-3 bg-warning-bg border border-warning-border rounded text-warning-text text-sm shrink-0">
+            <div v-if="currentResponse.truncated" class="mx-4 mt-4 mb-3 p-3 bg-warning-bg border border-warning-border rounded text-warning-text text-sm shrink-0">
               Phản hồi quá lớn và đã bị cắt bớt (tối đa 10MB).
             </div>
             
@@ -303,14 +390,49 @@ const levelBadgeClass = (level: string) => {
                 <path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Z"/>
                 <path d="M96,128a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,128Zm0,32a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,160Zm0,32a8,8,0,0,1,8-8h24a8,8,0,0,1,0,16H104A8,8,0,0,1,96,192Z" opacity="0.2"/>
               </svg>
-              <div class="ui-sm font-medium">Response dạng nhị phân ({{ formatSize(responseStore.response?.size_bytes ?? 0) }}) — không hiển thị nội dung.</div>
+              <div class="ui-sm font-medium">Response dạng nhị phân ({{ formatSize(currentResponse?.size_bytes ?? 0) }}) — không hiển thị nội dung.</div>
             </div>
-            <JsonViewer v-else :response="responseStore.response" :mode="mode" />
+            <JsonViewer v-else :response="currentResponse" :mode="mode" />
           </template>
         </div>
         <div v-show="activeTab === 'headers'" class="absolute inset-0" id="panel-headers" role="tabpanel" aria-labelledby="tab-headers">
-          <HeadersTable v-if="responseStore.response" :headers="responseStore.response.headers" />
+          <HeadersTable v-if="currentResponse" :headers="currentResponse.headers" />
           <div v-else class="flex items-center justify-center h-full text-text-muted text-xs">Chưa có phản hồi HTTP.</div>
+        </div>
+        <div
+          v-if="currentTestResults.length > 0"
+          v-show="activeTab === 'tests'"
+          class="absolute inset-0 overflow-y-auto p-4 space-y-2"
+          id="panel-tests"
+          data-test="response-tests-panel"
+          role="tabpanel"
+          aria-labelledby="tab-tests"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+              Kết quả kiểm thử ha.test() ({{ testsPassedCount }}/{{ currentTestResults.length }} Passed)
+            </span>
+          </div>
+          <div
+            v-for="(test, idx) in currentTestResults"
+            :key="idx"
+            data-test="response-test-item"
+            class="flex items-start gap-2.5 p-2.5 rounded border text-xs font-mono"
+            :class="test.passed ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200' : 'bg-rose-950/30 border-rose-500/40 text-rose-200'"
+          >
+            <span
+              class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase shrink-0"
+              :class="test.passed ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'"
+            >
+              {{ test.passed ? 'PASS' : 'FAIL' }}
+            </span>
+            <div class="flex-1 min-w-0">
+              <div class="font-medium break-words">{{ test.name }}</div>
+              <div v-if="test.error" class="mt-1 text-rose-300/90 text-[11px] break-words">
+                {{ test.error }}
+              </div>
+            </div>
+          </div>
         </div>
         <div
           v-show="activeTab === 'logs'"
@@ -325,7 +447,7 @@ const levelBadgeClass = (level: string) => {
               Bảng nhật ký thực thi Request &amp; Script (Execution &amp; Console Logs)
             </span>
             <button
-              v-if="logsCount > 0 || responseStore.scriptError"
+              v-if="!isOverrideMode && (logsCount > 0 || currentScriptError)"
               type="button"
               data-test="clear-response-logs-btn"
               class="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-surface-hover cursor-pointer"
@@ -336,13 +458,13 @@ const levelBadgeClass = (level: string) => {
           </div>
 
           <div
-            v-if="responseStore.scriptError"
+            v-if="currentScriptError"
             class="rounded bg-red-950/50 border border-red-500/40 px-3 py-2 font-mono text-xs text-red-300"
           >
-            {{ responseStore.scriptError }}
+            {{ currentScriptError }}
           </div>
 
-          <div v-if="responseStore.executionLogs.length > 0" class="border border-border-default rounded-md overflow-hidden bg-surface-base">
+          <div v-if="currentExecutionLogs.length > 0" class="border border-border-default rounded-md overflow-hidden bg-surface-base">
             <table class="w-full text-left border-collapse font-mono text-xs" data-test="execution-logs-table">
               <thead>
                 <tr class="border-b border-border-default bg-surface-raised text-text-muted text-[11px]">
@@ -353,7 +475,7 @@ const levelBadgeClass = (level: string) => {
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-subtle">
-                <template v-for="item in responseStore.executionLogs" :key="item.id">
+                <template v-for="item in currentExecutionLogs" :key="item.id">
                   <tr class="hover:bg-surface-hover/50">
                     <td class="py-2 px-3 text-text-muted whitespace-nowrap align-top">
                       {{ formatLogTime(item.timestamp) }}
@@ -417,10 +539,10 @@ const levelBadgeClass = (level: string) => {
           </div>
 
           <div
-            v-else-if="responseStore.scriptLogs.length > 0"
+            v-else-if="currentScriptLogs.length > 0"
             class="rounded border border-border-default bg-surface-base p-3 font-mono text-xs space-y-1 text-emerald-300"
           >
-            <div v-for="(line, idx) in responseStore.scriptLogs" :key="idx">{{ line }}</div>
+            <div v-for="(line, idx) in currentScriptLogs" :key="idx">{{ line }}</div>
           </div>
 
           <div v-else class="text-xs text-text-muted font-mono py-6 text-center">
@@ -432,6 +554,7 @@ const levelBadgeClass = (level: string) => {
     
     <div v-else class="flex-1 p-4 relative">
       <button
+        v-if="!isOverrideMode"
         type="button"
         data-test="collapse-response-btn"
         @click="uiStore.setResponsePaneCollapsed(true)"

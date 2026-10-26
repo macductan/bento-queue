@@ -1,0 +1,71 @@
+- id: "1"
+  title: "Theme Dark Zinc + Indigo, Badge HTTP Method (style.css) & Tái cấu trúc Thanh Header (AppHeader.vue, CollectionSwitcher.vue)"
+  description: >-
+    Đồng bộ bảng màu CSS tokens trong style.css sang Dark Zinc + Indigo (zinc-950 #09090b, zinc-900 #18181b, border-zinc-800 #27272a, điểm nhấn indigo-600/500/400) và chuẩn hóa hệ thống badge HTTP Method có nền mờ + viền màu đồng thời giữ nguyên các class text-method-* (CAP-1).
+    Đưa CollectionSwitcher sang cụm bên trái ngay cạnh Logo kèm badge Default; nâng cấp nút Git Sync và Mock Server thành dạng status pill hiển thị chữ + chấm trạng thái; bổ sung icon upload amber và badge phím tắt ^I cho nút Import Postman (CAP-2).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trong projects/frontend/src/style.css: cập nhật các biến @theme sang bảng màu Dark Zinc + Indigo (--color-bg-base: #09090B, --color-bg-surface: #18181B, --color-bg-elevated: #27272A, --color-bg-hover: #27272A, --color-border-subtle: #27272A, --color-border-focus: #6366F1, --color-text-primary: #F4F4F5, --color-text-secondary: #A1A1AA, --color-text-muted: #71717A, --color-accent-primary: #4F46E5, --color-accent-hover: #6366F1) và cập nhật các biến --color-method-* (GET #10B981, POST #3B82F6, PUT #F59E0B, PATCH #8B5CF6, DELETE #F43F5E, HEAD #06B6D4, OPTIONS #A1A1AA). Định nghĩa các class/helper badge HTTP Method có nền mờ 10% + viền màu 20% đồng thời giữ nguyên các class text-method-get, text-method-post, text-method-put, text-method-patch, text-method-delete.
+    2. Trong projects/frontend/src/components/CollectionSwitcher.vue: trên nút bấm mở dropdown (data-test="collection-switcher-btn"), hiển thị thêm badge 'Default' (data-test="collection-default-badge") khi collection đang chọn có is_default === true.
+    3. Trong projects/frontend/src/components/AppHeader.vue:
+       - Chuyển <CollectionSwitcher /> sang cụm bên trái ngay cạnh Logo và badge version, ngăn cách bởi vạch dọc (<div class="h-5 w-px bg-zinc-800"></div>).
+       - Nâng cấp nút Git Sync (data-test="git-config-btn") thành dạng status pill hiển thị icon nhánh Git + chấm trạng thái (giữ nguyên data-test="git-status-badge-conflict" và data-test="git-status-badge-configured") + nhãn văn bản rõ ràng: 'Xung đột Git (n)' (style cảnh báo amber khi gitStore.hasConflict), 'Git: <branch>' (khi gitStore.isConfigured), hoặc 'Git Sync' (khi chưa cấu hình).
+       - Nâng cấp nút Mock Server (data-test="open-mock-server-btn") thành dạng status pill hiển thị chấm tròn (giữ nguyên data-test="mock-server-running-indicator" khi đang chạy) + nhãn 'Mock :<port>' (khi mockStore.status.running === true, viền/nền emerald) hoặc 'Mock Server' (khi tắt).
+       - Cập nhật nút Import Postman (data-test="import-collection-btn") có icon upload màu amber-400 + chữ 'Import Postman' + badge phím tắt <kbd>^I</kbd>.
+    4. Cập nhật và bổ sung Vitest unit tests trong projects/frontend/src/components/__tests__/ResizableLayout.test.ts và AppTabBar.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "2"
+  title: "Nâng cấp Thanh Sidebar, Banner Cảnh báo Ổ đĩa & Nút Cài đặt Thư mục nhanh (AppSidebar.vue, TreeNodeRow.vue, TreeContextMenu.vue)"
+  description: >-
+    Bổ sung icon cho bộ chuyển đổi chế độ APIs (tia sét indigo) và Flows (luồng pink); tách ô tìm kiếm thành 1 hàng riêng phía trên hàng công cụ [Làm mới (Ctrl+R) | Thu gọn tất cả | Sắp xếp A-Z] + nút pill '+ Tạo mới ▾'; bổ sung banner cảnh báo nổi khi phát hiện thay đổi ổ đĩa từ bên ngoài kèm nút [Tải lại]; thêm nút mở nhanh Cài đặt Thư mục (icon sliders) trên dòng Folder ở Sidebar và trong TreeContextMenu (CAP-3).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trong projects/frontend/src/components/AppSidebar.vue:
+       - Thêm icon tia sét (màu indigo-400 khi active) vào nút 'APIs' (data-test="workspace-mode-apis") và icon luồng/cột (màu pink-400 khi active) vào nút 'Flows' (data-test="workspace-mode-flows").
+       - Tách khu vực điều khiển phía dưới mode switcher thành 2 hàng: Hàng 1 là ô tìm kiếm (data-test="tree-filter-input") chiếm trọn chiều ngang kèm nút xóa (data-test="clear-filter-btn"); Hàng 2 gồm cụm nút bên trái [Làm mới (data-test="sidebar-reload-btn" kèm data-test="external-change-badge") | Thu gọn tất cả (data-test="tree-collapse-all-btn") | Sắp xếp A-Z (data-test="tree-sort-alphabet-btn")] và nút pill '+ Tạo mới ▾' (data-test="sidebar-add-btn") ở bên phải.
+       - Ngay đầu vùng cây thư mục, khi store.hasExternalChanges === true, hiển thị banner cảnh báo nổi (data-test="external-change-banner") với nội dung "Phát hiện ổ đĩa thay đổi (Git/CLI)" và nút "[Tải lại]" (data-test="external-change-reload-btn") gọi handleSmartReload().
+    2. Trong projects/frontend/src/components/TreeNodeRow.vue (khi mode === 'apis' và node.type === 'folder'):
+       - Trong cụm nút thao tác nhanh khi hover (cạnh nút sắp xếp A-Z data-test="folder-sort-btn" và nút ••• data-test="tree-node-menu-btn"), bổ sung nút mở nhanh 'Cài đặt Thư mục' (data-test="folder-settings-btn", icon sliders, title="Cài đặt Thư mục (Auth, Headers, Vars, Scripts)") gọi store.openFolderSettings(props.node.id).
+       - Cập nhật badge HTTP Method trên dòng request trong TreeNodeRow.vue có nền mờ + viền màu theo chuẩn mockup (vẫn giữ class text-method-*).
+    3. Trong projects/frontend/src/components/TreeContextMenu.vue: đảm bảo mục 'Cài đặt thư mục' (data-test="ctx-folder-settings") hiển thị icon sliders màu indigo-400 và mở tab FolderEditor khi bấm.
+    4. Cập nhật và bổ sung Vitest unit tests trong projects/frontend/src/components/__tests__/AppSidebar.test.ts và TreeNodeRow.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "3"
+  title: "Nâng cấp Khu vực Soạn thảo Request/Folder, UrlBar, WarningBanner, RequestTabs & ScriptEditor"
+  description: >-
+    Hỗ trợ sửa nhanh tên inline trên thanh Breadcrumb và thêm nút Lưu (Ctrl+S) cạnh chỉ báo trạng thái lưu trên RequestEditor & FolderEditor; nâng cấp UrlBar với badge Method nền mờ + viền màu và nút Gửi/Hủy kèm icon + ^Enter; bổ sung nút 'Chuyển Body sang None' trên WarningBanner; hiển thị badge kiểu Auth, kiểu Body và tổng số Headers đang bật trên RequestTabs; bổ sung nút '▶ Chạy thử Script' trên ScriptEditor (CAP-4).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trong projects/frontend/src/components/RequestEditor.vue và FolderEditor.vue:
+       - Trên thanh Breadcrumb: giữ nguyên phần tử [data-test="breadcrumb-request"] cho hành vi click-to-reveal trên cây thư mục, đồng thời hỗ trợ sửa nhanh tên Request/Folder inline (qua nút sửa tên [data-test="breadcrumb-rename-btn"] hoặc double-click để bật ô input [data-test="breadcrumb-name-input"] gọi collectionStore.renameNode).
+       - Ở cụm bên phải thanh Breadcrumb: đặt chỉ báo trạng thái lưu (data-test="save-state-indicator") nằm cạnh nút 'Lưu (Ctrl+S)' (data-test="request-save-btn" trên RequestEditor gọi autoSave.saveNow(), và data-test="folder-save-btn" trên FolderEditor gọi saveFolderSettingsNow()).
+    2. Trong projects/frontend/src/components/UrlBar.vue:
+       - Cập nhật nút chọn HTTP Method (#http-method-select) hiển thị màu chữ + nền mờ + viền màu theo phương thức đang chọn.
+       - Cập nhật nút Gửi (data-test="send-request-btn", aria-label="Gửi") hiển thị icon gửi + chữ 'Gửi' + badge phím tắt <kbd>^Enter</kbd>; nút Hủy (data-test="abort-request-btn") hiển thị icon spinner + chữ 'Hủy'. Giữ nguyên 100% VariableHighlighter inline trên ô nhập URL.
+    3. Trong projects/frontend/src/components/WarningBanner.vue:
+       - Khi requestStore.showGetBodyWarning === true, bổ sung nút thao tác nhanh 'Chuyển Body sang None' (data-test="switch-body-none-btn") gọi requestStore.setBodyType('none') bên cạnh nút 'Bỏ qua'.
+    4. Trong projects/frontend/src/components/RequestTabs.vue:
+       - Hiển thị badge kiểu Auth đang chọn ('inherit', 'bearer', 'basic', 'apiKey', 'none') trên tab Auth (data-test="tab-auth-badge").
+       - Hiển thị badge kiểu Body đang chọn ('json', 'xml', 'form-data', 'urlencoded', 'text', 'none') trên tab Body (data-test="tab-body-badge").
+       - Hiển thị badge tổng số Headers đang bật (số custom headers enabled + số default/inherited headers từ Folder/Collection đang bật và không bị override) trên tab Headers (data-test="tab-headers-badge").
+    5. Trong projects/frontend/src/components/ScriptEditor.vue:
+       - Cập nhật nút chạy thử script (data-test="run-pre-script-btn") hiển thị nhãn '▶ Chạy thử Script' với style emerald pill và hiển thị thông báo/kết quả chạy thử.
+    6. Cập nhật và bổ sung Vitest unit tests trong RequestEditor.test.ts, FolderEditor.test.ts, UrlBar.test.ts, ScriptEditor.test.ts; đảm bảo 'bun run type-check' và 'bun run test' pass 100%.
+
+- id: "4"
+  title: "Bố cục Ngăn kéo Phải cho StepInspectorPanel trong Flows Workspace (FlowEditor.vue, StepInspectorPanel.vue)"
+  description: >-
+    Chuyển StepInspectorPanel.vue từ khung nằm dưới đáy sang ngăn kéo dọc bên phải (w-96 border-l border-zinc-800) cạnh Flow Canvas trong FlowEditor.vue và đồng bộ style card/toolbar theo bảng màu Dark Zinc + Indigo (CAP-5).
+  spec_checkpoint: false
+  done_checkpoint: false
+  invoke_dev_with: >-
+    1. Trong projects/frontend/src/components/flow/FlowEditor.vue:
+       - Bọc vùng Flow Canvas (data-test="flow-canvas") và <StepInspectorPanel /> trong một container flex ngang (<div class="flex-1 flex overflow-hidden relative min-h-0">) nằm dưới <FlowToolbar /> để StepInspectorPanel mở ở khung bên phải cạnh vùng canvas thay vì nằm chồng ở đáy.
+    2. Trong projects/frontend/src/components/flow/StepInspectorPanel.vue:
+       - Chuyển class gốc của panel (data-test="step-inspector-panel") từ h-[46%] border-t sang ngăn kéo dọc bên phải: w-96 border-l border-zinc-800 bg-bg-surface flex flex-col shrink-0 h-full overflow-hidden z-20.
+       - Đồng bộ bố cục header của StepInspectorPanel (badge method có nền mờ + viền màu, tên request, nút 'Mở Request gốc ↗' data-test="open-original-request-btn", nút đóng data-test="close-step-inspector-btn", thông tin URL/status/duration/ha.test) và vùng hiển thị <ResponseViewer :overrideData="overrideData" /> bên dưới.
+    3. Đồng bộ màu sắc card và badge HTTP Method trong FlowStepCard.vue và FlowToolbar.vue theo bảng màu Dark Zinc + Indigo mà vẫn giữ nguyên 100% tính năng Flow Runner đa nhánh và kéo-thả.
+    4. Cập nhật và bổ sung Vitest unit tests trong projects/frontend/src/components/__tests__/FlowEditor.test.ts kiểm tra bố cục ngăn kéo phải của StepInspectorPanel; đảm bảo 'bun run type-check', 'bun run test' và 'go test ./...' pass 100%.

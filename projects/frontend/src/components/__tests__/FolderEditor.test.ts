@@ -563,7 +563,10 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
           'env-dev': [{ key: 'bearer_token', value: 'env-specific-jwt', enabled: true }]
         },
         headers: [{ key: 'X-Custom', value: '{{coll_var}}', enabled: true }],
-        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } }
+        auth: { type: 'bearer', bearer: { token: '{{bearer_token}}' } },
+        auth_envs: {
+          'env-dev': { type: 'bearer', bearer: { token: '{{bearer_token}}' } }
+        }
       }
     } as any)
 
@@ -712,9 +715,125 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
     const tabButtons2 = wrapper2.findAll('div[role="tablist"] button[role="tab"]')
     expect(tabButtons2[1].attributes('aria-selected')).toBe('true')
   })
+
+  it('reloads folder data from disk on hecto:folder-updated with folderId when clean, and ignores when dirty', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    expect(LoadFolder).toHaveBeenCalledTimes(1)
+
+    // 1. Clean state -> reloads from disk
+    vi.mocked(LoadFolder).mockResolvedValueOnce({
+      success: true,
+      data: {
+        ...mockFolder,
+        variables: [{ key: 'reloaded_var', value: 'from-cli', enabled: true }]
+      }
+    } as any)
+
+    window.dispatchEvent(
+      new CustomEvent('hecto:folder-updated', {
+        detail: { folderId: 'folder-1', reload: true }
+      })
+    )
+    await flushPromises()
+    await nextTick()
+
+    expect(LoadFolder).toHaveBeenCalledTimes(2)
+    expect((wrapper.vm as any).variables).toEqual([
+      { key: 'reloaded_var', value: 'from-cli', enabled: true }
+    ])
+
+    // 2. Dirty state -> does NOT reload from disk
+    ;(wrapper.vm as any).headers.push({ key: 'X-Unsaved', value: 'dirty', enabled: true })
+    await nextTick()
+    expect((wrapper.vm as any).isDirty).toBe(true)
+
+    window.dispatchEvent(
+      new CustomEvent('hecto:folder-updated', {
+        detail: { folderId: 'folder-1', reload: true }
+      })
+    )
+    await flushPromises()
+    await nextTick()
+
+    expect(LoadFolder).toHaveBeenCalledTimes(2)
+  })
+
+  it('supports inline folder rename on Breadcrumb and manual Save via folder-save-btn', async () => {
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+    const renameNodeSpy = vi.spyOn(colStore, 'renameNode').mockResolvedValue(true)
+
+    const wrapper = mountEditor()
+    await flushPromises()
+    await nextTick()
+
+    const currentFolderSpan = wrapper.find('[data-test="breadcrumb-current-folder"]')
+    expect(currentFolderSpan.exists()).toBe(true)
+    expect(currentFolderSpan.text()).toBe('Auth Module')
+
+    const renameBtn = wrapper.find('[data-test="breadcrumb-rename-btn"]')
+    expect(renameBtn.exists()).toBe(true)
+    await renameBtn.trigger('click')
+
+    const input = wrapper.find('[data-test="breadcrumb-name-input"]')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('Auth Module')
+
+    // Escape cancels rename
+    await input.setValue('Temp Folder')
+    await input.trigger('keydown.esc')
+    expect(wrapper.find('[data-test="breadcrumb-name-input"]').exists()).toBe(false)
+    expect(renameNodeSpy).not.toHaveBeenCalled()
+
+    // Double click opens input and Enter commits rename
+    await wrapper.find('[data-test="breadcrumb-current-folder"]').trigger('dblclick')
+    const input2 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await input2.setValue('  Security Module  ')
+    await input2.trigger('keydown.enter')
+    await flushPromises()
+
+    expect(renameNodeSpy).toHaveBeenCalledWith('folder-1', 'Security Module', 'folder')
+
+    // Blur commits valid new folder name
+    await wrapper.find('[data-test="breadcrumb-rename-btn"]').trigger('click')
+    const input3 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await input3.setValue('Blurred Folder')
+    await input3.trigger('blur')
+    await flushPromises()
+    expect(renameNodeSpy).toHaveBeenCalledWith('folder-1', 'Blurred Folder', 'folder')
+
+    // Failed renameNode (false) does not overwrite folder.name
+    const vm = wrapper.vm as any
+    vm.folder.name = 'Auth Module'
+    renameNodeSpy.mockResolvedValueOnce(false)
+    await wrapper.find('[data-test="breadcrumb-rename-btn"]').trigger('click')
+    const input4 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await input4.setValue('Should Not Apply')
+    await input4.trigger('keydown.enter')
+    await flushPromises()
+    expect(vm.folder.name).toBe('Auth Module')
+
+    // Manual save button triggers saveFolderData and shows toast
+    const uiStore = useUiStore()
+    vm.headers.push({ key: 'X-Manual-Save', value: '1', enabled: true })
+    await nextTick()
+
+    const saveBtn = wrapper.find('[data-test="folder-save-btn"]')
+    expect(saveBtn.exists()).toBe(true)
+    expect(saveBtn.text()).toContain('Lưu')
+    expect(saveBtn.text()).toContain('Ctrl+S')
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(UpdateFolder).toHaveBeenCalledTimes(1)
+    expect(uiStore.toast?.text).toBe('Đã lưu cấu hình thư mục')
+  })
 })
-
-
-
-
-

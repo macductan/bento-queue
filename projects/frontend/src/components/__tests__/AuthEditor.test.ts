@@ -338,7 +338,8 @@ describe('AuthEditor.vue', () => {
         modelValue: {
           type: 'bearer',
           bearer: { token: 'static-secret' }
-        }
+        },
+        envScope: '__global__'
       },
       global: {
         provide: {
@@ -431,6 +432,49 @@ describe('AuthEditor.vue', () => {
       wrapper.unmount()
       vi.useRealTimers()
     }
+  })
+
+  it('auto-detects selectedEnvScope from envStore.activeEnvId on mount and syncs reactively when activeEnvId changes', async () => {
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const envStore = useEnvironmentStore()
+    envStore.environments = [
+      { id: 'env-local', name: 'Local', variables: [] } as any,
+      { id: 'env-prod', name: 'Production', variables: [] } as any
+    ]
+    envStore.activeEnvId = 'env-local'
+
+    const wrapper = mount(AuthEditor, {
+      props: {
+        modelValue: { type: 'bearer', bearer: { token: 'global-token' } },
+        authEnvs: {
+          'env-local': { type: 'bearer', bearer: { token: 'local-token' } },
+          'env-prod': { type: 'bearer', bearer: { token: 'prod-token' } }
+        }
+      }
+    })
+
+    const select = wrapper.find('[data-test="auth-env-scope-select"]')
+    expect(select.exists()).toBe(true)
+    const selectEl = select.element as HTMLSelectElement
+    expect(selectEl.value).toBe('env-local')
+    expect(wrapper.find('input#bearer-token-input').attributes('value') || (wrapper.find('input#bearer-token-input').element as HTMLInputElement).value).toBe('local-token')
+
+    // Switch active env in app header
+    envStore.activeEnvId = 'env-prod'
+    await wrapper.vm.$nextTick()
+    expect(selectEl.value).toBe('env-prod')
+    expect((wrapper.find('input#bearer-token-input').element as HTMLInputElement).value).toBe('prod-token')
+
+    // Switch to no active environment -> falls back to __global__
+    envStore.activeEnvId = null
+    await wrapper.vm.$nextTick()
+    expect(selectEl.value).toBe('__global__')
+    expect((wrapper.find('input#bearer-token-input').element as HTMLInputElement).value).toBe('global-token')
+
+    // Manual change via dropdown works
+    await select.setValue('env-local')
+    expect(selectEl.value).toBe('env-local')
+    expect((wrapper.find('input#bearer-token-input').element as HTMLInputElement).value).toBe('local-token')
   })
 })
 

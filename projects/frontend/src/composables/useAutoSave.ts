@@ -62,6 +62,7 @@ export function useAutoSave(
   }
 
   return {
+    saveNow: () => requestStore.saveCurrent(),
     flush: () => requestStore.flush(),
     cancel: () => requestStore.cancelAutoSave(),
     saveStatus: computed(() => requestStore.saveStatus),

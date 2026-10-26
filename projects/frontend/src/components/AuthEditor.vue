@@ -5,6 +5,7 @@ import { useCollectionStore, type AuthConfig, type TreeNode } from '@/stores/col
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { resolveEffectiveAuth } from '@/utils/auth'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
+import CustomSelect, { type SelectOption } from '@/components/CustomSelect.vue'
 
 const pinia = getActivePinia()
 const collectionStore = pinia ? useCollectionStore(pinia) : null
@@ -13,7 +14,15 @@ const envStore = pinia ? useEnvironmentStore(pinia) : null
 const showBearerToken = ref<boolean | null>(null)
 const showBasicPassword = ref<boolean | null>(null)
 const showApiKeyValue = ref<boolean | null>(null)
-const internalEnvScope = ref<string>('__global__')
+const resolveDefaultEnvScope = (): string => {
+  const activeId = envStore?.activeEnvId
+  if (activeId && envStore?.environments.some(e => e.id === activeId)) {
+    return activeId
+  }
+  return '__global__'
+}
+
+const internalEnvScope = ref<string>(resolveDefaultEnvScope())
 
 const bearerHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 const basicUserHighlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
@@ -39,15 +48,6 @@ const props = withDefaults(
   }
 )
 
-watch(
-  () => [collectionStore?.activeRequestId, collectionStore?.activeFolderId],
-  () => {
-    showBearerToken.value = null
-    showBasicPassword.value = null
-    showApiKeyValue.value = null
-  }
-)
-
 const emit = defineEmits<{
   (e: 'update:modelValue', val: AuthConfig): void
   (e: 'update:authEnvs', val: Record<string, AuthConfig>): void
@@ -61,6 +61,52 @@ const selectedEnvScope = computed({
     emit('update:envScope', val)
   }
 })
+
+watch(
+  () => envStore?.activeEnvId,
+  () => {
+    if (props.envScope === undefined) {
+      const nextScope = resolveDefaultEnvScope()
+      internalEnvScope.value = nextScope
+      emit('update:envScope', nextScope)
+    }
+  }
+)
+
+watch(
+  () => envStore?.environments.map(e => e.id).join(','),
+  () => {
+    if (props.envScope !== undefined || !envStore) return
+    const envs = envStore.environments
+    if (internalEnvScope.value !== '__global__' && !envs.some(e => e.id === internalEnvScope.value)) {
+      const nextScope = resolveDefaultEnvScope()
+      internalEnvScope.value = nextScope
+      emit('update:envScope', nextScope)
+    } else if (
+      internalEnvScope.value === '__global__' &&
+      envStore.activeEnvId &&
+      envs.some(e => e.id === envStore.activeEnvId)
+    ) {
+      const nextScope = resolveDefaultEnvScope()
+      internalEnvScope.value = nextScope
+      emit('update:envScope', nextScope)
+    }
+  }
+)
+
+watch(
+  () => [collectionStore?.activeRequestId, collectionStore?.activeFolderId],
+  () => {
+    showBearerToken.value = null
+    showBasicPassword.value = null
+    showApiKeyValue.value = null
+    if (props.envScope === undefined) {
+      const nextScope = resolveDefaultEnvScope()
+      internalEnvScope.value = nextScope
+      emit('update:envScope', nextScope)
+    }
+  }
+)
 
 const availableEnvironments = computed(() => envStore?.environments || [])
 
@@ -240,6 +286,32 @@ const apiKeyAddTo = computed({
     })
   }
 })
+
+const envScopeOptions = computed<SelectOption[]>(() => {
+  const list: SelectOption[] = [
+    { value: '__global__', label: 'Global Auth (Dùng chung)' }
+  ]
+  for (const env of availableEnvironments.value) {
+    list.push({
+      value: env.id,
+      label: `${env.name} ${hasEnvAuthOverride(env.id) ? '(Custom)' : ''}`.trim()
+    })
+  }
+  return list
+})
+
+const authTypeOptions: SelectOption[] = [
+  { value: 'inherit', label: 'Inherit from parent' },
+  { value: 'none', label: 'No Auth' },
+  { value: 'bearer', label: 'Bearer Token' },
+  { value: 'basic', label: 'Basic Auth' },
+  { value: 'apiKey', label: 'API Key' }
+]
+
+const apiKeyAddToOptions: SelectOption[] = [
+  { value: 'header', label: 'Header' },
+  { value: 'query', label: 'Query Params' }
+]
 </script>
 
 <template>
@@ -250,32 +322,14 @@ const apiKeyAddTo = computed({
         <label for="auth-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
           Phạm vi môi trường:
         </label>
-        <div class="relative flex items-center">
-          <select
-            id="auth-env-scope-select"
-            v-model="selectedEnvScope"
-            :data-scope="selectedEnvScope"
-            data-test="auth-env-scope-select"
-            class="peer appearance-none bg-surface-overlay border border-border-default rounded-md h-[32px] pl-2.5 pr-7 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
-          >
-            <option value="__global__" class="bg-surface-overlay text-text-primary">
-              Global Auth (Dùng chung)
-            </option>
-            <option
-              v-for="env in availableEnvironments"
-              :key="env.id"
-              :value="env.id"
-              class="bg-surface-overlay text-text-primary"
-            >
-              {{ env.name }} {{ hasEnvAuthOverride(env.id) ? '(Custom)' : '' }}
-            </option>
-          </select>
-          <div class="absolute right-2 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
-            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m6 9 6 6 6-6"/>
-            </svg>
-          </div>
-        </div>
+        <CustomSelect
+          id="auth-env-scope-select"
+          v-model="selectedEnvScope"
+          :data-scope="selectedEnvScope"
+          data-test="auth-env-scope-select"
+          :options="envScopeOptions"
+          size="sm"
+        />
       </div>
       <span class="text-xs text-text-muted">
         {{ selectedEnvScope === '__global__' ? 'Áp dụng cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}
@@ -287,26 +341,15 @@ const apiKeyAddTo = computed({
       <label for="auth-type-select" class="text-xs font-semibold uppercase text-text-muted w-24 shrink-0">
         Auth Type
       </label>
-      <div class="relative flex items-center">
-        <select
-          id="auth-type-select"
-          v-model="authType"
-          :data-scope="selectedEnvScope"
-          :data-auth-type="authType"
-          class="peer appearance-none bg-surface-overlay border border-border-default rounded px-3 py-1.5 pr-8 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
-        >
-          <option value="inherit" class="bg-surface-overlay text-text-primary">Inherit from parent</option>
-          <option value="none" class="bg-surface-overlay text-text-primary">No Auth</option>
-          <option value="bearer" class="bg-surface-overlay text-text-primary">Bearer Token</option>
-          <option value="basic" class="bg-surface-overlay text-text-primary">Basic Auth</option>
-          <option value="apiKey" class="bg-surface-overlay text-text-primary">API Key</option>
-        </select>
-        <div class="absolute right-2.5 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
-          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m6 9 6 6 6-6"/>
-          </svg>
-        </div>
-      </div>
+      <CustomSelect
+        id="auth-type-select"
+        v-model="authType"
+        :data-scope="selectedEnvScope"
+        :data-auth-type="authType"
+        data-test="auth-type-select"
+        :options="authTypeOptions"
+        size="sm"
+      />
     </div>
 
     <!-- Inherit Mode Details -->
@@ -501,21 +544,14 @@ const apiKeyAddTo = computed({
       </div>
       <div class="flex flex-col gap-1">
         <label for="api-key-add-to-select" class="text-xs font-medium text-text-muted">Add to</label>
-        <div class="relative flex items-center">
-          <select
-            id="api-key-add-to-select"
-            v-model="apiKeyAddTo"
-            class="peer appearance-none w-full bg-surface-overlay border border-border-default rounded px-3 py-2 pr-8 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-brand-primary cursor-pointer"
-          >
-            <option value="header" class="bg-surface-overlay text-text-primary">Header</option>
-            <option value="query" class="bg-surface-overlay text-text-primary">Query Params</option>
-          </select>
-          <div class="absolute right-2.5 pointer-events-none text-text-muted peer-focus:text-brand-primary flex items-center justify-center">
-            <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m6 9 6 6 6-6"/>
-            </svg>
-          </div>
-        </div>
+        <CustomSelect
+          id="api-key-add-to-select"
+          v-model="apiKeyAddTo"
+          data-test="api-key-add-to-select"
+          :options="apiKeyAddToOptions"
+          full-width
+          size="sm"
+        />
       </div>
     </div>
   </div>

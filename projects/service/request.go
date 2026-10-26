@@ -32,6 +32,9 @@ func (s *RequestService) Get(id string) model.Result {
 	if err != nil {
 		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
+	if !strings.HasSuffix(path, ".json") || isPathInFlowsDir(s.fs, "", path, true) {
+		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
+	}
 
 	var req model.Request
 	if err := s.fs.ReadJSON(path, &req); err != nil {
@@ -51,6 +54,9 @@ func (s *RequestService) Save(req model.Request) model.Result {
 	path, err := s.fs.FindByUUID(req.ID)
 	if err != nil {
 		return model.NewError(storageErrCode(err), ErrRequestNotFound)
+	}
+	if !strings.HasSuffix(path, ".json") || isPathInFlowsDir(s.fs, "", path, true) {
+		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
 	if !s.fs.Exists(path) {
@@ -74,7 +80,7 @@ func (s *RequestService) Delete(id string) model.Result {
 		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
 
-	if !strings.HasSuffix(path, ".json") {
+	if !strings.HasSuffix(path, ".json") || isPathInFlowsDir(s.fs, "", path, true) {
 		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
@@ -104,6 +110,9 @@ func (s *RequestService) Rename(id, newName string) model.Result {
 	path, err := s.fs.FindByUUID(id)
 	if err != nil {
 		return model.NewError(storageErrCode(err), ErrRequestNotFound)
+	}
+	if !strings.HasSuffix(path, ".json") || isPathInFlowsDir(s.fs, "", path, true) {
+		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
 	var req model.Request
@@ -137,7 +146,7 @@ func (s *RequestService) Duplicate(id string) model.Result {
 	if err != nil {
 		return model.NewError(storageErrCode(err), ErrRequestNotFound)
 	}
-	if !strings.HasSuffix(path, ".json") {
+	if !strings.HasSuffix(path, ".json") || isPathInFlowsDir(s.fs, "", path, true) {
 		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 

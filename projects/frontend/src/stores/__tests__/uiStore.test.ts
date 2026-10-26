@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useUiStore } from '../uiStore'
 
@@ -221,5 +221,32 @@ describe('uiStore - Resizable Layout Panes', () => {
     store.resetRequestPaneRatio()
     expect(store.requestPaneRatio).toBe(50)
     expect(localStorage.getItem('hecto_request_pane_ratio')).toBe('50')
+  })
+
+  it('handles highlightTreeNode and clears after duration', async () => {
+    vi.useFakeTimers()
+    const store = useUiStore()
+    expect(store.highlightedNodeId).toBeNull()
+
+    store.highlightTreeNode('req-123', 1000)
+    expect(store.highlightedNodeId).toBe('req-123')
+
+    vi.advanceTimersByTime(500)
+    expect(store.highlightedNodeId).toBe('req-123')
+
+    vi.advanceTimersByTime(600)
+    expect(store.highlightedNodeId).toBeNull()
+    vi.useRealTimers()
+  })
+
+  it('increments filterTreeClearTrigger on clearTreeFilter', () => {
+    const store = useUiStore()
+    expect(store.filterTreeClearTrigger).toBe(0)
+
+    store.clearTreeFilter()
+    expect(store.filterTreeClearTrigger).toBe(1)
+
+    store.clearTreeFilter()
+    expect(store.filterTreeClearTrigger).toBe(2)
   })
 })

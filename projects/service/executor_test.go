@@ -127,45 +127,54 @@ func TestExecutorService_Send_CustomMethods(t *testing.T) {
 	}
 }
 
-func TestExecutorService_Send_Inflight(t *testing.T) {
-	started := make(chan struct{})
-	finishHandler := make(chan struct{})
-	var once sync.Once
+func TestExecutorService_Send_Concurrent(t *testing.T) {
+	const count = 3
+	arrived := make(chan struct{}, count)
+	release := make(chan struct{})
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		once.Do(func() { close(started) })
-		<-finishHandler
+		arrived <- struct{}{}
+		<-release
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer ts.Close()
 
 	exec := newTestExecutor()
 	req := model.ExecuteRequest{Method: "GET", URL: ts.URL}
 
-	errChan := make(chan *model.AppError)
-	go func() {
-		res := exec.Send(req)
-		if !res.Success {
-			errChan <- res.Error
-		} else {
-			errChan <- nil
+	results := make([]model.Result, count)
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = exec.Send(req)
+		}(i)
+	}
+
+	// Wait for all 3 requests to be concurrently in-flight at the server
+	for i := 0; i < count; i++ {
+		select {
+		case <-arrived:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Timeout waiting for concurrent request %d to reach server", i+1)
 		}
-	}()
-
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Timeout waiting for first request to reach server")
 	}
 
-	res2 := exec.Send(req)
-	if res2.Success {
-		t.Errorf("Expected failure for second request")
-	}
-	if res2.Error.Code != model.ErrValidation || res2.Error.Message != "Request đang được gửi" {
-		t.Errorf("Expected inflight validation error, got %v", res2.Error)
-	}
+	close(release)
+	wg.Wait()
 
-	close(finishHandler)
-	<-errChan
+	for i, res := range results {
+		if !res.Success {
+			t.Fatalf("Expected concurrent request %d to succeed, got error: %+v", i, res.Error)
+		}
+		resp := res.Data.(model.ExecuteResponse)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200 OK for request %d, got %d", i, resp.StatusCode)
+		}
+	}
 }
 
 func TestExecutorService_Abort(t *testing.T) {
@@ -205,6 +214,53 @@ func TestExecutorService_Abort(t *testing.T) {
 	}
 }
 
+func TestExecutorService_Abort_MultipleConcurrent(t *testing.T) {
+	const count = 3
+	arrived := make(chan struct{}, count)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+
+	exec := newTestExecutor()
+	req := model.ExecuteRequest{Method: "GET", URL: ts.URL}
+
+	results := make([]model.Result, count)
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = exec.Send(req)
+		}(i)
+	}
+
+	for i := 0; i < count; i++ {
+		select {
+		case <-arrived:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Timeout waiting for request %d to reach server", i+1)
+		}
+	}
+
+	abortRes := exec.Abort()
+	if !abortRes.Success {
+		t.Fatalf("Expected Abort to succeed, got: %+v", abortRes.Error)
+	}
+
+	wg.Wait()
+	for i, res := range results {
+		if res.Success {
+			t.Fatalf("Expected request %d to be aborted, got success", i)
+		}
+		if res.Error == nil || res.Error.Code != model.ErrAborted {
+			t.Errorf("Expected ABORTED for request %d, got %+v", i, res.Error)
+		}
+	}
+}
+
 func TestExecutorService_Timeout(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
@@ -221,6 +277,39 @@ func TestExecutorService_Timeout(t *testing.T) {
 	}
 	if res.Error.Code != model.ErrTimeout {
 		t.Errorf("Expected TIMEOUT, got %s", res.Error.Code)
+	}
+}
+
+func TestExecutorService_TimeoutMsOverride(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(200 * time.Millisecond):
+			w.WriteHeader(http.StatusOK)
+		case <-r.Context().Done():
+		}
+	}))
+	defer ts.Close()
+
+	exec := newTestExecutor()
+	exec.SetTimeout(5 * time.Second)
+	req := model.ExecuteRequest{
+		Method:    "GET",
+		URL:       ts.URL,
+		TimeoutMs: 30,
+	}
+
+	start := time.Now()
+	res := exec.Send(req)
+	elapsed := time.Since(start)
+
+	if res.Success {
+		t.Fatalf("Expected timeout error with TimeoutMs=30")
+	}
+	if res.Error == nil || res.Error.Code != model.ErrTimeout {
+		t.Errorf("Expected TIMEOUT error code, got %+v", res.Error)
+	}
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("Expected per-request TimeoutMs=30 to abort well before 5s default timeout, took %v", elapsed)
 	}
 }
 

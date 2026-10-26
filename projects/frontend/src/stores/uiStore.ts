@@ -129,10 +129,18 @@ export const useUiStore = defineStore('ui', () => {
     }
   }
 
-  // Context menu state
-  const contextMenu = ref<{ x: number; y: number; nodeId: string; nodeType: 'folder' | 'request' } | null>(null)
+  // Workspace mode state ('apis' | 'flows')
+  const workspaceMode = ref<'apis' | 'flows'>('apis')
 
-  function openContextMenu(x: number, y: number, nodeId: string, nodeType: 'folder' | 'request') {
+  function setWorkspaceMode(mode: 'apis' | 'flows') {
+    workspaceMode.value = mode
+    closeContextMenu()
+  }
+
+  // Context menu state
+  const contextMenu = ref<{ x: number; y: number; nodeId: string; nodeType: 'folder' | 'request' | 'flow_folder' | 'flow' } | null>(null)
+
+  function openContextMenu(x: number, y: number, nodeId: string, nodeType: 'folder' | 'request' | 'flow_folder' | 'flow') {
     contextMenu.value = { x, y, nodeId, nodeType }
   }
 
@@ -176,6 +184,28 @@ export const useUiStore = defineStore('ui', () => {
   const focusEnvRequested = ref(0)
   function triggerFocusEnv() {
     focusEnvRequested.value++
+  }
+
+  // Highlighted tree node trigger (e.g. reveal request from breadcrumb)
+  const highlightedNodeId = ref<string | null>(null)
+  let highlightTimer: ReturnType<typeof setTimeout> | null = null
+
+  function highlightTreeNode(nodeId: string, durationMs = 2000) {
+    if (highlightTimer) {
+      clearTimeout(highlightTimer)
+      highlightTimer = null
+    }
+    highlightedNodeId.value = nodeId
+    highlightTimer = setTimeout(() => {
+      highlightedNodeId.value = null
+      highlightTimer = null
+    }, durationMs)
+  }
+
+  // Trigger to clear sidebar tree filter when revealing a node
+  const filterTreeClearTrigger = ref(0)
+  function clearTreeFilter() {
+    filterTreeClearTrigger.value++
   }
 
   // Active tab in request editor
@@ -314,6 +344,8 @@ export const useUiStore = defineStore('ui', () => {
     confirm,
     requestConfirm,
     resolveConfirm,
+    workspaceMode,
+    setWorkspaceMode,
     contextMenu,
     openContextMenu,
     closeContextMenu,
@@ -326,6 +358,10 @@ export const useUiStore = defineStore('ui', () => {
     triggerFocusUrl,
     focusEnvRequested,
     triggerFocusEnv,
+    highlightedNodeId,
+    highlightTreeNode,
+    filterTreeClearTrigger,
+    clearTreeFilter,
     activeRequestTab,
     activeFolderTab,
     getFolderActiveTab,

@@ -158,6 +158,15 @@ export const useRequestStore = defineStore('request', {
       if (!state.original || !state.current) return false
       if (state.original.id !== state.current.id) return false
       return stringifySorted(state.original) !== stringifySorted(state.current)
+    },
+    showGetBodyWarning(state): boolean {
+      return Boolean(
+        state.current &&
+        state.current.method === 'GET' &&
+        state.current.body &&
+        state.current.body.type &&
+        state.current.body.type !== 'none'
+      )
     }
   },
   actions: {

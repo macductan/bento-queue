@@ -1226,5 +1226,433 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       expect(store.canReorderNode('req-1', 'request', 'f-parent', 'before')).toBe(true)
       expect(store.canReorderNode('f-child', 'folder', 'req-1', 'after')).toBe(true)
     })
+
+    it('expandPathToNode expands all ancestor folders of the target node', () => {
+      const store = useCollectionStore()
+      store.tree = [
+        {
+          id: 'f-level1',
+          name: 'Level 1',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: [
+            {
+              id: 'f-level2',
+              name: 'Level 2',
+              type: 'folder',
+              path: '',
+              created_at: '',
+              children: [
+                { id: 'req-nested', name: 'Nested Req', type: 'request', path: '', created_at: '' }
+              ]
+            }
+          ]
+        }
+      ]
+
+      store.expandPathToNode('req-nested')
+      expect(store.expandedFolders.has('f-level1')).toBe(true)
+      expect(store.expandedFolders.has('f-level2')).toBe(true)
+    })
+
+    it('revealNodeInTree collapses unrelated folders, expands target path, clears filter and triggers highlight', async () => {
+      const store = useCollectionStore()
+      store.tree = [
+        {
+          id: 'f-unrelated',
+          name: 'Unrelated Folder',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: []
+        },
+        {
+          id: 'f-1',
+          name: 'Folder 1',
+          type: 'folder',
+          path: '',
+          created_at: '',
+          children: [
+            { id: 'req-target', name: 'Target Req', type: 'request', path: '', created_at: '' }
+          ]
+        }
+      ]
+
+      store.expandedFolders.add('f-unrelated')
+      expect(store.expandedFolders.has('f-unrelated')).toBe(true)
+
+      const { useUiStore } = await import('../uiStore')
+      const uiStore = useUiStore()
+      const clearFilterSpy = vi.spyOn(uiStore, 'clearTreeFilter')
+      const highlightSpy = vi.spyOn(uiStore, 'highlightTreeNode')
+
+      await store.revealNodeInTree('req-target')
+      // f-unrelated should be collapsed
+      expect(store.expandedFolders.has('f-unrelated')).toBe(false)
+      // target ancestor f-1 should be expanded
+      expect(store.expandedFolders.has('f-1')).toBe(true)
+      expect(clearFilterSpy).toHaveBeenCalled()
+      expect(highlightSpy).toHaveBeenCalledWith('req-target', 2500)
+    })
+  })
+
+  describe('smartReload & External Change Sync (Story 4)', () => {
+    it('sets hasExternalChanges when Wails runtime emits collection:external-change', () => {
+      let registeredCallback: (() => void) | null = null
+      ;(window as any).runtime = {
+        EventsOnMultiple: vi.fn((eventName: string, cb: () => void) => {
+          if (eventName === 'collection:external-change') {
+            registeredCallback = cb
+          }
+          return () => {}
+        })
+      }
+
+      try {
+        setActivePinia(createPinia())
+        const store = useCollectionStore()
+        expect(store.hasExternalChanges).toBe(false)
+        expect(registeredCallback).toBeTypeOf('function')
+
+        registeredCallback!()
+        expect(store.hasExternalChanges).toBe(true)
+      } finally {
+        delete (window as any).runtime
+      }
+    })
+
+    it('preserves expandedFolders for surviving folders, syncs activeEnvId, updates surviving tabs, and closes deleted tabs', async () => {
+      const { useTabStore } = await import('../tabStore')
+      const store = useCollectionStore()
+      const envStore = useEnvironmentStore()
+      const tabStore = useTabStore()
+
+      store.hasExternalChanges = true
+      store.expandedFolders = new Set(['f-keep', 'f-deleted'])
+
+      // Pre-populate environments where env-1 was active, and disk switched collection active_env_id to env-2
+      envStore.environments = [
+        { id: 'env-1', name: 'Dev', variables: [] } as any,
+        { id: 'env-2', name: 'Staging', variables: [] } as any
+      ]
+      envStore.activeEnvId = 'env-1'
+      envStore.loaded = true
+
+      tabStore.openTab({ entityId: 'f-keep', type: 'folder', name: 'Old Folder Name' })
+      tabStore.openTab({ entityId: 'f-deleted', type: 'folder', name: 'Deleted Folder' })
+      tabStore.openTab({ entityId: 'req-deleted', type: 'request', name: 'Deleted Req', method: 'GET' })
+      tabStore.openTab({ entityId: 'req-keep', type: 'request', name: 'Old Req Name', method: 'GET' })
+
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([
+          { id: 'default', name: 'Default', is_default: true, is_active: true, active_env_id: 'env-2' }
+        ])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(
+        resSuccess([
+          { id: 'env-1', name: 'Dev', variables: [] },
+          { id: 'env-2', name: 'Staging', variables: [] }
+        ])
+      )
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(
+        resSuccess([
+          {
+            id: 'f-keep',
+            name: 'Renamed Folder',
+            type: 'folder',
+            path: 'renamed-folder',
+            created_at: '',
+            children: [
+              {
+                id: 'req-keep',
+                name: 'Renamed Request',
+                type: 'request',
+                method: 'POST',
+                path: 'renamed-folder/req-keep',
+                created_at: ''
+              }
+            ]
+          }
+        ])
+      )
+      vi.mocked(GetRequest).mockResolvedValueOnce(
+        resSuccess(createMockRequest({ id: 'req-keep', name: 'Renamed Request', method: 'POST', url: 'https://api.example.com/v2' }))
+      )
+
+      await store.smartReload()
+
+      expect(store.hasExternalChanges).toBe(false)
+      expect(store.expandedFolders.has('f-keep')).toBe(true)
+      expect(store.expandedFolders.has('f-deleted')).toBe(false)
+      expect(envStore.activeEnvId).toBe('env-2')
+
+      // f-deleted and req-deleted tabs should be closed; f-keep and req-keep should have updated names/methods
+      expect(tabStore.tabs.map(t => t.id)).toEqual(['folder:f-keep', 'request:req-keep'])
+      expect(tabStore.tabs[0].name).toBe('Renamed Folder')
+      expect(tabStore.tabs[1].name).toBe('Renamed Request')
+      expect(tabStore.tabs[1].method).toBe('POST')
+      expect(GetRequest).toHaveBeenCalledWith('req-keep')
+
+      // Also verify that if activeRequestId and activeFolderId point to deleted entities, they are cleaned up
+      const reqStore = useRequestStore()
+      const cancelAutoSaveSpy = vi.spyOn(reqStore, 'cancelAutoSave')
+      const clearRequestSpy = vi.spyOn(reqStore, 'clearRequest')
+      const registerFlushSpy = vi.spyOn(tabStore, 'registerFolderFlush')
+
+      store.activeRequestId = 'req-gone'
+      store.activeFolderId = 'f-gone'
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'default', name: 'Default', is_default: true, is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+
+      await store.smartReload()
+
+      expect(cancelAutoSaveSpy).toHaveBeenCalled()
+      expect(clearRequestSpy).toHaveBeenCalled()
+      expect(registerFlushSpy).toHaveBeenCalledWith(null)
+      expect(store.activeRequestId).toBeNull()
+      expect(store.activeFolderId).toBeNull()
+    })
+
+    it('protects dirty active Request tab during smartReload and shows warning toast', async () => {
+      const { useTabStore } = await import('../tabStore')
+      const store = useCollectionStore()
+      const reqStore = useRequestStore()
+      const uiStore = useUiStore()
+      const tabStore = useTabStore()
+
+      const initialReq = createMockRequest({ id: 'req-dirty', name: 'Dirty Req', method: 'GET', url: 'https://old.local' })
+      reqStore.original = JSON.parse(JSON.stringify(initialReq))
+      reqStore.current = { ... JSON.parse(JSON.stringify(initialReq)), url: 'https://unsaved-edit.local' }
+      expect(reqStore.isDirty).toBe(true)
+
+      store.activeRequestId = 'req-dirty'
+      tabStore.openTab({ entityId: 'req-dirty', type: 'request', name: 'Dirty Req', method: 'GET', isDirty: true })
+
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'default', name: 'Default', is_default: true, is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(
+        resSuccess([
+          { id: 'req-dirty', name: 'Dirty Req', type: 'request', method: 'POST', path: 'req-dirty', created_at: '' }
+        ])
+      )
+
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+      vi.mocked(GetRequest).mockClear()
+
+      await store.smartReload()
+
+      expect(GetRequest).not.toHaveBeenCalled()
+      expect(reqStore.current?.url).toBe('https://unsaved-edit.local')
+      expect(toastSpy).toHaveBeenCalledWith(
+        'Dữ liệu trên đĩa đã thay đổi, nhưng tab hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+      )
+    })
+
+    it('dispatches hecto:folder-updated when active Folder tab is clean, and shows warning toast when dirty', async () => {
+      const { useTabStore } = await import('../tabStore')
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      const tabStore = useTabStore()
+
+      store.activeFolderId = 'f-1'
+      tabStore.openTab({ entityId: 'f-1', type: 'folder', name: 'Folder 1', isDirty: false })
+
+      const folderTree = [
+        { id: 'f-1', name: 'Folder 1', type: 'folder', path: 'f-1', created_at: '', children: [] }
+      ]
+      vi.mocked(ListCollections).mockResolvedValue(
+        resSuccess([{ id: 'default', name: 'Default', is_default: true, is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValue(resSuccess([]))
+      vi.mocked(GetCollectionTree).mockResolvedValue(resSuccess(folderTree))
+
+      const receivedEvents: any[] = []
+      const onFolderUpdated = (e: Event) => {
+        receivedEvents.push((e as CustomEvent).detail)
+      }
+      window.addEventListener('hecto:folder-updated', onFolderUpdated)
+
+      try {
+        // 1. Clean folder tab -> dispatches hecto:folder-updated
+        await store.smartReload()
+        expect(receivedEvents).toEqual([{ folderId: 'f-1', reload: true }])
+
+        // 2. Dirty folder tab -> does not dispatch event, shows toast
+        receivedEvents.length = 0
+        tabStore.setTabDirty('folder', 'f-1', true)
+        const toastSpy = vi.spyOn(uiStore, 'showToast')
+
+        await store.smartReload()
+        expect(receivedEvents).toHaveLength(0)
+        expect(toastSpy).toHaveBeenCalledWith(
+          'Dữ liệu trên đĩa đã thay đổi, nhưng tab hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+        )
+      } finally {
+        window.removeEventListener('hecto:folder-updated', onFolderUpdated)
+      }
+    })
+
+    it('synchronizes flowStore during smartReload: reloads clean active flow and protects dirty active flow', async () => {
+      const { useFlowStore } = await import('../flowStore')
+      const store = useCollectionStore()
+      const flowStore = useFlowStore()
+      const uiStore = useUiStore()
+
+      vi.mocked(ListCollections).mockResolvedValue(
+        resSuccess([{ id: 'default', name: 'Default', is_default: true, is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValue(resSuccess([]))
+      vi.mocked(GetCollectionTree).mockResolvedValue(resSuccess([]))
+
+      const loadFlowTreeSpy = vi.spyOn(flowStore, 'loadFlowTree').mockImplementation(async () => {
+        flowStore.flowTree = [
+          {
+            id: 'ff-keep',
+            name: 'Flow Folder Keep',
+            type: 'flow_folder',
+            path: 'flows/ff-keep',
+            created_at: '',
+            children: [
+              { id: 'flow-active', name: 'Active Flow', type: 'flow', path: 'flows/ff-keep/flow-active.json', created_at: '' }
+            ]
+          }
+        ]
+      })
+      const selectFlowSpy = vi.spyOn(flowStore, 'selectFlow').mockResolvedValue(true)
+
+      // 1. Clean active flow -> reloads via selectFlow(id, { force: true }) and prunes deleted expandedFlowFolders
+      flowStore.expandedFlowFolders.add('ff-keep')
+      flowStore.expandedFlowFolders.add('ff-deleted')
+      flowStore.activeFlowId = 'flow-active'
+      flowStore.currentFlow = { id: 'flow-active', name: 'Active Flow', nodes: [] } as any
+      flowStore.savedSnapshot = JSON.stringify(flowStore.currentFlow)
+      expect(flowStore.isDirty).toBe(false)
+
+      await store.smartReload()
+
+      expect(loadFlowTreeSpy).toHaveBeenCalledTimes(1)
+      expect(flowStore.expandedFlowFolders.has('ff-keep')).toBe(true)
+      expect(flowStore.expandedFlowFolders.has('ff-deleted')).toBe(false)
+      expect(selectFlowSpy).toHaveBeenCalledWith('flow-active', { force: true })
+
+      // 2. Dirty active flow -> preserves in-memory currentFlow and shows warning toast
+      selectFlowSpy.mockClear()
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+      flowStore.currentFlow = { id: 'flow-active', name: 'Unsaved Flow Name', nodes: [] } as any
+      expect(flowStore.isDirty).toBe(true)
+
+      await store.smartReload()
+
+      expect(selectFlowSpy).not.toHaveBeenCalled()
+      expect(flowStore.currentFlow?.name).toBe('Unsaved Flow Name')
+      expect(toastSpy).toHaveBeenCalledWith(
+        'Dữ liệu trên đĩa đã thay đổi, nhưng Flow hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+      )
+
+      // 3. Deleted dirty active flow -> clears currentFlow and shows deleted toast
+      toastSpy.mockClear()
+      loadFlowTreeSpy.mockImplementationOnce(async () => {
+        flowStore.flowTree = []
+      })
+
+      await store.smartReload()
+
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.currentFlow).toBeNull()
+      expect(toastSpy).toHaveBeenCalledWith('Mục đang chỉnh sửa đã bị xóa khỏi đĩa.')
+
+      // 4. When loadFlowTree fails (flowStore.error is set), smartReload does NOT clear activeFlowId
+      flowStore.activeFlowId = 'flow-keep-on-error'
+      flowStore.currentFlow = { id: 'flow-keep-on-error', name: 'Keep On Error', nodes: [] } as any
+      loadFlowTreeSpy.mockImplementationOnce(async () => {
+        flowStore.error = 'Transient disk error'
+        flowStore.flowTree = []
+      })
+
+      await store.smartReload()
+
+      expect(flowStore.activeFlowId).toBe('flow-keep-on-error')
+      expect(flowStore.currentFlow?.id).toBe('flow-keep-on-error')
+    })
+
+    it('guards switchCollection when flowStore.isDirty is true and resets flowStore state on switchCollection, deleteCollection, and refresh', async () => {
+      const { useFlowStore } = await import('../flowStore')
+      const store = useCollectionStore()
+      const flowStore = useFlowStore()
+      const uiStore = useUiStore()
+
+      store.activeCollectionId = 'default'
+      flowStore.activeFlowId = 'flow-1'
+      flowStore.currentFlow = { id: 'flow-1', name: 'Dirty Flow', nodes: [] } as any
+      flowStore.savedSnapshot = '{"id":"flow-1","name":"Original Flow"}'
+      flowStore.expandedFlowFolders.add('ff-1')
+      flowStore.sortDirectionMap = { '': 'asc' }
+      expect(flowStore.isDirty).toBe(true)
+
+      // 1. Cancel unsaved flow prompt -> aborts switchCollection
+      const promptSpy = vi.spyOn(uiStore, 'requestUnsavedPrompt').mockResolvedValueOnce('cancel')
+      const cancelled = await store.switchCollection('col-2')
+      expect(cancelled).toBe(false)
+      expect(promptSpy).toHaveBeenCalled()
+      expect(SwitchCollection).not.toHaveBeenCalled()
+
+      // 2. Discard unsaved flow -> switches collection and resets flowStore
+      promptSpy.mockResolvedValueOnce('discard')
+      vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'col-2', name: 'Collection 2', is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+      const loadFlowTreeSpy = vi.spyOn(flowStore, 'loadFlowTree').mockResolvedValue()
+
+      const switched = await store.switchCollection('col-2')
+      expect(switched).toBe(true)
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.currentFlow).toBeNull()
+      expect(flowStore.expandedFlowFolders.size).toBe(0)
+      expect(flowStore.sortDirectionMap).toEqual({})
+      expect(loadFlowTreeSpy).toHaveBeenCalled()
+
+      // 3. deleteCollection on active collection resets flowStore and reloads flowTree
+      flowStore.activeFlowId = 'flow-col2'
+      flowStore.expandedFlowFolders.add('ff-col2')
+      flowStore.sortDirectionMap = { 'ff-col2': 'desc' }
+      vi.mocked(DeleteCollection).mockResolvedValueOnce(resSuccess({ active_collection: 'default' }))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'default', name: 'Default', is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+      loadFlowTreeSpy.mockClear()
+
+      const deleted = await store.deleteCollection('col-2')
+      expect(deleted).toBe(true)
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.expandedFlowFolders.size).toBe(0)
+      expect(flowStore.sortDirectionMap).toEqual({})
+      expect(loadFlowTreeSpy).toHaveBeenCalled()
+
+      // 4. refresh() resets flowStore and reloads flowTree
+      flowStore.activeFlowId = 'flow-default'
+      flowStore.expandedFlowFolders.add('ff-default')
+      flowStore.sortDirectionMap = { '': 'asc' }
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+      loadFlowTreeSpy.mockClear()
+
+      await store.refresh()
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.expandedFlowFolders.size).toBe(0)
+      expect(flowStore.sortDirectionMap).toEqual({})
+      expect(loadFlowTreeSpy).toHaveBeenCalled()
+    })
   })
 })
+
+

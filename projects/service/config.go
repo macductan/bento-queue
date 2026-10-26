@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
 	"hecto-api/model"
 	"hecto-api/storage"
 )
@@ -30,8 +28,10 @@ const (
 // ConfigService quản lý app config và default collection initialization.
 // Testable không cần Wails context — nhận FileSystem và paths đã resolve.
 type ConfigService struct {
-	fs     *storage.FileSystem
-	logger *slog.Logger
+	fs              *storage.FileSystem
+	logger          *slog.Logger
+	onStartupError  func(ctx context.Context, message string)
+	customConfigDir string
 }
 
 // NewConfigService tạo ConfigService mới.
@@ -39,9 +39,28 @@ func NewConfigService(fs *storage.FileSystem, logger *slog.Logger) *ConfigServic
 	return &ConfigService{fs: fs, logger: logger}
 }
 
+// SetStartupErrorHandler đăng ký hàm callback khi có lỗi lúc khởi tạo config/collection.
+func (s *ConfigService) SetStartupErrorHandler(fn func(ctx context.Context, message string)) {
+	s.onStartupError = fn
+}
+
+// SetCustomConfigDir ghi đè thư mục chứa config.json và collections/ (phục vụ CLI --data-dir và testing).
+func (s *ConfigService) SetCustomConfigDir(dir string) {
+	s.customConfigDir = strings.TrimSpace(dir)
+}
+
+// GetConfig đọc cấu hình hiện tại từ đĩa (hoặc khởi tạo mặc định nếu chưa có).
+func (s *ConfigService) GetConfig() (*model.AppConfig, error) {
+	configPath, err := s.resolveConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	return s.loadOrCreateConfig(configPath)
+}
+
 // Initialize khởi tạo app config và default collection.
 // Gọi trong App.startup(). Nếu directory creation thất bại,
-// log error + emit Wails event "startup-error".
+// log error + emit startup error qua callback.
 func (s *ConfigService) Initialize(ctx context.Context) (*model.AppConfig, error) {
 	configPath, err := s.resolveConfigPath()
 	if err != nil {
@@ -85,8 +104,19 @@ func (s *ConfigService) Initialize(ctx context.Context) (*model.AppConfig, error
 	return config, nil
 }
 
+func (s *ConfigService) resolveCustomDir() string {
+	if dir := strings.TrimSpace(s.customConfigDir); dir != "" {
+		return dir
+	}
+	return strings.TrimSpace(os.Getenv("HECTO_CONFIG_DIR"))
+}
+
 // resolveConfigPath trả về đường dẫn config file: {os.UserConfigDir()}/hecto-api/config.json
+// hoặc {customDir}/config.json nếu được cấu hình qua SetCustomConfigDir / HECTO_CONFIG_DIR.
 func (s *ConfigService) resolveConfigPath() (string, error) {
+	if customDir := s.resolveCustomDir(); customDir != "" {
+		return filepath.Join(customDir, configFileName), nil
+	}
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
@@ -95,8 +125,11 @@ func (s *ConfigService) resolveConfigPath() (string, error) {
 }
 
 // resolveDefaultCollectionsRoot trả về default collections root:
-// {os.UserCacheDir()}/hecto-api/collections
+// {os.UserCacheDir()}/hecto-api/collections hoặc {customDir}/collections.
 func (s *ConfigService) resolveDefaultCollectionsRoot() (string, error) {
+	if customDir := s.resolveCustomDir(); customDir != "" {
+		return filepath.Join(customDir, "collections"), nil
+	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
@@ -241,12 +274,12 @@ func (s *ConfigService) createDefaultCollection(path string) error {
 	return nil
 }
 
-// emitStartupError emit Wails event "startup-error" nếu context có Wails runtime.
+// emitStartupError gọi callback onStartupError nếu đã được đăng ký.
 func (s *ConfigService) emitStartupError(ctx context.Context, message string) {
-	if ctx == nil {
+	if ctx == nil || s.onStartupError == nil {
 		return
 	}
-	wailsRuntime.EventsEmit(ctx, "startup-error", message)
+	s.onStartupError(ctx, message)
 }
 
 // SwitchActiveCollection switches active_collection in config.json and updates collection_root.
