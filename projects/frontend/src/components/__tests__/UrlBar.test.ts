@@ -38,12 +38,14 @@ describe('UrlBar.vue', () => {
     })
   })
 
-  it('does not render Copy as cURL button and renders Send icon button', () => {
+  it('does not render Copy as cURL button and renders Send button with Gửi label and ^Enter shortcut, plus method-badge classes on #http-method-select and Abort button with spinner', async () => {
+    const { useResponseStore } = await import('@/stores/responseStore')
     const requestStore = useRequestStore()
+    const responseStore = useResponseStore()
     requestStore.current = {
       id: 'req-1',
       name: 'Test Req',
-      method: 'GET',
+      method: 'POST',
       url: 'https://api.example.com/test',
       headers: [],
       params: [],
@@ -56,10 +58,30 @@ describe('UrlBar.vue', () => {
     const curlBtn = wrapper.find('#copy-curl-btn')
     expect(curlBtn.exists()).toBe(false)
 
+    const methodBtn = wrapper.find('#http-method-select')
+    expect(methodBtn.exists()).toBe(true)
+    expect(methodBtn.attributes('data-test')).toBe('method-selector')
+    expect(methodBtn.classes()).toContain('method-badge-post')
+    expect(methodBtn.classes()).toContain('text-method-post')
+
+    const postOption = wrapper.find('[role="option"][data-method="POST"]')
+    expect(postOption.exists()).toBe(true)
+    expect(postOption.classes()).toContain('text-method-post')
+    expect(postOption.classes()).not.toContain('method-badge-post')
+
     const sendBtn = wrapper.find('[data-test="send-request-btn"]')
     expect(sendBtn.exists()).toBe(true)
     expect(sendBtn.attributes('aria-label')).toBe('Gửi')
     expect(sendBtn.find('svg').exists()).toBe(true)
+    expect(sendBtn.text()).toContain('Gửi')
+    expect(sendBtn.find('kbd').text()).toBe('^Enter')
+
+    responseStore.loading = true
+    await wrapper.vm.$nextTick()
+    const abortBtn = wrapper.find('[data-test="abort-request-btn"]')
+    expect(abortBtn.exists()).toBe(true)
+    expect(abortBtn.find('svg.animate-spin').exists()).toBe(true)
+    expect(abortBtn.text()).toContain('Hủy')
   })
 
   it('extracts :param path variables from URL into path_params and highlights them in VariableHighlighter', async () => {

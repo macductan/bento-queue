@@ -8,6 +8,8 @@ import { useCollectionStore } from '@/stores/collectionStore'
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetRequest: vi.fn(),
   SaveRequest: vi.fn(),
+  RenameRequest: vi.fn(),
+  RenameFolder: vi.fn(),
   GetCollectionTree: vi.fn().mockResolvedValue({ success: true, data: [] }),
   ListEnvironments: vi.fn().mockResolvedValue({ success: true, data: [] })
 }))
@@ -620,6 +622,215 @@ describe('RequestEditor.vue - Save State Indicator', () => {
 
     await reqBtn.trigger('click')
     expect(revealSpy).toHaveBeenCalledWith('req-1')
+  })
+
+  it('supports inline rename on Breadcrumb via rename button or double-click and manual Save via request-save-btn', async () => {
+    const colStore = useCollectionStore()
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({ id: 'req-1', name: 'Get Products API' })
+    reqStore.original = createMockRequest({ id: 'req-1', name: 'Get Products API' })
+
+    const renameNodeSpy = vi.spyOn(colStore, 'renameNode').mockResolvedValue(true)
+    const saveCurrentSpy = vi.spyOn(reqStore, 'saveCurrent').mockResolvedValue(true)
+
+    const wrapper = mountEditor()
+
+    // Click rename pencil button
+    const renameBtn = wrapper.find('[data-test="breadcrumb-rename-btn"]')
+    expect(renameBtn.exists()).toBe(true)
+    await renameBtn.trigger('click')
+
+    const nameInput = wrapper.find('[data-test="breadcrumb-name-input"]')
+    expect(nameInput.exists()).toBe(true)
+    expect((nameInput.element as HTMLInputElement).value).toBe('Get Products API')
+
+    // Escape cancels rename
+    await nameInput.setValue('Temporary Name')
+    await nameInput.trigger('keydown.esc')
+    expect(wrapper.find('[data-test="breadcrumb-name-input"]').exists()).toBe(false)
+    expect(renameNodeSpy).not.toHaveBeenCalled()
+
+    // Double-click breadcrumb request name opens input and Enter commits rename
+    await wrapper.find('[data-test="breadcrumb-request"]').trigger('dblclick')
+    const nameInput2 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    expect(nameInput2.exists()).toBe(true)
+    await nameInput2.setValue('  Updated Products API  ')
+    await nameInput2.trigger('keydown.enter')
+
+    expect(renameNodeSpy).toHaveBeenCalledWith('req-1', 'Updated Products API', 'request')
+    expect(reqStore.current.name).toBe('Updated Products API')
+
+    // Unchanged or blank name on blur is a no-op
+    renameNodeSpy.mockClear()
+    await wrapper.find('[data-test="breadcrumb-rename-btn"]').trigger('click')
+    const nameInput3 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await nameInput3.setValue('   ')
+    await nameInput3.trigger('blur')
+    expect(renameNodeSpy).not.toHaveBeenCalled()
+    expect(reqStore.current.name).toBe('Updated Products API')
+
+    // Blur commits valid new name
+    await wrapper.find('[data-test="breadcrumb-rename-btn"]').trigger('click')
+    const nameInput4 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await nameInput4.setValue('Blurred Products API')
+    await nameInput4.trigger('blur')
+    expect(renameNodeSpy).toHaveBeenCalledWith('req-1', 'Blurred Products API', 'request')
+    expect(reqStore.current.name).toBe('Blurred Products API')
+
+    // When renameNode returns false, reqStore.current.name is NOT overwritten
+    renameNodeSpy.mockResolvedValueOnce(false)
+    await wrapper.find('[data-test="breadcrumb-rename-btn"]').trigger('click')
+    const nameInput5 = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await nameInput5.setValue('Failed Rename')
+    await nameInput5.trigger('keydown.enter')
+    expect(reqStore.current.name).toBe('Blurred Products API')
+
+    // Manual save button triggers saveNow() -> requestStore.saveCurrent()
+    const saveBtn = wrapper.find('[data-test="request-save-btn"]')
+    expect(saveBtn.exists()).toBe(true)
+    expect(saveBtn.text()).toContain('Lưu')
+    expect(saveBtn.text()).toContain('Ctrl+S')
+    await saveBtn.trigger('click')
+    expect(saveCurrentSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('collectionStore.renameNode delegates to RenameRequest and RenameFolder and guards against blank input', async () => {
+    const { RenameRequest, RenameFolder } = await import('../../../wailsjs/go/main/App')
+    const colStore = useCollectionStore()
+    const reqStore = useRequestStore()
+
+    reqStore.current = createMockRequest({ id: 'req-direct', name: 'Old Req' })
+    reqStore.original = createMockRequest({ id: 'req-direct', name: 'Old Req' })
+
+    // Blank guard
+    expect(await colStore.renameNode('req-direct', '   ', 'request')).toBe(false)
+    expect(RenameRequest).not.toHaveBeenCalled()
+
+    // Request rename success
+    vi.mocked(RenameRequest).mockResolvedValueOnce({
+      success: true,
+      data: { id: 'req-direct', name: 'New Req' }
+    } as any)
+    expect(await colStore.renameNode('req-direct', '  New Req  ', 'request')).toBe(true)
+    expect(RenameRequest).toHaveBeenCalledWith('req-direct', 'New Req')
+    expect(reqStore.current.name).toBe('New Req')
+    expect(reqStore.original.name).toBe('New Req')
+
+    // Folder rename success
+    vi.mocked(RenameFolder).mockResolvedValueOnce({
+      success: true,
+      data: { id: 'f-direct', name: 'New Folder' }
+    } as any)
+    expect(await colStore.renameNode('f-direct', '  New Folder ', 'folder')).toBe(true)
+    expect(RenameFolder).toHaveBeenCalledWith('f-direct', 'New Folder')
+  })
+
+  it('renders WarningBanner with switch-body-none-btn and dismiss-warning-btn, and re-arms on body/method/request change', async () => {
+    const WarningBanner = (await import('../WarningBanner.vue')).default
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      id: 'req-warn',
+      method: 'GET',
+      body: { type: 'json', content: '{"a":1}' }
+    })
+
+    const wrapper = mount(WarningBanner)
+    expect(wrapper.find('[data-test="get-body-warning-banner"]').exists()).toBe(true)
+
+    // Dismiss hides banner
+    await wrapper.find('[data-test="dismiss-warning-btn"]').trigger('click')
+    expect(wrapper.find('[data-test="get-body-warning-banner"]').exists()).toBe(false)
+
+    // Switching method to POST then back to GET re-arms warning on same request
+    reqStore.current.method = 'POST'
+    await wrapper.vm.$nextTick()
+    reqStore.current.method = 'GET'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="get-body-warning-banner"]').exists()).toBe(true)
+
+    // Dismiss again, then switch request ID -> re-arms
+    await wrapper.find('[data-test="dismiss-warning-btn"]').trigger('click')
+    expect(wrapper.find('[data-test="get-body-warning-banner"]').exists()).toBe(false)
+    reqStore.current = createMockRequest({
+      id: 'req-warn-2',
+      method: 'GET',
+      body: { type: 'text', content: 'hello' }
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="get-body-warning-banner"]').exists()).toBe(true)
+
+    const switchBtn = wrapper.find('[data-test="switch-body-none-btn"]')
+    expect(switchBtn.exists()).toBe(true)
+    expect(switchBtn.text()).toContain('Chuyển Body sang None')
+
+    await switchBtn.trigger('click')
+    expect(reqStore.current.body.type).toBe('none')
+    expect(wrapper.find('[data-test="get-body-warning-banner"]').exists()).toBe(false)
+  })
+
+  it('displays dynamic badges on RequestTabs (tab-params-badge, tab-auth-badge with auth_envs, tab-headers-badge excluding disabled, tab-body-badge, tab-scripts-badge)', async () => {
+    const RequestTabs = (await import('../RequestTabs.vue')).default
+    const { useEnvironmentStore } = await import('@/stores/environmentStore')
+    const colStore = useCollectionStore()
+    const reqStore = useRequestStore()
+    const envStore = useEnvironmentStore()
+
+    colStore.tree = [
+      {
+        id: 'f1',
+        name: 'API Folder',
+        type: 'folder',
+        path: 'api',
+        created_at: '',
+        headers: [{ key: 'X-Inherited-Folder', value: 'v1', enabled: true }],
+        children: [
+          {
+            id: 'req-badges',
+            name: 'Badge Req',
+            type: 'request',
+            path: 'api/badge',
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    reqStore.current = createMockRequest({
+      id: 'req-badges',
+      method: 'POST',
+      params: [
+        { key: 'page', value: '1', enabled: true },
+        { key: 'disabled_param', value: '0', enabled: false }
+      ],
+      path_params: [
+        { key: 'id', value: '42', enabled: true },
+        { key: 'disabled_path', value: '99', enabled: false }
+      ],
+      auth: { type: 'bearer', bearer: { token: 'tok' } },
+      headers: [
+        { key: 'X-Custom', value: 'abc', enabled: true },
+        { key: 'X-Disabled-Custom', value: 'nope', enabled: false }
+      ],
+      body: { type: 'json', content: '{}' },
+      scripts: { pre_request: 'console.log(1);', post_response: '' }
+    })
+
+    const wrapper = mount(RequestTabs)
+    expect(wrapper.find('[data-test="tab-params-badge"]').text()).toBe('2')
+    expect(wrapper.find('[data-test="tab-auth-badge"]').text()).toBe('bearer')
+    // 1 enabled custom header (X-Custom) + 1 inherited folder header (X-Inherited-Folder) + 1 auth header (Authorization) + 1 auto header (Content-Type) = 4
+    expect(wrapper.find('[data-test="tab-headers-badge"]').text()).toBe('4')
+    expect(wrapper.find('[data-test="tab-body-badge"]').text()).toBe('json')
+    expect(wrapper.find('[data-test="tab-scripts-badge"]').exists()).toBe(true)
+
+    // Test auth_envs override when auth.type is 'inherit'
+    envStore.activeEnvId = 'env-prod'
+    reqStore.current.auth = { type: 'inherit' }
+    reqStore.current.auth_envs = {
+      'env-prod': { type: 'apiKey', apiKey: { key: 'X-Key', value: '123', addTo: 'header' } }
+    }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="tab-auth-badge"]').text()).toBe('apiKey')
   })
 })
 

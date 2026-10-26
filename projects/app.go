@@ -32,6 +32,7 @@ type App struct {
 	gitSyncSvc       *service.GitSyncService
 	historySvc       *service.HistoryService
 	mockServerSvc    *service.MockServerService
+	flowSvc          *service.FlowService
 	logger           *slog.Logger
 	watcher          *storage.CollectionWatcher
 	onEvent          func(eventName string, data ...interface{})
@@ -56,6 +57,7 @@ func NewApp() *App {
 		gitSyncSvc:    service.NewGitSyncService(fs, logger),
 		historySvc:    service.NewHistoryService(fs, logger),
 		mockServerSvc: service.NewMockServerService(fs, logger),
+		flowSvc:       service.NewFlowService(fs, logger),
 		logger:        logger,
 	}
 	cfgSvc.SetStartupErrorHandler(func(ctx context.Context, msg string) {
@@ -839,5 +841,158 @@ func (a *App) ExportGitSyncStatus(status model.GitSyncStatus) model.GitSyncStatu
 	return status
 }
 
+// ExportFlowTypes ensures model.FlowTreeNode, model.FlowFolder, and model.Flow are exported to Wails TypeScript bindings.
+func (a *App) ExportFlowTypes(treeNode model.FlowTreeNode, folder model.FlowFolder) model.Flow {
+	return model.Flow{}
+}
 
+// --- Wails Bindings: Flow & FlowFolder CRUD (CAP-1, CAP-4, CAP-5) ---
 
+// GetFlowTree returns the hierarchical FlowFolder and Flow tree structure in <collection>/flows/.
+func (a *App) GetFlowTree() model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	return a.flowSvc.GetTree(root)
+}
+
+// GetFlow retrieves a Flow by UUID.
+func (a *App) GetFlow(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	return a.flowSvc.GetFlow(id)
+}
+
+// CreateFlow creates a new Flow in <collection>/flows/ (or inside parentFolderId).
+func (a *App) CreateFlow(parentFolderId string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.CreateFlow(root, parentFolderId)
+	if res.Success {
+		if flow, ok := res.Data.(model.Flow); ok {
+			a.recordChangelog("flow", flow.ID, flow.Name, "create", "Tạo flow "+flow.Name)
+		}
+	}
+	return res
+}
+
+// SaveFlow persists a Flow to disk.
+func (a *App) SaveFlow(flow model.Flow) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.SaveFlow(flow)
+	if res.Success {
+		a.recordChangelog("flow", flow.ID, flow.Name, "update", "Cập nhật flow "+flow.Name)
+	}
+	return res
+}
+
+// RenameFlow updates the name of a Flow.
+func (a *App) RenameFlow(id, newName string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.RenameFlow(id, newName)
+	if res.Success {
+		a.recordChangelog("flow", id, newName, "rename", "Đổi tên flow thành "+newName)
+	}
+	return res
+}
+
+// DeleteFlow removes a Flow from disk.
+func (a *App) DeleteFlow(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.DeleteFlow(id)
+	if res.Success {
+		a.recordChangelog("flow", id, id, "delete", "Xóa flow "+id)
+	}
+	return res
+}
+
+// DuplicateFlow creates a copy of a Flow in the same folder.
+func (a *App) DuplicateFlow(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.DuplicateFlow(id)
+	if res.Success {
+		if flow, ok := res.Data.(model.Flow); ok {
+			a.recordChangelog("flow", flow.ID, flow.Name, "duplicate", "Nhân bản flow "+flow.Name)
+		}
+	}
+	return res
+}
+
+// CreateFlowFolder creates a new FlowFolder inside <collection>/flows/.
+func (a *App) CreateFlowFolder(parentFolderId string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.CreateFlowFolder(root, parentFolderId)
+	if res.Success {
+		if folder, ok := res.Data.(model.FlowFolder); ok {
+			a.recordChangelog("flow_folder", folder.ID, folder.Name, "create", "Tạo thư mục flow "+folder.Name)
+		}
+	}
+	return res
+}
+
+// RenameFlowFolder updates the name of a FlowFolder.
+func (a *App) RenameFlowFolder(id, newName string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	res := a.flowSvc.RenameFlowFolder(id, newName)
+	if res.Success {
+		a.recordChangelog("flow_folder", id, newName, "rename", "Đổi tên thư mục flow thành "+newName)
+	}
+	return res
+}
+
+// DeleteFlowFolder removes a FlowFolder and all its contents from disk.
+func (a *App) DeleteFlowFolder(id string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.DeleteFlowFolder(root, id)
+	if res.Success {
+		a.recordChangelog("flow_folder", id, id, "delete", "Xóa thư mục flow "+id)
+	}
+	return res
+}
+
+// ReorderFlowNodes updates the order of items within a FlowFolder (or at flows/ root if parentFolderId is empty).
+func (a *App) ReorderFlowNodes(parentFolderId string, orderedIds []string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.ReorderNodes(root, parentFolderId, orderedIds)
+	if res.Success {
+		a.recordChangelog("flow_order", parentFolderId, parentFolderId, "reorder", "Sắp xếp lại danh sách flow")
+	}
+	return res
+}
+
+// MoveFlowNode moves a Flow or FlowFolder to targetFolderId at targetIndex.
+func (a *App) MoveFlowNode(nodeId, targetFolderId string, targetIndex int) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.MoveNode(root, nodeId, targetFolderId, targetIndex)
+	if res.Success {
+		a.recordChangelog("flow", nodeId, nodeId, "move", "Di chuyển mục trong cây flow")
+	}
+	return res
+}
+
+// SortFlowNodes sorts items alphabetically within a FlowFolder (or at flows/ root if parentFolderId is empty).
+func (a *App) SortFlowNodes(parentFolderId string) model.Result {
+	a.syncActiveCollectionFromDisk()
+	a.mu.RLock()
+	root := a.collRoot
+	a.mu.RUnlock()
+	res := a.flowSvc.SortNodes(root, parentFolderId)
+	if res.Success {
+		a.recordChangelog("flow_order", parentFolderId, parentFolderId, "sort", "Sắp xếp danh sách flow theo tên")
+	}
+	return res
+}

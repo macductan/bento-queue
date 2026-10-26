@@ -1,15 +1,28 @@
 <script lang="ts" setup>
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
-import { useCollectionStore } from '@/stores/collectionStore'
+import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
+import { useFlowStore, type FlowTreeNode } from '@/stores/flowStore'
 import { useRequestStore } from '@/stores/requestStore'
-import type { TreeNode } from '@/stores/collectionStore'
 
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
+const flowStore = useFlowStore()
 const requestStore = useRequestStore()
 
+const isFlowContext = computed(() => {
+  return uiStore.contextMenu?.nodeType === 'flow_folder' || uiStore.contextMenu?.nodeType === 'flow'
+})
+
 const isTargetRequestDirty = computed(() => {
+  if (uiStore.contextMenu?.nodeType === 'flow') {
+    return (
+      uiStore.contextMenu.nodeId !== '' &&
+      flowStore.activeFlowId === uiStore.contextMenu.nodeId &&
+      flowStore.currentFlow?.id === uiStore.contextMenu.nodeId &&
+      flowStore.isDirty
+    )
+  }
   return (
     uiStore.contextMenu?.nodeType === 'request' &&
     uiStore.contextMenu.nodeId !== '' &&
@@ -38,13 +51,46 @@ function flattenFolders(nodes: TreeNode[], depth = 0): FlatFolder[] {
   return result
 }
 
-const flatFolders = computed(() => flattenFolders(collectionStore.tree))
+function flattenFlowFolders(nodes: FlowTreeNode[], depth = 0): FlatFolder[] {
+  let result: FlatFolder[] = []
+  for (const node of nodes) {
+    if (node.type === 'flow_folder') {
+      result.push({ id: node.id, name: node.name, depth })
+      if (node.children) {
+        result.push(...flattenFlowFolders(node.children, depth + 1))
+      }
+    }
+  }
+  return result
+}
+
+const currentFlowParentId = computed(() => {
+  if (!isFlowContext.value || !uiStore.contextMenu?.nodeId) return ''
+  return flowStore.findParentFolderId(flowStore.flowTree, uiStore.contextMenu.nodeId) ?? ''
+})
+
+const flatFolders = computed(() =>
+  isFlowContext.value ? flattenFlowFolders(flowStore.flowTree) : flattenFolders(collectionStore.tree)
+)
 const availableTargetFolders = computed(() => {
   if (uiStore.contextMenu?.nodeType === 'folder' && uiStore.contextMenu.nodeId) {
     const currentFolderId = uiStore.contextMenu.nodeId
     return flatFolders.value.filter(
       f => f.id !== currentFolderId && !collectionStore.isDescendantFolder(currentFolderId, f.id)
     )
+  }
+  if (isFlowContext.value && uiStore.contextMenu?.nodeId) {
+    const currentId = uiStore.contextMenu.nodeId
+    const parentId = currentFlowParentId.value
+    if (uiStore.contextMenu.nodeType === 'flow_folder') {
+      return flatFolders.value.filter(
+        f =>
+          f.id !== currentId &&
+          f.id !== parentId &&
+          !flowStore.isDescendantFolder(currentId, f.id)
+      )
+    }
+    return flatFolders.value.filter(f => f.id !== parentId)
   }
   return flatFolders.value
 })
@@ -53,14 +99,22 @@ const menuRef = ref<HTMLElement | null>(null)
 
 const handleCreateRequest = () => {
   if (uiStore.contextMenu) {
-    collectionStore.createRequest(uiStore.contextMenu.nodeId)
+    if (isFlowContext.value) {
+      void flowStore.createFlow(uiStore.contextMenu.nodeId)
+    } else {
+      collectionStore.createRequest(uiStore.contextMenu.nodeId)
+    }
   }
   uiStore.closeContextMenu()
 }
 
 const handleCreateFolder = () => {
   if (uiStore.contextMenu) {
-    collectionStore.createFolder(uiStore.contextMenu.nodeId)
+    if (isFlowContext.value) {
+      void flowStore.createFlowFolder(uiStore.contextMenu.nodeId)
+    } else {
+      collectionStore.createFolder(uiStore.contextMenu.nodeId)
+    }
   }
   uiStore.closeContextMenu()
 }
@@ -74,28 +128,47 @@ const handleRename = () => {
 
 const handleFolderSettings = () => {
   if (uiStore.contextMenu && uiStore.contextMenu.nodeId !== '') {
-    collectionStore.setActiveFolderId(uiStore.contextMenu.nodeId)
+    void collectionStore.openFolderSettings(uiStore.contextMenu.nodeId)
     uiStore.closeContextMenu()
   }
 }
 
 const handleSortAlphabet = () => {
   if (uiStore.contextMenu) {
-    collectionStore.sortNodes(uiStore.contextMenu.nodeId)
+    if (isFlowContext.value) {
+      void flowStore.sortFlowNodes(uiStore.contextMenu.nodeId)
+    } else {
+      collectionStore.sortNodes(uiStore.contextMenu.nodeId)
+    }
   }
   uiStore.closeContextMenu()
 }
 
 const handleDuplicate = () => {
   if (uiStore.contextMenu?.nodeId) {
-    collectionStore.duplicateRequest(uiStore.contextMenu.nodeId)
+    if (isFlowContext.value) {
+      void flowStore.duplicateFlow(uiStore.contextMenu.nodeId)
+    } else {
+      collectionStore.duplicateRequest(uiStore.contextMenu.nodeId)
+    }
   }
   uiStore.closeContextMenu()
 }
 
 const handleMove = (targetFolderId: string) => {
   if (uiStore.contextMenu?.nodeId) {
-    if (uiStore.contextMenu.nodeType === 'folder') {
+    if (isFlowContext.value) {
+      const nodeType = uiStore.contextMenu.nodeType as 'flow_folder' | 'flow'
+      if (!flowStore.canMoveNodeTo(uiStore.contextMenu.nodeId, nodeType, targetFolderId)) {
+        uiStore.closeContextMenu()
+        return
+      }
+      void flowStore.moveFlowNode(
+        uiStore.contextMenu.nodeId,
+        nodeType,
+        targetFolderId
+      )
+    } else if (uiStore.contextMenu.nodeType === 'folder') {
       collectionStore.moveFolder(uiStore.contextMenu.nodeId, targetFolderId)
     } else {
       collectionStore.moveRequest(uiStore.contextMenu.nodeId, targetFolderId)
@@ -106,26 +179,48 @@ const handleMove = (targetFolderId: string) => {
 
 const handleDelete = async () => {
   if (uiStore.contextMenu?.nodeId) {
-    const isFolder = uiStore.contextMenu.nodeType === 'folder'
     const id = uiStore.contextMenu.nodeId
-    
-    // Find node name for the prompt
+    const nodeType = uiStore.contextMenu.nodeType
+    const isFlow = nodeType === 'flow_folder' || nodeType === 'flow'
+    const isFolder = nodeType === 'folder' || nodeType === 'flow_folder'
+
     let nodeName = ''
-    const node = collectionStore.findNode(collectionStore.tree, id)
-    if (node) nodeName = node.name
-    
+    if (isFlow) {
+      if (!isFolder && flowStore.currentFlow?.id === id && typeof flowStore.currentFlow.name === 'string') {
+        nodeName = flowStore.currentFlow.name
+      } else {
+        const node = flowStore.findNode(flowStore.flowTree, id)
+        if (node) nodeName = node.name
+      }
+    } else {
+      const node = collectionStore.findNode(collectionStore.tree, id)
+      if (node) nodeName = node.name
+    }
+
     uiStore.closeContextMenu()
-    
-    const msg = isFolder
-      ? `Xóa thư mục '${nodeName}'? Tất cả request bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
-      : `Xóa request '${nodeName}'? Hành động này không thể hoàn tác.`
-      
+
+    const msg = isFlow
+      ? isFolder
+        ? `Xóa thư mục '${nodeName}'? Tất cả flow bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
+        : `Xóa flow '${nodeName}'? Hành động này không thể hoàn tác.`
+      : isFolder
+        ? `Xóa thư mục '${nodeName}'? Tất cả request bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
+        : `Xóa request '${nodeName}'? Hành động này không thể hoàn tác.`
+
     const confirmed = await uiStore.requestConfirm(msg)
     if (confirmed) {
-      if (isFolder) {
-        await collectionStore.deleteFolder(id)
+      if (isFlow) {
+        if (isFolder) {
+          await flowStore.deleteFlowFolder(id)
+        } else {
+          await flowStore.deleteFlow(id)
+        }
       } else {
-        await collectionStore.deleteRequest(id)
+        if (isFolder) {
+          await collectionStore.deleteFolder(id)
+        } else {
+          await collectionStore.deleteRequest(id)
+        }
       }
     }
   } else {
@@ -204,12 +299,12 @@ onUnmounted(() => {
     :style="menuStyle"
     @contextmenu.prevent
   >
-    <template v-if="uiStore.contextMenu.nodeType === 'folder'">
+    <template v-if="uiStore.contextMenu.nodeType === 'folder' || uiStore.contextMenu.nodeType === 'flow_folder'">
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleCreateRequest"
       >
-        Thêm request
+        {{ isFlowContext ? 'Thêm flow' : 'Thêm request' }}
       </button>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
@@ -228,11 +323,24 @@ onUnmounted(() => {
         Đổi tên
       </button>
       <button 
-        v-if="uiStore.contextMenu.nodeId !== ''"
-        class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
+        v-if="!isFlowContext && uiStore.contextMenu.nodeId !== ''"
+        type="button"
+        data-test="ctx-folder-settings"
+        class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center gap-2 transition-colors"
         @click="handleFolderSettings"
       >
-        Cài đặt thư mục
+        <svg class="w-3.5 h-3.5 text-indigo-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="21" x2="4" y2="14"></line>
+          <line x1="4" y1="10" x2="4" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12" y2="3"></line>
+          <line x1="20" y1="21" x2="20" y2="16"></line>
+          <line x1="20" y1="12" x2="20" y2="3"></line>
+          <line x1="2" y1="14" x2="6" y2="14"></line>
+          <line x1="10" y1="8" x2="14" y2="8"></line>
+          <line x1="18" y1="16" x2="22" y2="16"></line>
+        </svg>
+        <span>Cài đặt thư mục</span>
       </button>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
@@ -258,10 +366,11 @@ onUnmounted(() => {
           :class="submenuPosition === 'right' ? 'left-full ml-1' : 'right-full mr-1'"
         >
           <button 
+            v-if="!isFlowContext || currentFlowParentId !== ''"
             class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors font-medium"
             @click="handleMove('')"
           >
-            Gốc collection
+            {{ isFlowContext ? 'Gốc flows' : 'Gốc collection' }}
           </button>
           <button 
             v-for="folder in availableTargetFolders" 
@@ -285,7 +394,7 @@ onUnmounted(() => {
       </button>
     </template>
     
-    <template v-if="uiStore.contextMenu.nodeType === 'request'">
+    <template v-if="uiStore.contextMenu.nodeType === 'request' || uiStore.contextMenu.nodeType === 'flow'">
       <div
         v-if="isTargetRequestDirty"
         data-test="context-menu-unsaved-indicator"
@@ -322,10 +431,11 @@ onUnmounted(() => {
           :class="submenuPosition === 'right' ? 'left-full ml-1' : 'right-full mr-1'"
         >
           <button 
+            v-if="!isFlowContext || currentFlowParentId !== ''"
             class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors font-medium"
             @click="handleMove('')"
           >
-            Gốc collection
+            {{ isFlowContext ? 'Gốc flows' : 'Gốc collection' }}
           </button>
           <button 
             v-for="folder in availableTargetFolders" 

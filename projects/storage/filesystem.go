@@ -95,6 +95,13 @@ func (f *FileSystem) SetCollectionRoot(root string) {
 	f.collectionRoot = root
 }
 
+// CollectionRoot returns the current collection root directory.
+func (f *FileSystem) CollectionRoot() string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.collectionRoot
+}
+
 // ReadJSON reads a JSON file at the given path and unmarshals it into dest.
 // Returns NOT_FOUND if the file does not exist, PARSE_ERROR if JSON is invalid.
 func (f *FileSystem) ReadJSON(path string, dest interface{}) error {
@@ -345,6 +352,7 @@ func (f *FileSystem) walkJSONEntities(root string, fn func(path, id string, err 
 	envsDir := filepath.Join(root, "environments")
 	gitDir := filepath.Join(root, ".git")
 	historyDir := filepath.Join(root, ".history")
+	flowsRootMeta := filepath.Clean(filepath.Join(root, "flows", "_folder.json"))
 
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -368,6 +376,9 @@ func (f *FileSystem) walkJSONEntities(root string, fn func(path, id string, err 
 		if name == "collection.json" || name == "mock-server.json" {
 			return nil
 		}
+		if name == "_folder.json" && filepath.Clean(path) == flowsRootMeta {
+			return nil
+		}
 
 		// Read and check for matching UUID
 		var entity struct {
@@ -382,6 +393,9 @@ func (f *FileSystem) walkJSONEntities(root string, fn func(path, id string, err 
 		}
 
 		if name == "_folder.json" {
+			if entity.ID == "flows-root" {
+				return nil
+			}
 			return fn(filepath.Dir(path), entity.ID, nil)
 		}
 
@@ -451,3 +465,26 @@ func (f *FileSystem) IndexClear() {
 	defer f.mu.Unlock()
 	f.index = make(map[string]string)
 }
+
+// IndexClearExceptSubdir removes all entries from the in-memory index except those
+// located inside <collectionRoot>/<subdir>.
+func (f *FileSystem) IndexClearExceptSubdir(subdir string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	subdir = strings.TrimSpace(subdir)
+	collRoot := strings.TrimSpace(f.collectionRoot)
+	if subdir == "" || collRoot == "" {
+		f.index = make(map[string]string)
+		return
+	}
+	subPath := filepath.Clean(filepath.Join(collRoot, subdir))
+	subWithSep := subPath + string(filepath.Separator)
+	for id, p := range f.index {
+		cleanP := filepath.Clean(p)
+		if cleanP == subPath || strings.HasPrefix(cleanP, subWithSep) {
+			continue
+		}
+		delete(f.index, id)
+	}
+}
+

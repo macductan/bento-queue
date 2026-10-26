@@ -1,17 +1,22 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useFlowStore } from '@/stores/flowStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRequestStore } from '@/stores/requestStore'
 import TreeNodeRow from './TreeNodeRow.vue'
-import { filterTree } from '@/utils/treeFilter'
+import { filterTree, filterFlowTree } from '@/utils/treeFilter'
 
 const store = useCollectionStore()
+const flowStore = useFlowStore()
 const uiStore = useUiStore()
 const requestStore = useRequestStore()
 
+const isFlowsMode = computed(() => uiStore.workspaceMode === 'flows')
+
 const filterQuery = ref('')
 const savedExpandedFolders = ref<Set<string> | null>(null)
+const savedExpandedFlowFolders = ref<Set<string> | null>(null)
 
 const clearFilter = () => {
   filterQuery.value = ''
@@ -22,13 +27,24 @@ const onFilterInput = (e: Event) => {
 }
 
 const collapseAll = () => {
+  if (isFlowsMode.value) {
+    flowStore.expandedFlowFolders = new Set<string>()
+    if (!filterQuery.value.trim() && savedExpandedFlowFolders.value) {
+      savedExpandedFlowFolders.value = new Set<string>()
+    }
+    return
+  }
   store.expandedFolders = new Set<string>()
-  if (savedExpandedFolders.value) {
+  if (!filterQuery.value.trim() && savedExpandedFolders.value) {
     savedExpandedFolders.value = new Set<string>()
   }
 }
 
 const sortAlphabet = async () => {
+  if (isFlowsMode.value) {
+    await flowStore.sortFlowNodes('')
+    return
+  }
   await store.sortNodes('')
 }
 
@@ -47,7 +63,16 @@ const filterResult = computed(() => {
   })
 })
 
+const flowFilterResult = computed(() => {
+  return filterFlowTree(flowStore.flowTree, filterQuery.value, {
+    activeFlowId: flowStore.activeFlowId,
+    activeFlowName: flowStore.currentFlow?.name,
+    activeFlowDescription: flowStore.currentFlow?.description
+  })
+})
+
 const displayedTree = computed(() => filterResult.value.filtered)
+const displayedFlowTree = computed(() => flowFilterResult.value.filtered)
 
 watch(
   () => filterQuery.value,
@@ -58,14 +83,25 @@ watch(
     if (trimmedNew) {
       if (!trimmedOld) {
         savedExpandedFolders.value = new Set(store.expandedFolders)
+        savedExpandedFlowFolders.value = new Set(flowStore.expandedFlowFolders)
+      } else {
+        store.expandedFolders = new Set(savedExpandedFolders.value || [])
+        flowStore.expandedFlowFolders = new Set(savedExpandedFlowFolders.value || [])
       }
       for (const folderId of filterResult.value.expandedFolderIds) {
         store.expandedFolders.add(folderId)
+      }
+      for (const folderId of flowFilterResult.value.expandedFolderIds) {
+        flowStore.expandedFlowFolders.add(folderId)
       }
     } else {
       if (savedExpandedFolders.value) {
         store.expandedFolders = new Set(savedExpandedFolders.value)
         savedExpandedFolders.value = null
+      }
+      if (savedExpandedFlowFolders.value) {
+        flowStore.expandedFlowFolders = new Set(savedExpandedFlowFolders.value)
+        savedExpandedFlowFolders.value = null
       }
     }
   }
@@ -77,6 +113,17 @@ watch(
     if (filterQuery.value.trim()) {
       for (const folderId of filterResult.value.expandedFolderIds) {
         store.expandedFolders.add(folderId)
+      }
+    }
+  }
+)
+
+watch(
+  () => flowStore.flowTree,
+  () => {
+    if (filterQuery.value.trim()) {
+      for (const folderId of flowFilterResult.value.expandedFolderIds) {
+        flowStore.expandedFlowFolders.add(folderId)
       }
     }
   }
@@ -108,6 +155,26 @@ const handleCreateFolder = () => {
   void store.createFolder()
 }
 
+const handleCreateFlow = () => {
+  addDropdownOpen.value = false
+  void flowStore.createFlow()
+}
+
+const handleCreateFlowFolder = () => {
+  addDropdownOpen.value = false
+  void flowStore.createFlowFolder()
+}
+
+const handleSwitchMode = (mode: 'apis' | 'flows') => {
+  addDropdownOpen.value = false
+  uiStore.setWorkspaceMode(mode)
+}
+
+const handleSmartReload = async () => {
+  if (store.loading || flowStore.loading) return
+  await store.smartReload()
+}
+
 const handleDocumentClick = (e: MouseEvent) => {
   if (!addDropdownOpen.value) return
   const target = e.target as Node | null
@@ -135,14 +202,19 @@ onUnmounted(() => {
 const handleRootContextMenu = (e: MouseEvent) => {
   // If clicked directly on the container (not inside a node row), show root folder menu
   if (e.target === e.currentTarget) {
-    uiStore.openContextMenu(e.clientX, e.clientY, '', 'folder')
+    uiStore.openContextMenu(
+      e.clientX,
+      e.clientY,
+      '',
+      isFlowsMode.value ? 'flow_folder' : 'folder'
+    )
   }
 }
 
 const isRootDragOver = ref(false)
 
 watch(
-  () => store.draggingNode,
+  () => (isFlowsMode.value ? flowStore.draggingNode : store.draggingNode),
   (node) => {
     if (!node) {
       isRootDragOver.value = false
@@ -151,14 +223,29 @@ watch(
 )
 
 const onRootDragOver = (e: DragEvent) => {
-  const dragging = store.draggingNode
-  if (!dragging) return
-
   const target = e.target as HTMLElement | null
   if (target?.closest('[data-tree-node]') || target?.closest('[data-tree-row]')) {
     isRootDragOver.value = false
     return
   }
+
+  if (isFlowsMode.value) {
+    const dragging = flowStore.draggingNode
+    if (!dragging) return
+    if (flowStore.canMoveNodeTo(dragging.id, dragging.type, '')) {
+      e.preventDefault()
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'move'
+      }
+      isRootDragOver.value = true
+    } else {
+      isRootDragOver.value = false
+    }
+    return
+  }
+
+  const dragging = store.draggingNode
+  if (!dragging) return
 
   if (store.canMoveNodeTo(dragging.id, dragging.type, '')) {
     e.preventDefault()
@@ -190,8 +277,19 @@ const onRootDragLeave = (e: DragEvent) => {
 }
 
 const onRootDrop = async (e: DragEvent) => {
-  const dragging = store.draggingNode
   isRootDragOver.value = false
+  if (isFlowsMode.value) {
+    const dragging = flowStore.draggingNode
+    if (!dragging) return
+    if (flowStore.canMoveNodeTo(dragging.id, dragging.type, '')) {
+      e.preventDefault()
+      flowStore.setDraggingNode(null)
+      await flowStore.moveFlowNode(dragging.id, dragging.type, '')
+    }
+    return
+  }
+
+  const dragging = store.draggingNode
   if (!dragging) return
 
   if (store.canMoveNodeTo(dragging.id, dragging.type, '')) {
@@ -212,9 +310,70 @@ const onRootDrop = async (e: DragEvent) => {
     :style="{ width: `${uiStore.sidebarWidth}px`, minWidth: `${uiStore.sidebarWidth}px` }"
     :aria-label="store.activeCollection?.name ? `Bộ sưu tập: ${store.activeCollection.name}` : 'Bộ sưu tập'"
   >
-    <div class="p-2 border-b border-border-default shrink-0 flex items-center gap-1.5">
-      <!-- Tree Filter Search Input -->
-      <div class="relative flex-1 min-w-0 flex items-center">
+    <!-- Workspace Mode Switcher [ APIs | Flows ] -->
+    <div class="px-2 pt-2 pb-1.5 border-b border-border-default shrink-0">
+      <div
+        class="grid grid-cols-2 p-0.5 rounded bg-surface-base border border-border-default"
+        role="tablist"
+        aria-label="Chế độ không gian làm việc"
+      >
+        <button
+          type="button"
+          role="tab"
+          data-test="workspace-mode-apis"
+          :aria-selected="!isFlowsMode"
+          class="py-1 px-2 text-xs font-medium rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+          :class="!isFlowsMode
+            ? 'bg-zinc-800 text-white shadow-sm'
+            : 'text-text-secondary hover:text-zinc-200 hover:bg-zinc-800/50'"
+          @click="handleSwitchMode('apis')"
+        >
+          <svg
+            aria-hidden="true"
+            class="w-3.5 h-3.5 text-indigo-400 shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+          <span>APIs</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          data-test="workspace-mode-flows"
+          :aria-selected="isFlowsMode"
+          class="py-1 px-2 text-xs font-medium rounded transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+          :class="isFlowsMode
+            ? 'bg-zinc-800 text-white shadow-sm'
+            : 'text-text-secondary hover:text-zinc-200 hover:bg-zinc-800/50'"
+          @click="handleSwitchMode('flows')"
+        >
+          <svg
+            aria-hidden="true"
+            class="w-3.5 h-3.5 text-pink-400 shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="3" y="3" width="7" height="18" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="18" rx="1"></rect>
+          </svg>
+          <span>Flows</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="p-2 border-b border-border-default shrink-0 flex flex-col gap-1.5">
+      <!-- Row 1: Tree Filter Search Input -->
+      <div data-test="sidebar-search-row" class="relative w-full flex items-center">
         <svg
           class="absolute left-2.5 w-3.5 h-3.5 text-text-muted pointer-events-none"
           viewBox="0 0 24 24"
@@ -232,8 +391,8 @@ const onRootDrop = async (e: DragEvent) => {
           @input="onFilterInput"
           type="text"
           data-test="tree-filter-input"
-          aria-label="Tìm kiếm trong bộ sưu tập"
-          placeholder="Tìm kiếm request..."
+          :aria-label="isFlowsMode ? 'Tìm kiếm trong danh sách flow' : 'Tìm kiếm trong bộ sưu tập'"
+          :placeholder="isFlowsMode ? 'Tìm kiếm flow...' : 'Tìm kiếm request...'"
           class="w-full pl-8 pr-7 py-1 text-xs rounded bg-surface-base border border-border-default hover:border-border-hover focus:border-brand-primary focus:outline-none transition-colors text-text-primary placeholder:text-text-muted"
           @keydown="handleFilterKeydown"
         />
@@ -252,87 +411,89 @@ const onRootDrop = async (e: DragEvent) => {
         </button>
       </div>
 
-      <!-- Action buttons -->
-      <div class="flex items-center gap-0.5 shrink-0">
-        <!-- Reload Data from Disk -->
-        <button
-          type="button"
-          data-test="sidebar-reload-btn"
-          :title="store.hasExternalChanges ? 'Phát hiện thay đổi từ bên ngoài — Nhấn để tải lại (Ctrl+R)' : 'Tải lại dữ liệu từ đĩa (Ctrl+R)'"
-          aria-label="Tải lại dữ liệu từ đĩa"
-          class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          @click="store.smartReload()"
-        >
-          <svg
-            class="w-3.5 h-3.5"
-            :class="{ 'animate-spin text-brand-primary': store.loading }"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+      <!-- Row 2: Action buttons + Add pill -->
+      <div data-test="sidebar-toolbar-row" class="flex items-center justify-between gap-1">
+        <div class="flex items-center gap-0.5 shrink-0">
+          <!-- Reload Data from Disk -->
+          <button
+            type="button"
+            data-test="sidebar-reload-btn"
+            :title="store.hasExternalChanges ? 'Phát hiện thay đổi từ bên ngoài — Nhấn để tải lại (Ctrl+R)' : 'Tải lại dữ liệu từ đĩa (Ctrl+R)'"
+            aria-label="Tải lại dữ liệu từ đĩa"
+            class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
+            @click="handleSmartReload"
           >
-            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-            <path d="M16 16h5v5" />
-          </svg>
-          <!-- Badge báo hiệu có thay đổi từ CLI/Git -->
-          <span
-            v-if="store.hasExternalChanges"
-            data-test="external-change-badge"
-            class="absolute top-1 right-1 w-2 h-2 rounded-full bg-brand-primary ring-2 ring-surface-raised animate-pulse"
-          />
-        </button>
+            <svg
+              class="w-3.5 h-3.5"
+              :class="{ 'animate-spin text-brand-primary': store.loading || flowStore.loading }"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+              <path d="M16 16h5v5" />
+            </svg>
+            <!-- Badge báo hiệu có thay đổi từ CLI/Git -->
+            <span
+              v-if="store.hasExternalChanges"
+              data-test="external-change-badge"
+              class="absolute top-1 right-1 w-2 h-2 rounded-full bg-brand-primary ring-2 ring-surface-raised animate-pulse"
+            />
+          </button>
 
-        <!-- Collapse All -->
-        <button
-          type="button"
-          data-test="tree-collapse-all-btn"
-          title="Thu gọn tất cả"
-          aria-label="Thu gọn tất cả"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          @click="collapseAll"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m7 20 5-5 5 5"/>
-            <path d="m7 4 5 5 5-5"/>
-          </svg>
-        </button>
+          <!-- Collapse All -->
+          <button
+            type="button"
+            data-test="tree-collapse-all-btn"
+            title="Thu gọn tất cả"
+            aria-label="Thu gọn tất cả"
+            class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
+            @click="collapseAll"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m7 20 5-5 5 5"/>
+              <path d="m7 4 5 5 5-5"/>
+            </svg>
+          </button>
 
-        <!-- Sort Alphabetically -->
-        <button
-          type="button"
-          data-test="tree-sort-alphabet-btn"
-          title="Sắp xếp theo thứ tự A-Z"
-          aria-label="Sắp xếp theo thứ tự A-Z"
-          class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
-          @click="sortAlphabet"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m3 16 4 4 4-4"/>
-            <path d="M7 20V4"/>
-            <path d="M20 8h-5"/>
-            <path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/>
-            <path d="M15 14h5l-5 6h5"/>
-          </svg>
-        </button>
+          <!-- Sort Alphabetically -->
+          <button
+            type="button"
+            data-test="tree-sort-alphabet-btn"
+            title="Sắp xếp theo thứ tự A-Z"
+            aria-label="Sắp xếp theo thứ tự A-Z"
+            class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
+            @click="sortAlphabet"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m3 16 4 4 4-4"/>
+              <path d="M7 20V4"/>
+              <path d="M20 8h-5"/>
+              <path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"/>
+              <path d="M15 14h5l-5 6h5"/>
+            </svg>
+          </button>
+        </div>
 
-        <!-- Add Request / Folder -->
-        <div ref="addMenuContainerRef" class="relative">
+        <!-- Add Request / Folder or Flow / Flow Folder -->
+        <div ref="addMenuContainerRef" class="relative shrink-0">
           <button
             type="button"
             data-test="sidebar-add-btn"
-            title="Thêm mới (Request / Thư mục)"
+            :title="isFlowsMode ? 'Thêm mới (Flow / Thư mục Flow)' : 'Thêm mới (Request / Thư mục)'"
             aria-label="Thêm mới"
             :aria-expanded="addDropdownOpen"
-            class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-default hover:bg-surface-hover rounded transition-colors cursor-pointer"
+            class="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 transition-colors cursor-pointer"
             @click="toggleAddDropdown"
           >
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
+            <span>+ Tạo mới</span>
+            <svg class="w-3 h-3 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
 
@@ -342,31 +503,81 @@ const onRootDrop = async (e: DragEvent) => {
             role="menu"
             class="absolute right-0 mt-1 w-44 rounded-md bg-surface-overlay border border-border-default shadow-lg py-1 z-50"
           >
-            <button
-              type="button"
-              role="menuitem"
-              data-test="add-request-item"
-              aria-label="Request mới"
-              title="Request mới (Ctrl+N)"
-              class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
-              @click="handleCreateRequest"
-            >
-              <span>📄 New Request</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              data-test="add-folder-item"
-              aria-label="Thư mục mới"
-              title="Thư mục mới (Ctrl+Shift+N)"
-              class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
-              @click="handleCreateFolder"
-            >
-              <span>📁 New Folder</span>
-            </button>
+            <template v-if="isFlowsMode">
+              <button
+                type="button"
+                role="menuitem"
+                data-test="add-flow-item"
+                aria-label="Flow mới"
+                title="Flow mới (Ctrl+N)"
+                class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+                @click="handleCreateFlow"
+              >
+                <span>🔀 New Flow</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-test="add-flow-folder-item"
+                aria-label="Thư mục Flow mới"
+                title="Thư mục Flow mới (Ctrl+Shift+N)"
+                class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+                @click="handleCreateFlowFolder"
+              >
+                <span>📁 New Flow Folder</span>
+              </button>
+            </template>
+            <template v-else>
+              <button
+                type="button"
+                role="menuitem"
+                data-test="add-request-item"
+                aria-label="Request mới"
+                title="Request mới (Ctrl+N)"
+                class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+                @click="handleCreateRequest"
+              >
+                <span>📄 New Request</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                data-test="add-folder-item"
+                aria-label="Thư mục mới"
+                title="Thư mục mới (Ctrl+Shift+N)"
+                class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
+                @click="handleCreateFolder"
+              >
+                <span>📁 New Folder</span>
+              </button>
+            </template>
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Disk External Change Warning Banner -->
+    <div
+      v-if="store.hasExternalChanges"
+      data-test="external-change-banner"
+      class="mx-2 mt-2 mb-0.5 px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-md flex items-center justify-between gap-2 text-[11px] text-amber-300 shadow-sm shrink-0"
+    >
+      <div class="flex items-center gap-1.5 min-w-0">
+        <svg class="w-3.5 h-3.5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </svg>
+        <span class="truncate">Phát hiện ổ đĩa thay đổi (Git/CLI)</span>
+      </div>
+      <button
+        type="button"
+        data-test="external-change-reload-btn"
+        class="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-medium text-[11px] shrink-0 transition-colors cursor-pointer"
+        @click.stop="handleSmartReload"
+      >
+        Tải lại
+      </button>
     </div>
 
     <!-- Tree Content Area -->
@@ -380,39 +591,78 @@ const onRootDrop = async (e: DragEvent) => {
       @drop="onRootDrop"
       @contextmenu.prevent="handleRootContextMenu"
     >
-      <div v-if="store.loading && store.tree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
-      <div v-else-if="store.error" class="px-3 py-4 ui-sm text-text-danger">{{ store.error }}</div>
-      <div v-else-if="store.tree.length === 0" class="px-3 py-8 text-center flex flex-col items-center gap-2">
-        <span class="ui-sm text-text-muted">Collection trống.</span>
-        <button 
-          @click="store.createRequest()"
-          class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded"
-        >
-          Tạo request mới
-        </button>
-      </div>
-      <div v-else-if="filterQuery.trim() && displayedTree.length === 0" data-test="tree-filter-empty" class="px-3 py-8 text-center flex flex-col items-center gap-2">
-        <span class="ui-sm text-text-muted">Không tìm thấy kết quả phù hợp cho "{{ filterQuery }}".</span>
-        <button 
-          type="button"
-          data-test="clear-filter-empty-btn"
-          @click="clearFilter"
-          class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
-        >
-          Xóa bộ lọc
-        </button>
-      </div>
-      <div v-else class="flex flex-col min-h-full">
-        <div>
-          <TreeNodeRow 
-            v-for="node in displayedTree" 
-            :key="node.id"
-            :node="node"
-            :depth="0"
-          />
+      <template v-if="isFlowsMode">
+        <div v-if="flowStore.loading && flowStore.flowTree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
+        <div v-else-if="flowStore.error && flowStore.flowTree.length === 0" class="px-3 py-4 ui-sm text-text-danger">{{ flowStore.error }}</div>
+        <div v-else-if="flowStore.flowTree.length === 0" class="px-3 py-8 text-center flex flex-col items-center gap-2">
+          <span class="ui-sm text-text-muted">Chưa có flow nào.</span>
+          <button 
+            type="button"
+            data-test="create-empty-flow-btn"
+            @click="flowStore.createFlow()"
+            class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
+          >
+            Tạo flow mới
+          </button>
         </div>
-        <div class="flex-1 min-h-[48px]" data-test="tree-root-empty-space" />
-      </div>
+        <div v-else-if="filterQuery.trim() && displayedFlowTree.length === 0" data-test="tree-filter-empty" class="px-3 py-8 text-center flex flex-col items-center gap-2">
+          <span class="ui-sm text-text-muted">Không tìm thấy kết quả phù hợp cho "{{ filterQuery }}".</span>
+          <button 
+            type="button"
+            data-test="clear-filter-empty-btn"
+            @click="clearFilter"
+            class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
+          >
+            Xóa bộ lọc
+          </button>
+        </div>
+        <div v-else class="flex flex-col min-h-full">
+          <div>
+            <TreeNodeRow 
+              v-for="node in displayedFlowTree" 
+              :key="node.id"
+              :node="node"
+              :depth="0"
+            />
+          </div>
+          <div class="flex-1 min-h-[48px]" data-test="tree-root-empty-space" />
+        </div>
+      </template>
+      <template v-else>
+        <div v-if="store.loading && store.tree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
+        <div v-else-if="store.error" class="px-3 py-4 ui-sm text-text-danger">{{ store.error }}</div>
+        <div v-else-if="store.tree.length === 0" class="px-3 py-8 text-center flex flex-col items-center gap-2">
+          <span class="ui-sm text-text-muted">Collection trống.</span>
+          <button 
+            @click="store.createRequest()"
+            class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded"
+          >
+            Tạo request mới
+          </button>
+        </div>
+        <div v-else-if="filterQuery.trim() && displayedTree.length === 0" data-test="tree-filter-empty" class="px-3 py-8 text-center flex flex-col items-center gap-2">
+          <span class="ui-sm text-text-muted">Không tìm thấy kết quả phù hợp cho "{{ filterQuery }}".</span>
+          <button 
+            type="button"
+            data-test="clear-filter-empty-btn"
+            @click="clearFilter"
+            class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
+          >
+            Xóa bộ lọc
+          </button>
+        </div>
+        <div v-else class="flex flex-col min-h-full">
+          <div>
+            <TreeNodeRow 
+              v-for="node in displayedTree" 
+              :key="node.id"
+              :node="node"
+              :depth="0"
+            />
+          </div>
+          <div class="flex-1 min-h-[48px]" data-test="tree-root-empty-space" />
+        </div>
+      </template>
     </div>
   </nav>
 </template>

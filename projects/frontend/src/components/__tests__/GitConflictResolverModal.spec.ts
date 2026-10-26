@@ -447,4 +447,92 @@ describe('GitConflictResolverModal.vue', () => {
     expect(clearReqSpy).toHaveBeenCalled()
     expect(collectionStore.activeRequestId).toBeNull()
   })
+
+  it('renders Flow and Flow Folder entity badges for flow and flow_folder conflicts and reloads flowStore.loadFlowTree() on resolve', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+    const { useFlowStore } = await import('@/stores/flowStore')
+    const flowStore = useFlowStore()
+    const loadFlowTreeSpy = vi.spyOn(flowStore, 'loadFlowTree').mockResolvedValue()
+
+    collectionStore.activeCollectionId = 'Test-Collection'
+    collectionStore.gitSyncStatus = {
+      has_git_repo: true,
+      branch: 'main',
+      has_changes: true,
+      has_conflicts: true,
+      conflict_files: ['flows/checkout.json', 'flows/orders/_folder.json'],
+      conflicts: [
+        {
+          file_path: 'flows/checkout.json',
+          entity_type: 'flow',
+          entity_name: 'Checkout Flow',
+          conflict_type: 'field_conflict',
+          fields: [
+            {
+              field_path: 'name',
+              label: 'Tên Flow',
+              base_value: 'Checkout',
+              ours_value: 'Checkout Local',
+              theirs_value: 'Checkout Remote'
+            }
+          ],
+          merged_preview: {
+            id: 'flow-checkout',
+            name: 'Checkout Local'
+          }
+        },
+        {
+          file_path: 'flows/orders/_folder.json',
+          entity_type: 'flow_folder',
+          entity_name: 'Orders Folder',
+          conflict_type: 'field_conflict',
+          fields: [
+            {
+              field_path: 'name',
+              label: 'Tên thư mục Flow',
+              base_value: 'Orders',
+              ours_value: 'Orders Local',
+              theirs_value: 'Orders Remote'
+            }
+          ],
+          merged_preview: {
+            id: 'ff-orders',
+            name: 'Orders Local'
+          }
+        }
+      ]
+    } as any
+
+    resolveGitConflictMock.mockResolvedValueOnce({
+      success: true,
+      data: {
+        has_git_repo: true,
+        branch: 'main',
+        has_changes: false,
+        has_conflicts: false,
+        conflicts: []
+      }
+    })
+
+    uiStore.gitConflictModalOpen = true
+    const wrapper = mount(GitConflictResolverModal)
+
+    const fileItem0 = wrapper.find('[data-test="conflict-file-item-0"]')
+    const fileItem1 = wrapper.find('[data-test="conflict-file-item-1"]')
+
+    expect(fileItem0.text()).toContain('Flow')
+    expect(fileItem0.text()).toContain('Checkout Flow')
+    expect(fileItem1.text()).toContain('Flow Folder')
+    expect(fileItem1.text()).toContain('Orders Folder')
+
+    await wrapper.find('[data-test="pick-all-files-ours-btn"]').trigger('click')
+    await wrapper.find('[data-test="git-resolve-submit-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 15))
+
+    expect(resolveGitConflictMock).toHaveBeenCalled()
+    expect(loadFlowTreeSpy).toHaveBeenCalled()
+  })
 })
+
+

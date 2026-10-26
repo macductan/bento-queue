@@ -37,6 +37,7 @@ import {
   AbortGitMerge
 } from '../../wailsjs/go/main/App'
 import { useTabStore, type TabEntityType } from './tabStore'
+import { useFlowStore } from './flowStore'
 
 export interface AuthConfig {
   type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey'
@@ -139,6 +140,7 @@ const useBaseCollectionStore = defineStore('collection', {
       const envStore = useEnvironmentStore()
       const { useRequestStore } = await import('./requestStore')
       const reqStore = useRequestStore()
+      const flowStore = useFlowStore()
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
       const tabStore = useTabStore()
@@ -146,9 +148,49 @@ const useBaseCollectionStore = defineStore('collection', {
       await Promise.all([
         this.loadCollections({ skipEnvSync: true }),
         this.loadTree(),
-        envStore.loadAll()
+        envStore.loadAll(),
+        flowStore.loadFlowTree()
       ])
       envStore.syncActiveEnvFromCollection()
+
+      // Sync Flow tree & activeFlowId state only when loadFlowTree succeeded
+      if (!flowStore.error) {
+        const existingFlowFolders = new Set<string>()
+        const existingFlows = new Set<string>()
+        const walkFlowTree = (nodes: typeof flowStore.flowTree) => {
+          for (const node of nodes) {
+            if (node.type === 'flow_folder') {
+              existingFlowFolders.add(node.id)
+              if (node.children) walkFlowTree(node.children)
+            } else {
+              existingFlows.add(node.id)
+            }
+          }
+        }
+        walkFlowTree(flowStore.flowTree)
+
+        for (const folderId of Array.from(flowStore.expandedFlowFolders)) {
+          if (!existingFlowFolders.has(folderId)) {
+            flowStore.expandedFlowFolders.delete(folderId)
+          }
+        }
+
+        if (flowStore.activeFlowId) {
+          if (!existingFlows.has(flowStore.activeFlowId)) {
+            const wasFlowDirty = flowStore.isDirty
+            flowStore.clearCurrentFlow()
+            if (wasFlowDirty) {
+              uiStore.showToast('Mục đang chỉnh sửa đã bị xóa khỏi đĩa.')
+            }
+          } else if (!flowStore.isDirty) {
+            await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+          } else {
+            uiStore.showToast(
+              'Dữ liệu trên đĩa đã thay đổi, nhưng Flow hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+            )
+          }
+        }
+      }
 
       if (this.error) {
         return
@@ -289,10 +331,16 @@ const useBaseCollectionStore = defineStore('collection', {
       useRequestStore().clearRequest()
       const { useResponseStore } = await import('./responseStore')
       useResponseStore().clear()
+      const flowStore = useFlowStore()
+      flowStore.flowTree = []
+      flowStore.sortDirectionMap = {}
+      flowStore.clearCurrentFlow()
+      flowStore.expandedFlowFolders.clear()
+      flowStore.draggingNode = null
       useTabStore().clearAllTabs()
       this.expandedFolders.clear()
       this.draggingNode = null
-      await this.loadTree()
+      await Promise.all([this.loadTree(), flowStore.loadFlowTree()])
     },
     async loadTree() {
       this.loading = true
@@ -351,6 +399,7 @@ const useBaseCollectionStore = defineStore('collection', {
       try {
         const { useRequestStore } = await import('./requestStore')
         const reqStore = useRequestStore()
+        const flowStore = useFlowStore()
         const { useUiStore } = await import('./uiStore')
         const uiStore = useUiStore()
         const tabStore = useTabStore()
@@ -367,6 +416,17 @@ const useBaseCollectionStore = defineStore('collection', {
           // if choice === 'discard', continue
         }
 
+        if (!opts?.force && flowStore.isDirty) {
+          const choice = await uiStore.requestUnsavedPrompt(
+            'Flow hiện tại có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi chuyển collection?'
+          )
+          if (choice === 'cancel') return false
+          if (choice === 'save') {
+            const saved = await flowStore.saveCurrentFlow()
+            if (!saved || flowStore.isDirty) return false
+          }
+        }
+
         if (!opts?.force && (this.activeFolderId || tabStore.activeTab?.type === 'folder')) {
           const folderSaved = await tabStore.flushActiveFolderIfNeeded()
           if (!folderSaved) return false
@@ -377,6 +437,11 @@ const useBaseCollectionStore = defineStore('collection', {
           this.hasExternalChanges = false
           this.activeCollectionId = targetId
           reqStore.clearRequest()
+          flowStore.flowTree = []
+          flowStore.sortDirectionMap = {}
+          flowStore.clearCurrentFlow()
+          flowStore.expandedFlowFolders.clear()
+          flowStore.draggingNode = null
           const { useResponseStore } = await import('./responseStore')
           const resStore = useResponseStore()
           resStore.clear()
@@ -389,7 +454,13 @@ const useBaseCollectionStore = defineStore('collection', {
           const envStore = useEnvironmentStore()
           const { useMockServerStore } = await import('./mockServerStore')
           const mockStore = useMockServerStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), mockStore.loadStatus()])
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            mockStore.loadStatus(),
+            flowStore.loadFlowTree()
+          ])
           envStore.syncActiveEnvFromCollection()
           return true
         } else {
@@ -475,13 +546,24 @@ const useBaseCollectionStore = defineStore('collection', {
             this.activeCollectionId = 'default'
             const { useRequestStore } = await import('./requestStore')
             useRequestStore().clearRequest()
+            const flowStore = useFlowStore()
+            flowStore.flowTree = []
+            flowStore.sortDirectionMap = {}
+            flowStore.clearCurrentFlow()
+            flowStore.expandedFlowFolders.clear()
+            flowStore.draggingNode = null
             useTabStore().clearAllTabs()
             this.activeRequestId = null
             this.activeFolderId = null
             this.expandedFolders.clear()
             const { useEnvironmentStore } = await import('./environmentStore')
             const envStore = useEnvironmentStore()
-            await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+            await Promise.all([
+              this.loadTree(),
+              envStore.refresh(),
+              this.loadCollections(),
+              flowStore.loadFlowTree()
+            ])
             envStore.syncActiveEnvFromCollection()
           } else {
             await this.loadCollections()
@@ -665,6 +747,14 @@ const useBaseCollectionStore = defineStore('collection', {
     async selectFolder(id: string) {
       await this.setActiveFolderId(id)
     },
+    async openFolderSettings(id: string, opts?: { force?: boolean }) {
+      if (!id || !id.trim()) return
+      if (opts !== undefined) {
+        await this.setActiveFolderId(id, opts)
+      } else {
+        await this.setActiveFolderId(id)
+      }
+    },
     async updateCollectionVariables(
       id: string,
       variables: { key: string; value: string; enabled: boolean }[],
@@ -823,47 +913,65 @@ const useBaseCollectionStore = defineStore('collection', {
         useUiStore().showToast(String(err))
       }
     },
-    async renameRequest(id: string, name: string) {
+    async renameRequest(id: string, name: string): Promise<boolean | void> {
+      const trimmed = typeof name === 'string' ? name.trim() : ''
+      if (!id || !id.trim() || !trimmed) return false
       try {
-        const result = await RenameRequest(id, name)
+        const result = await RenameRequest(id, trimmed)
         if (result.success) {
           await this.loadTree()
           const updatedNode = this.findNode(this.tree, id)
-          const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || name)
+          const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || trimmed)
           useTabStore().updateTabMeta('request', id, { name: resolvedName })
-          if (this.activeRequestId === id) {
-            const { useRequestStore } = await import('./requestStore')
-            const reqStore = useRequestStore()
-            if (reqStore.current?.id === id && reqStore.original?.id === id) {
-              reqStore.current.name = resolvedName
-              reqStore.original.name = resolvedName
-            }
+          const { useRequestStore } = await import('./requestStore')
+          const reqStore = useRequestStore()
+          if (reqStore.current?.id === id) {
+            reqStore.current.name = resolvedName
           }
+          if (reqStore.original?.id === id) {
+            reqStore.original.name = resolvedName
+          }
+          return true
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể đổi tên request')
+          return false
         }
       } catch (err) {
         const { useUiStore } = await import('./uiStore')
         useUiStore().showToast(String(err))
+        return false
       }
     },
-    async renameFolder(id: string, name: string) {
+    async renameFolder(id: string, name: string): Promise<boolean | void> {
+      const trimmed = typeof name === 'string' ? name.trim() : ''
+      if (!id || !id.trim() || !trimmed) return false
       try {
-        const result = await RenameFolder(id, name)
+        const result = await RenameFolder(id, trimmed)
         if (result.success) {
           await this.loadTree()
           const updatedNode = this.findNode(this.tree, id)
-          const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || name)
+          const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || trimmed)
           useTabStore().updateTabMeta('folder', id, { name: resolvedName })
+          return true
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể đổi tên thư mục')
+          return false
         }
       } catch (err) {
         const { useUiStore } = await import('./uiStore')
         useUiStore().showToast(String(err))
+        return false
       }
+    },
+    async renameNode(id: string, newName: string, type: 'request' | 'folder' = 'request'): Promise<boolean | void> {
+      const trimmed = typeof newName === 'string' ? newName.trim() : ''
+      if (!id || !id.trim() || !trimmed) return false
+      if (type === 'folder') {
+        return await this.renameFolder(id, trimmed)
+      }
+      return await this.renameRequest(id, trimmed)
     },
     async deleteRequest(id: string) {
       if (this.activeRequestId === id) {
@@ -1199,7 +1307,13 @@ const useBaseCollectionStore = defineStore('collection', {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' })
           }
           try {
-            el.focus({ preventScroll: true })
+            const activeEl = document.activeElement
+            const isBreadcrumbRename =
+              activeEl?.getAttribute?.('data-test') === 'breadcrumb-name-input' ||
+              activeEl instanceof HTMLInputElement
+            if (!isBreadcrumbRename) {
+              el.focus({ preventScroll: true })
+            }
           } catch {
             // Ignore focus error
           }
@@ -1430,6 +1544,11 @@ const useBaseCollectionStore = defineStore('collection', {
       const tabStore = useTabStore()
       const folderSaved = await tabStore.flushActiveFolderIfNeeded()
       if (!folderSaved) return false
+      const flowStore = useFlowStore()
+      if (flowStore.isDirty && flowStore.currentFlow) {
+        const flowSaved = await flowStore.saveCurrentFlow()
+        if (!flowSaved || flowStore.isDirty) return false
+      }
       return true
     },
     async gitPull(branch?: string, collectionId?: string): Promise<boolean> {
@@ -1470,7 +1589,14 @@ const useBaseCollectionStore = defineStore('collection', {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          const flowStore = useFlowStore()
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            this.fetchLocalBranches(targetId),
+            flowStore.loadFlowTree()
+          ])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1478,6 +1604,13 @@ const useBaseCollectionStore = defineStore('collection', {
             } else {
               this.activeRequestId = null
               useRequestStore().clearRequest()
+            }
+          }
+          if (!flowStore.error && flowStore.activeFlowId) {
+            if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+              await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+            } else {
+              flowStore.clearCurrentFlow()
             }
           }
           uiStore.showToast('Git Pull thành công')
@@ -1526,7 +1659,14 @@ const useBaseCollectionStore = defineStore('collection', {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          const flowStore = useFlowStore()
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            this.fetchLocalBranches(targetId),
+            flowStore.loadFlowTree()
+          ])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1534,6 +1674,13 @@ const useBaseCollectionStore = defineStore('collection', {
             } else {
               this.activeRequestId = null
               useRequestStore().clearRequest()
+            }
+          }
+          if (!flowStore.error && flowStore.activeFlowId) {
+            if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+              await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+            } else {
+              flowStore.clearCurrentFlow()
             }
           }
           uiStore.showToast(`Đã chuyển sang nhánh ${branch}`)
@@ -1583,7 +1730,14 @@ const useBaseCollectionStore = defineStore('collection', {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          const flowStore = useFlowStore()
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            this.fetchLocalBranches(targetId),
+            flowStore.loadFlowTree()
+          ])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1591,6 +1745,13 @@ const useBaseCollectionStore = defineStore('collection', {
             } else {
               this.activeRequestId = null
               useRequestStore().clearRequest()
+            }
+          }
+          if (!flowStore.error && flowStore.activeFlowId) {
+            if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+              await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+            } else {
+              flowStore.clearCurrentFlow()
             }
           }
           uiStore.showToast('Đã xóa dữ liệu local và đồng bộ từ Remote')
@@ -1638,7 +1799,14 @@ const useBaseCollectionStore = defineStore('collection', {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections(), this.fetchLocalBranches(targetId)])
+          const flowStore = useFlowStore()
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            this.fetchLocalBranches(targetId),
+            flowStore.loadFlowTree()
+          ])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1646,6 +1814,13 @@ const useBaseCollectionStore = defineStore('collection', {
             } else {
               this.activeRequestId = null
               useRequestStore().clearRequest()
+            }
+          }
+          if (!flowStore.error && flowStore.activeFlowId) {
+            if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+              await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+            } else {
+              flowStore.clearCurrentFlow()
             }
           }
           uiStore.showToast('Đã stash, pull và gộp thay đổi thành công')
@@ -1712,7 +1887,13 @@ const useBaseCollectionStore = defineStore('collection', {
           if (targetId === this.activeCollectionId) {
             const { useEnvironmentStore } = await import('./environmentStore')
             const envStore = useEnvironmentStore()
-            await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+            const flowStore = useFlowStore()
+            await Promise.all([
+              this.loadTree(),
+              envStore.refresh(),
+              this.loadCollections(),
+              flowStore.loadFlowTree()
+            ])
             if (this.activeRequestId) {
               const { useRequestStore } = await import('./requestStore')
               if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1720,6 +1901,13 @@ const useBaseCollectionStore = defineStore('collection', {
               } else {
                 this.activeRequestId = null
                 useRequestStore().clearRequest()
+              }
+            }
+            if (!flowStore.error && flowStore.activeFlowId) {
+              if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+                await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+              } else {
+                flowStore.clearCurrentFlow()
               }
             }
           }
@@ -1763,7 +1951,13 @@ const useBaseCollectionStore = defineStore('collection', {
           uiStore.gitConflictModalOpen = false
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          const flowStore = useFlowStore()
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            flowStore.loadFlowTree()
+          ])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1771,6 +1965,13 @@ const useBaseCollectionStore = defineStore('collection', {
             } else {
               this.activeRequestId = null
               useRequestStore().clearRequest()
+            }
+          }
+          if (!flowStore.error && flowStore.activeFlowId) {
+            if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+              await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+            } else {
+              flowStore.clearCurrentFlow()
             }
           }
           uiStore.showToast('Đã giải quyết xung đột và hoàn tất đồng bộ Git')
@@ -1809,7 +2010,13 @@ const useBaseCollectionStore = defineStore('collection', {
           uiStore.gitConflictModalOpen = false
           const { useEnvironmentStore } = await import('./environmentStore')
           const envStore = useEnvironmentStore()
-          await Promise.all([this.loadTree(), envStore.refresh(), this.loadCollections()])
+          const flowStore = useFlowStore()
+          await Promise.all([
+            this.loadTree(),
+            envStore.refresh(),
+            this.loadCollections(),
+            flowStore.loadFlowTree()
+          ])
           if (this.activeRequestId) {
             const { useRequestStore } = await import('./requestStore')
             if (this.findNode(this.tree, this.activeRequestId)) {
@@ -1817,6 +2024,13 @@ const useBaseCollectionStore = defineStore('collection', {
             } else {
               this.activeRequestId = null
               useRequestStore().clearRequest()
+            }
+          }
+          if (!flowStore.error && flowStore.activeFlowId) {
+            if (flowStore.findNode(flowStore.flowTree, flowStore.activeFlowId)) {
+              await flowStore.selectFlow(flowStore.activeFlowId, { force: true })
+            } else {
+              flowStore.clearCurrentFlow()
             }
           }
           uiStore.showToast('Đã huỷ merge và khôi phục trạng thái trước đó')

@@ -13,6 +13,7 @@ import GitConflictResolverModal from '@/components/GitConflictResolverModal.vue'
 import HistoryModal from '@/components/HistoryModal.vue'
 import MockServerModal from '@/components/MockServerModal.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useFlowStore } from '@/stores/flowStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
@@ -21,6 +22,7 @@ import { useTabStore } from '@/stores/tabStore'
 import { installGlobalInputUndo } from '@/utils/inputUndo'
 
 const collectionStore = useCollectionStore()
+const flowStore = useFlowStore()
 const uiStore = useUiStore()
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
@@ -67,6 +69,9 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
     e.preventDefault()
+    if (uiStore.workspaceMode !== 'apis') {
+      return
+    }
     if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
       return
     }
@@ -83,13 +88,20 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault()
-    if (requestStore.current) {
+    if (uiStore.workspaceMode === 'flows') {
+      if (flowStore.currentFlow) {
+        void flowStore.saveCurrentFlow()
+      }
+    } else if (requestStore.current) {
       void requestStore.saveCurrent()
     }
     return
   }
 
   if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+    if (uiStore.workspaceMode !== 'apis') {
+      return
+    }
     e.preventDefault()
     uiStore.triggerFocusUrl()
     return
@@ -97,6 +109,9 @@ const handleKeyDown = (e: KeyboardEvent) => {
 
 
   if (e.ctrlKey && e.key === 'Enter') {
+    if (uiStore.workspaceMode !== 'apis') {
+      return
+    }
     e.preventDefault()
     if (requestStore.current && !responseStore.loading) {
       void responseStore.send()
@@ -122,12 +137,20 @@ const handleKeyDown = (e: KeyboardEvent) => {
     return
   }
 
-  if (e.ctrlKey && e.key.toLowerCase() === 'n') {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
     e.preventDefault()
-    if (e.shiftKey) {
-      collectionStore.createFolder()
+    if (uiStore.workspaceMode === 'flows') {
+      if (e.shiftKey) {
+        void flowStore.createFlowFolder()
+      } else {
+        void flowStore.createFlow()
+      }
     } else {
-      collectionStore.createRequest()
+      if (e.shiftKey) {
+        collectionStore.createFolder()
+      } else {
+        collectionStore.createRequest()
+      }
     }
   }
 }
@@ -142,7 +165,8 @@ onMounted(async () => {
   await Promise.all([
     collectionStore.loadCollections(),
     collectionStore.loadTree(),
-    envStore.loadAll()
+    envStore.loadAll(),
+    flowStore.loadFlowTree()
   ])
   envStore.syncActiveEnvFromCollection()
 })

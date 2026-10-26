@@ -1497,5 +1497,162 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
         window.removeEventListener('hecto:folder-updated', onFolderUpdated)
       }
     })
+
+    it('synchronizes flowStore during smartReload: reloads clean active flow and protects dirty active flow', async () => {
+      const { useFlowStore } = await import('../flowStore')
+      const store = useCollectionStore()
+      const flowStore = useFlowStore()
+      const uiStore = useUiStore()
+
+      vi.mocked(ListCollections).mockResolvedValue(
+        resSuccess([{ id: 'default', name: 'Default', is_default: true, is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValue(resSuccess([]))
+      vi.mocked(GetCollectionTree).mockResolvedValue(resSuccess([]))
+
+      const loadFlowTreeSpy = vi.spyOn(flowStore, 'loadFlowTree').mockImplementation(async () => {
+        flowStore.flowTree = [
+          {
+            id: 'ff-keep',
+            name: 'Flow Folder Keep',
+            type: 'flow_folder',
+            path: 'flows/ff-keep',
+            created_at: '',
+            children: [
+              { id: 'flow-active', name: 'Active Flow', type: 'flow', path: 'flows/ff-keep/flow-active.json', created_at: '' }
+            ]
+          }
+        ]
+      })
+      const selectFlowSpy = vi.spyOn(flowStore, 'selectFlow').mockResolvedValue(true)
+
+      // 1. Clean active flow -> reloads via selectFlow(id, { force: true }) and prunes deleted expandedFlowFolders
+      flowStore.expandedFlowFolders.add('ff-keep')
+      flowStore.expandedFlowFolders.add('ff-deleted')
+      flowStore.activeFlowId = 'flow-active'
+      flowStore.currentFlow = { id: 'flow-active', name: 'Active Flow', nodes: [] } as any
+      flowStore.savedSnapshot = JSON.stringify(flowStore.currentFlow)
+      expect(flowStore.isDirty).toBe(false)
+
+      await store.smartReload()
+
+      expect(loadFlowTreeSpy).toHaveBeenCalledTimes(1)
+      expect(flowStore.expandedFlowFolders.has('ff-keep')).toBe(true)
+      expect(flowStore.expandedFlowFolders.has('ff-deleted')).toBe(false)
+      expect(selectFlowSpy).toHaveBeenCalledWith('flow-active', { force: true })
+
+      // 2. Dirty active flow -> preserves in-memory currentFlow and shows warning toast
+      selectFlowSpy.mockClear()
+      const toastSpy = vi.spyOn(uiStore, 'showToast')
+      flowStore.currentFlow = { id: 'flow-active', name: 'Unsaved Flow Name', nodes: [] } as any
+      expect(flowStore.isDirty).toBe(true)
+
+      await store.smartReload()
+
+      expect(selectFlowSpy).not.toHaveBeenCalled()
+      expect(flowStore.currentFlow?.name).toBe('Unsaved Flow Name')
+      expect(toastSpy).toHaveBeenCalledWith(
+        'Dữ liệu trên đĩa đã thay đổi, nhưng Flow hiện tại đang có chỉnh sửa chưa lưu nên được giữ nguyên.'
+      )
+
+      // 3. Deleted dirty active flow -> clears currentFlow and shows deleted toast
+      toastSpy.mockClear()
+      loadFlowTreeSpy.mockImplementationOnce(async () => {
+        flowStore.flowTree = []
+      })
+
+      await store.smartReload()
+
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.currentFlow).toBeNull()
+      expect(toastSpy).toHaveBeenCalledWith('Mục đang chỉnh sửa đã bị xóa khỏi đĩa.')
+
+      // 4. When loadFlowTree fails (flowStore.error is set), smartReload does NOT clear activeFlowId
+      flowStore.activeFlowId = 'flow-keep-on-error'
+      flowStore.currentFlow = { id: 'flow-keep-on-error', name: 'Keep On Error', nodes: [] } as any
+      loadFlowTreeSpy.mockImplementationOnce(async () => {
+        flowStore.error = 'Transient disk error'
+        flowStore.flowTree = []
+      })
+
+      await store.smartReload()
+
+      expect(flowStore.activeFlowId).toBe('flow-keep-on-error')
+      expect(flowStore.currentFlow?.id).toBe('flow-keep-on-error')
+    })
+
+    it('guards switchCollection when flowStore.isDirty is true and resets flowStore state on switchCollection, deleteCollection, and refresh', async () => {
+      const { useFlowStore } = await import('../flowStore')
+      const store = useCollectionStore()
+      const flowStore = useFlowStore()
+      const uiStore = useUiStore()
+
+      store.activeCollectionId = 'default'
+      flowStore.activeFlowId = 'flow-1'
+      flowStore.currentFlow = { id: 'flow-1', name: 'Dirty Flow', nodes: [] } as any
+      flowStore.savedSnapshot = '{"id":"flow-1","name":"Original Flow"}'
+      flowStore.expandedFlowFolders.add('ff-1')
+      flowStore.sortDirectionMap = { '': 'asc' }
+      expect(flowStore.isDirty).toBe(true)
+
+      // 1. Cancel unsaved flow prompt -> aborts switchCollection
+      const promptSpy = vi.spyOn(uiStore, 'requestUnsavedPrompt').mockResolvedValueOnce('cancel')
+      const cancelled = await store.switchCollection('col-2')
+      expect(cancelled).toBe(false)
+      expect(promptSpy).toHaveBeenCalled()
+      expect(SwitchCollection).not.toHaveBeenCalled()
+
+      // 2. Discard unsaved flow -> switches collection and resets flowStore
+      promptSpy.mockResolvedValueOnce('discard')
+      vi.mocked(SwitchCollection).mockResolvedValueOnce(resSuccess({}))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'col-2', name: 'Collection 2', is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+      const loadFlowTreeSpy = vi.spyOn(flowStore, 'loadFlowTree').mockResolvedValue()
+
+      const switched = await store.switchCollection('col-2')
+      expect(switched).toBe(true)
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.currentFlow).toBeNull()
+      expect(flowStore.expandedFlowFolders.size).toBe(0)
+      expect(flowStore.sortDirectionMap).toEqual({})
+      expect(loadFlowTreeSpy).toHaveBeenCalled()
+
+      // 3. deleteCollection on active collection resets flowStore and reloads flowTree
+      flowStore.activeFlowId = 'flow-col2'
+      flowStore.expandedFlowFolders.add('ff-col2')
+      flowStore.sortDirectionMap = { 'ff-col2': 'desc' }
+      vi.mocked(DeleteCollection).mockResolvedValueOnce(resSuccess({ active_collection: 'default' }))
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'default', name: 'Default', is_active: true }])
+      )
+      vi.mocked(ListEnvironments).mockResolvedValueOnce(resSuccess([]))
+      loadFlowTreeSpy.mockClear()
+
+      const deleted = await store.deleteCollection('col-2')
+      expect(deleted).toBe(true)
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.expandedFlowFolders.size).toBe(0)
+      expect(flowStore.sortDirectionMap).toEqual({})
+      expect(loadFlowTreeSpy).toHaveBeenCalled()
+
+      // 4. refresh() resets flowStore and reloads flowTree
+      flowStore.activeFlowId = 'flow-default'
+      flowStore.expandedFlowFolders.add('ff-default')
+      flowStore.sortDirectionMap = { '': 'asc' }
+      vi.mocked(GetCollectionTree).mockResolvedValueOnce(resSuccess([]))
+      loadFlowTreeSpy.mockClear()
+
+      await store.refresh()
+      expect(flowStore.activeFlowId).toBeNull()
+      expect(flowStore.expandedFlowFolders.size).toBe(0)
+      expect(flowStore.sortDirectionMap).toEqual({})
+      expect(loadFlowTreeSpy).toHaveBeenCalled()
+    })
   })
 })
+
+

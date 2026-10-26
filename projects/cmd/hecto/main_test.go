@@ -518,3 +518,355 @@ func TestFolderCRUD_ReqListFolder_RunFlags_FileLoading_And_CollectionFlag(t *tes
 	}
 }
 
+func TestFlowCLI_CRUD_Folder_ShorthandSteps_NodesJSON_And_Run(t *testing.T) {
+	dataDir := t.TempDir()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"token":"flow-jwt-999","tier":"vip"}`))
+		case "/profile":
+			if r.Header.Get("Authorization") != "Bearer flow-jwt-999" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"user":"alice"}`))
+		case "/cart":
+			if r.Header.Get("Authorization") != "Bearer flow-jwt-999" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"items":2}`))
+		case "/vip-checkout":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"order":"vip-ok","user":` + `"` + r.Header.Get("X-User") + `","items":` + `"` + r.Header.Get("X-Items") + `"}`))
+		case "/std-checkout":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"order":"std-ok"}`))
+		case "/fail-500":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	// 0. Verify agent-guide includes hecto flow documentation
+	code, guideOut, _ := execCLI(t, dataDir, "agent-guide")
+	if code != 0 || !strings.Contains(guideOut, "hecto flow") {
+		t.Fatalf("expected agent-guide to document `hecto flow`, got code=%d", code)
+	}
+
+	// 1. Setup Environment, Request Folders, and Requests
+	_, envRes, _ := execCLIJSON(t, dataDir, "env", "create", "--name", "Prod", "--var", "base_url="+ts.URL, "--activate")
+	if !envRes.Success {
+		t.Fatalf("env create failed: %+v", envRes)
+	}
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "Auth")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "Users")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "Catalog")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "Orders")
+
+	_, rLogin, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "Auth", "--name", "Login", "--method", "POST", "--url", "{{base_url}}/login",
+		"--post-script", `const b = ha.response.json(); ha.variables.set("jwt", b.token); ha.variables.set("user_tier", b.tier);`,
+	)
+	if !rLogin.Success {
+		t.Fatalf("create Login req failed: %+v", rLogin)
+	}
+	_, rProfile, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "Users", "--name", "Profile", "--method", "GET", "--url", "{{base_url}}/profile",
+		"--auth-type", "bearer", "--auth-token", "{{jwt}}",
+		"--post-script", `ha.variables.set("user_name", ha.response.json().user);`,
+	)
+	if !rProfile.Success {
+		t.Fatalf("create Profile req failed: %+v", rProfile)
+	}
+	_, rCart, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "Catalog", "--name", "Cart", "--method", "GET", "--url", "{{base_url}}/cart",
+		"--auth-type", "bearer", "--auth-token", "{{jwt}}",
+		"--post-script", `ha.variables.set("cart_items", String(ha.response.json().items));`,
+	)
+	if !rCart.Success {
+		t.Fatalf("create Cart req failed: %+v", rCart)
+	}
+	_, rVipCheckout, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "Orders", "--name", "VIP Checkout", "--method", "POST", "--url", "{{base_url}}/vip-checkout",
+		"--header", "X-User: {{user_name}}", "--header", "X-Items: {{cart_items}}",
+	)
+	if !rVipCheckout.Success {
+		t.Fatalf("create VIP Checkout req failed: %+v", rVipCheckout)
+	}
+	_, rStdCheckout, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "Orders", "--name", "Standard Checkout", "--method", "POST", "--url", "{{base_url}}/std-checkout",
+	)
+	if !rStdCheckout.Success {
+		t.Fatalf("create Standard Checkout req failed: %+v", rStdCheckout)
+	}
+	_, rFail500, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "Orders", "--name", "Broken Step", "--method", "GET", "--url", "{{base_url}}/fail-500",
+	)
+	if !rFail500.Success {
+		t.Fatalf("create Broken Step req failed: %+v", rFail500)
+	}
+
+	// 2. Flow Folder CRUD (create, parent create, update, move, list, tree, get, delete)
+	code, ffSuite, _ := execCLIJSON(t, dataDir, "flow", "folder", "create", "--name", "E2E Suite")
+	if code != 0 || !ffSuite.Success {
+		t.Fatalf("flow folder create E2E Suite failed: %+v", ffSuite)
+	}
+	_, ffSub, _ := execCLIJSON(t, dataDir, "flow", "folder", "create", "--name", "SubGroup", "--parent", "E2E Suite")
+	if !ffSub.Success {
+		t.Fatalf("flow folder create SubGroup failed: %+v", ffSub)
+	}
+	_, ffUpd, _ := execCLIJSON(t, dataDir, "flow", "folder", "update", "E2E Suite/SubGroup", "--name", "Checkout Group")
+	if !ffUpd.Success || ffUpd.Data.(map[string]interface{})["name"] != "Checkout Group" {
+		t.Fatalf("flow folder update failed: %+v", ffUpd)
+	}
+	_, ffList, _ := execCLIJSON(t, dataDir, "flow", "folder", "list")
+	if !ffList.Success || len(ffList.Data.([]interface{})) != 2 {
+		t.Fatalf("expected 2 flow folders in list, got: %+v", ffList)
+	}
+	_, ffGet, _ := execCLIJSON(t, dataDir, "flow", "folder", "get", "E2E Suite/Checkout Group")
+	if !ffGet.Success {
+		t.Fatalf("flow folder get failed: %+v", ffGet)
+	}
+	_, ffTemp, _ := execCLIJSON(t, dataDir, "flow", "folder", "create", "--name", "TempFlowFolder")
+	if !ffTemp.Success {
+		t.Fatalf("flow folder create TempFlowFolder failed: %+v", ffTemp)
+	}
+	_, ffMove, _ := execCLIJSON(t, dataDir, "flow", "folder", "move", "TempFlowFolder", "--to", "E2E Suite")
+	if !ffMove.Success {
+		t.Fatalf("flow folder move failed: %+v", ffMove)
+	}
+	_, ffDel, _ := execCLIJSON(t, dataDir, "flow", "folder", "delete", "E2E Suite/TempFlowFolder")
+	if !ffDel.Success {
+		t.Fatalf("flow folder delete failed: %+v", ffDel)
+	}
+
+	// 3. Flow Create with shorthand --steps "<req1>,<req2>||<req3>,<req4>"
+	code, fCreate, _ := execCLIJSON(t, dataDir,
+		"flow", "create",
+		"--name", "Checkout Flow",
+		"--folder", "E2E Suite/Checkout Group",
+		"--desc", "Initial shorthand flow",
+		"--layout", "vertical",
+		"--timeout-ms", "15000",
+		"--max-steps", "50",
+		"--steps", "Auth/Login,Users/Profile||Catalog/Cart,Orders/VIP Checkout",
+	)
+	if code != 0 || !fCreate.Success {
+		t.Fatalf("flow create with --steps failed: %+v", fCreate)
+	}
+	fMap := fCreate.Data.(map[string]interface{})
+	nodes := fMap["nodes"].([]interface{})
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 FlowNodes from --steps, got %d", len(nodes))
+	}
+	if len(nodes[1].(map[string]interface{})["steps"].([]interface{})) != 2 {
+		t.Fatalf("expected 2 parallel steps in node[1], got %+v", nodes[1])
+	}
+
+	// 4. Verify `flow get`, `flow list`, `flow tree`
+	code, fGet, _ := execCLIJSON(t, dataDir, "flow", "get", "E2E Suite/Checkout Group/Checkout Flow")
+	if code != 0 || !fGet.Success {
+		t.Fatalf("flow get failed: %+v", fGet)
+	}
+	fGetMap := fGet.Data.(map[string]interface{})
+	refReqs := fGetMap["referenced_requests"].([]interface{})
+	if len(refReqs) != 4 {
+		t.Fatalf("expected 4 referenced_requests in flow get output, got %d", len(refReqs))
+	}
+
+	code, fList, _ := execCLIJSON(t, dataDir, "flow", "list", "--folder", "E2E Suite/Checkout Group")
+	if code != 0 || !fList.Success || len(fList.Data.([]interface{})) != 1 {
+		t.Fatalf("flow list --folder failed: %+v", fList)
+	}
+
+	code, fTree, _ := execCLIJSON(t, dataDir, "flow", "tree")
+	if code != 0 || !fTree.Success || len(fTree.Data.([]interface{})) == 0 {
+		t.Fatalf("flow tree failed: %+v", fTree)
+	}
+
+	// 5. Flow Update (Read-Merge-Write) with --nodes-json @file (including custom + success branches)
+	nodesJSONFile := filepath.Join(t.TempDir(), "nodes.json")
+	nodesJSONContent := `[
+		{
+			"steps": [
+				{ "request_id": "Auth/Login", "enabled": true }
+			],
+			"branches": [
+				{
+					"name": "VIP Branch",
+					"condition": {
+						"type": "custom",
+						"source": "variable",
+						"path": "user_tier",
+						"operator": "==",
+						"value": "vip"
+					},
+					"nodes": [
+						{
+							"steps": [
+								{ "request_id": "Users/Profile", "enabled": true },
+								{ "request_id": "Catalog/Cart", "enabled": true }
+							]
+						},
+						{
+							"steps": [
+								{ "request_id": "Orders/VIP Checkout", "enabled": true }
+							]
+						}
+					]
+				},
+				{
+					"name": "Standard Branch",
+					"condition": { "type": "success" },
+					"nodes": [
+						{
+							"steps": [
+								{ "request_id": "Orders/Standard Checkout", "enabled": true }
+							]
+						}
+					]
+				}
+			]
+		}
+	]`
+	if err := os.WriteFile(nodesJSONFile, []byte(nodesJSONContent), 0644); err != nil {
+		t.Fatalf("write nodes.json failed: %v", err)
+	}
+
+	code, fUpd, _ := execCLIJSON(t, dataDir,
+		"flow", "update", "E2E Suite/Checkout Group/Checkout Flow",
+		"--layout", "horizontal",
+		"--nodes-json", "@"+nodesJSONFile,
+	)
+	if code != 0 || !fUpd.Success {
+		t.Fatalf("flow update failed: %+v", fUpd)
+	}
+	fUpdMap := fUpd.Data.(map[string]interface{})
+	// Verify Read-Merge-Write preserved description and timeout_ms while updating layout and nodes
+	if fUpdMap["description"] != "Initial shorthand flow" || fUpdMap["layout"] != "horizontal" || int(fUpdMap["timeout_ms"].(float64)) != 15000 {
+		t.Fatalf("Read-Merge-Write did not preserve untouched fields: %+v", fUpdMap)
+	}
+
+	// Verify `flow get` after `--nodes-json` includes all 5 branch referenced_requests
+	code, fGetBranched, _ := execCLIJSON(t, dataDir, "flow", "get", "E2E Suite/Checkout Group/Checkout Flow")
+	if code != 0 || !fGetBranched.Success {
+		t.Fatalf("flow get after update failed: %+v", fGetBranched)
+	}
+	branchedRefs := fGetBranched.Data.(map[string]interface{})["referenced_requests"].([]interface{})
+	if len(branchedRefs) != 5 {
+		t.Fatalf("expected 5 referenced_requests across nested branches, got %d", len(branchedRefs))
+	}
+
+	// 6. Execute Flow via `hecto flow run <path> --json` and with `--env none --var --timeout-ms --no-save-env`
+	code, fRun, _ := execCLIJSON(t, dataDir, "flow", "run", "E2E Suite/Checkout Group/Checkout Flow")
+	if code != 0 || !fRun.Success {
+		t.Fatalf("flow run failed (code=%d): %+v", code, fRun)
+	}
+	runData := fRun.Data.(map[string]interface{})
+	if runData["status"] != "passed" {
+		t.Fatalf("expected flow run status 'passed', got %+v", runData)
+	}
+	if int(runData["steps_executed"].(float64)) != 4 || int(runData["steps_passed"].(float64)) != 4 || int(runData["steps_skipped"].(float64)) != 1 {
+		t.Fatalf("expected steps_executed=4, steps_passed=4, steps_skipped=1, got %+v", runData)
+	}
+
+	// Verify `flow run` with `--env none --var base_url=... --timeout-ms 5000 --no-save-env` works across all steps
+	code, fRunFlags, _ := execCLIJSON(t, dataDir,
+		"flow", "run", "E2E Suite/Checkout Group/Checkout Flow",
+		"--env", "none",
+		"--var", "base_url="+ts.URL,
+		"--timeout-ms", "5000",
+		"--no-save-env",
+	)
+	if code != 0 || !fRunFlags.Success {
+		t.Fatalf("flow run with --env none --var --no-save-env failed: %+v", fRunFlags)
+	}
+	runFlagsData := fRunFlags.Data.(map[string]interface{})
+	if runFlagsData["status"] != "passed" || int(runFlagsData["steps_passed"].(float64)) != 4 {
+		t.Fatalf("expected passed flow run with --env none and --var base_url, got %+v", runFlagsData)
+	}
+
+	// 7. Move Flow to root and verify `flow run` on failing flow returns exit code 1 in non-JSON mode and exit code 0 in --json mode
+	code, fMove, _ := execCLIJSON(t, dataDir, "flow", "move", "E2E Suite/Checkout Group/Checkout Flow", "--to", "root")
+	if code != 0 || !fMove.Success {
+		t.Fatalf("flow move to root failed: %+v", fMove)
+	}
+
+	_, fBroken, _ := execCLIJSON(t, dataDir,
+		"flow", "create",
+		"--name", "Broken Flow",
+		"--steps", "Orders/Broken Step,Orders/Standard Checkout",
+	)
+	if !fBroken.Success {
+		t.Fatalf("create Broken Flow failed: %+v", fBroken)
+	}
+
+	// Verify `flow get` marks deleted requests with `"missing": true`
+	_, delBrokenStep, _ := execCLIJSON(t, dataDir, "req", "delete", "Orders/Broken Step")
+	if !delBrokenStep.Success {
+		t.Fatalf("delete Orders/Broken Step failed: %+v", delBrokenStep)
+	}
+	code, fGetBroken, _ := execCLIJSON(t, dataDir, "flow", "get", "Broken Flow")
+	if code != 0 || !fGetBroken.Success {
+		t.Fatalf("flow get Broken Flow failed: %+v", fGetBroken)
+	}
+	brokenRefs := fGetBroken.Data.(map[string]interface{})["referenced_requests"].([]interface{})
+	if len(brokenRefs) != 2 || brokenRefs[0].(map[string]interface{})["missing"] != true {
+		t.Fatalf("expected first referenced_request in Broken Flow to have missing=true, got %+v", brokenRefs)
+	}
+
+	// In --json mode, exit code is 0 and data.status == "failed"
+	codeJSON, fBrokenRunJSON, _ := execCLIJSON(t, dataDir, "flow", "run", "Broken Flow")
+	if codeJSON != 0 || !fBrokenRunJSON.Success {
+		t.Fatalf("expected exit code 0 in --json mode for failed flow, got code=%d res=%+v", codeJSON, fBrokenRunJSON)
+	}
+	brokenData := fBrokenRunJSON.Data.(map[string]interface{})
+	if brokenData["status"] != "failed" || int(brokenData["steps_failed"].(float64)) != 1 || int(brokenData["steps_skipped"].(float64)) != 1 {
+		t.Fatalf("unexpected broken flow run data: %+v", brokenData)
+	}
+
+	// In non-JSON mode, exit code must be 1 when flow status == "failed"
+	codeNonJSON, _, _ := execCLI(t, dataDir, "flow", "run", "Broken Flow")
+	if codeNonJSON != 1 {
+		t.Fatalf("expected exit code 1 in non-JSON mode when flow status is 'failed', got %d", codeNonJSON)
+	}
+
+	// 8. Error cases: invalid request selector in --steps, empty step token, non-existent flow selector, invalid --layout, no-op update
+	codeErr1, resErr1, _ := execCLIJSON(t, dataDir, "flow", "create", "--name", "Bad Steps", "--steps", "NoSuchFolder/NoSuchReq")
+	if codeErr1 == 0 || resErr1.Success || resErr1.Error == nil || resErr1.Error.Code != model.ErrNotFound {
+		t.Fatalf("expected NOT_FOUND for invalid request selector in --steps, got code=%d res=%+v", codeErr1, resErr1)
+	}
+	codeErrEmptyStep, resErrEmptyStep, _ := execCLIJSON(t, dataDir, "flow", "create", "--name", "Empty Token", "--steps", "Auth/Login,,Users/Profile")
+	if codeErrEmptyStep == 0 || resErrEmptyStep.Success || resErrEmptyStep.Error == nil || resErrEmptyStep.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION_ERROR for empty comma token in --steps, got code=%d res=%+v", codeErrEmptyStep, resErrEmptyStep)
+	}
+	codeErr2, resErr2, _ := execCLIJSON(t, dataDir, "flow", "get", "DoesNotExistFlow")
+	if codeErr2 == 0 || resErr2.Success || resErr2.Error == nil || resErr2.Error.Code != model.ErrNotFound {
+		t.Fatalf("expected NOT_FOUND for non-existent flow selector, got code=%d res=%+v", codeErr2, resErr2)
+	}
+	codeErr3, resErr3, _ := execCLIJSON(t, dataDir, "flow", "update", "Checkout Flow", "--layout", "diagonal")
+	if codeErr3 == 0 || resErr3.Success || resErr3.Error == nil || resErr3.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION_ERROR for invalid --layout, got code=%d res=%+v", codeErr3, resErr3)
+	}
+	codeErrNoOp, resErrNoOp, _ := execCLIJSON(t, dataDir, "flow", "update", "Checkout Flow")
+	if codeErrNoOp == 0 || resErrNoOp.Success || resErrNoOp.Error == nil || resErrNoOp.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION_ERROR for no-op flow update, got code=%d res=%+v", codeErrNoOp, resErrNoOp)
+	}
+
+	// 9. Delete Flow
+	code, fDel, _ := execCLIJSON(t, dataDir, "flow", "delete", "Broken Flow")
+	if code != 0 || !fDel.Success {
+		t.Fatalf("flow delete failed: %+v", fDel)
+	}
+}
+
+

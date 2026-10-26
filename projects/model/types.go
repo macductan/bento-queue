@@ -178,8 +178,8 @@ type GitFieldConflict struct {
 // GitFileConflict biểu diễn trạng thái xung đột của một file JSON trong Collection sau khi đã chạy bước 3-Way Auto-Merge.
 type GitFileConflict struct {
 	FilePath      string                 `json:"file_path"`                // Đường dẫn tương đối từ gốc Collection (VD: "users/123e4567.json", "_folder.json", "environments/dev.json")
-	EntityType    string                 `json:"entity_type"`              // "request" | "folder" | "environment" | "collection" | "raw"
-	EntityName    string                 `json:"entity_name"`              // Tên hiển thị của Request / Folder / Environment
+	EntityType    string                 `json:"entity_type"`              // "request" | "folder" | "environment" | "collection" | "flow" | "flow_folder" | "raw"
+	EntityName    string                 `json:"entity_name"`              // Tên hiển thị của Request / Folder / Environment / Flow
 	ConflictType  string                 `json:"conflict_type"`            // "field_conflict" | "delete_edit" (Local xoá, Remote sửa) | "edit_delete" (Local sửa, Remote xoá)
 	Fields        []GitFieldConflict     `json:"fields,omitempty"`         // Danh sách các trường bị xung đột thực sự
 	MergedPreview map[string]interface{} `json:"merged_preview,omitempty"` // Bản JSON đã tự động gộp các trường KHÔNG xung đột (tạm giữ giá trị Ours cho các trường đang xung đột làm nền để Frontend cập nhật theo lựa chọn của user)
@@ -202,12 +202,84 @@ type GitSyncStatus struct {
 // ExecuteRequest is the data sent from Vue to Go for HTTP execution (AD-1).
 // All variables are already resolved by Vue before sending.
 type ExecuteRequest struct {
-	Method   string   `json:"method"`
-	URL      string   `json:"url"`
-	Headers  []KVPair `json:"headers"`
-	Body     string   `json:"body"`
-	BodyType string   `json:"body_type,omitempty"`
-	FormData []KVPair `json:"form_data,omitempty"`
+	Method    string   `json:"method"`
+	URL       string   `json:"url"`
+	Headers   []KVPair `json:"headers"`
+	Body      string   `json:"body"`
+	BodyType  string   `json:"body_type,omitempty"`
+	FormData  []KVPair `json:"form_data,omitempty"`
+	TimeoutMs int      `json:"timeout_ms,omitempty"`
+}
+
+// FlowBranchCondition định nghĩa điều kiện kích hoạt một nhánh rẽ sau khi FlowNode thực thi xong.
+type FlowBranchCondition struct {
+	Type     string `json:"type"`               // "success" | "error" | "custom"
+	Source   string `json:"source,omitempty"`   // Khi type == "custom": "status_code" | "body_json" | "variable"
+	Path     string `json:"path,omitempty"`     // JSON path (VD: "data.status", "items[0].id") khi source=="body_json", hoặc tên biến khi source=="variable"
+	Operator string `json:"operator,omitempty"` // "==" | "!=" | ">" | "<" | "contains" | "exists"
+	Value    string `json:"value,omitempty"`    // Giá trị so sánh (hỗ trợ {{var}})
+}
+
+// FlowBranch biểu diễn một nhánh rẽ (↙ ↘) bung ra từ một FlowNode.
+type FlowBranch struct {
+	ID        string              `json:"id"`
+	Name      string              `json:"name,omitempty"`
+	Condition FlowBranchCondition `json:"condition"`
+	Nodes     []FlowNode          `json:"nodes"`
+}
+
+// FlowStep là con trỏ mỏng (Thin Pointer) tham chiếu tới một model.Request gốc qua RequestID.
+type FlowStep struct {
+	ID        string `json:"id"`
+	RequestID string `json:"request_id"`
+	Enabled   bool   `json:"enabled"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"` // Ghi đè timeout_ms cấp Flow nếu > 0
+}
+
+// FlowNode là một khối/hàng thực thi trên sơ đồ:
+// - len(Steps) == 1: Bước đơn tuần tự.
+// - len(Steps) >= 2: Hàng chạy Song song ([Req 1 || Req 2]) bung theo trục vuông góc.
+// - len(Branches) > 0: Điểm rẽ nhánh (↙ ↘) bung các nhánh con theo trục vuông góc.
+type FlowNode struct {
+	ID       string       `json:"id"`
+	Steps    []FlowStep   `json:"steps"`
+	Branches []FlowBranch `json:"branches,omitempty"`
+}
+
+// Flow biểu diễn một kịch bản API Flow lưu dưới dạng <uuid>.json trong <collection>/flows/.
+type Flow struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	Layout      string     `json:"layout"`               // "vertical" | "horizontal" (mặc định "vertical")
+	TimeoutMs   int        `json:"timeout_ms,omitempty"` // Timeout mặc định cho mỗi bước trong Flow (ms), mặc định 30000
+	MaxSteps    int        `json:"max_steps,omitempty"`  // Giới hạn tổng số bước thực thi tối đa (mặc định 100)
+	Nodes       []FlowNode `json:"nodes"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+// FlowFolder biểu diễn thư mục phân nhóm hiển thị trong <collection>/flows/ (lưu tại _folder.json).
+// Không chứa Variables, FolderEnvs, Headers, Auth hay AuthEnvs.
+type FlowFolder struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Order     []string  `json:"order,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// FlowTreeNode biểu diễn một node trên cây quản lý Flow ở Sidebar (type: "flow_folder" | "flow").
+type FlowTreeNode struct {
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Type        string         `json:"type"` // "flow_folder" | "flow"
+	Description string         `json:"description,omitempty"`
+	Layout      string         `json:"layout,omitempty"`
+	StepCount   int            `json:"step_count,omitempty"`
+	Path        string         `json:"path"`
+	Children    []FlowTreeNode `json:"children,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
 }
 
 // ExecuteResponse is the data returned from Go to Vue after HTTP execution.

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"hecto-api/engine"
 	"hecto-api/model"
 	"hecto-api/service"
@@ -45,6 +47,7 @@ type cliContext struct {
 	collSvc    *service.CollectionService
 	envSvc     *service.EnvironmentService
 	reqSvc     *service.RequestService
+	flowSvc    *service.FlowService
 	execSvc    *service.ExecutorService
 	histSvc    *service.HistoryService
 	importSvc  *service.ImporterService
@@ -114,6 +117,7 @@ func runCLI(rawArgs []string, stdout, stderr io.Writer) int {
 		collSvc:    service.NewCollectionService(fs, silentLogger),
 		envSvc:     service.NewEnvironmentService(fs, silentLogger),
 		reqSvc:     service.NewRequestService(fs, silentLogger),
+		flowSvc:    service.NewFlowService(fs, silentLogger),
 		execSvc:    service.NewExecutorService(silentLogger),
 		histSvc:    service.NewHistoryService(fs, silentLogger),
 		importSvc:  service.NewImporterService(fs, silentLogger),
@@ -133,6 +137,8 @@ func runCLI(rawArgs []string, stdout, stderr io.Writer) int {
 		res = c.handleFolder(cmdArgs)
 	case "req", "request":
 		res = c.handleReq(cmdArgs)
+	case "flow", "flows":
+		res = c.handleFlow(cmdArgs)
 	case "run", "exec":
 		res = c.handleRun(cmdArgs)
 	case "import":
@@ -284,6 +290,7 @@ func printMainUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Usage:")
 	_, _ = fmt.Fprintln(w, "  hecto <entity> <verb> [arguments] [flags]")
 	_, _ = fmt.Fprintln(w, "  hecto run <id|path> [flags]")
+	_, _ = fmt.Fprintln(w, "  hecto flow run <id|path> [flags]")
 	_, _ = fmt.Fprintln(w, "  hecto import <file-or-curl> [flags]")
 	_, _ = fmt.Fprintln(w, "  hecto agent-guide")
 	_, _ = fmt.Fprintln(w, "")
@@ -292,6 +299,7 @@ func printMainUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  env         list | get | create | update | delete | activate")
 	_, _ = fmt.Fprintln(w, "  folder      list | tree | get | create | update | delete | move")
 	_, _ = fmt.Fprintln(w, "  req         list | get | create | update | delete | move")
+	_, _ = fmt.Fprintln(w, "  flow        list | tree | get | create | update | delete | move | folder | run")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Top-Level Commands:")
 	_, _ = fmt.Fprintln(w, "  run         Execute a request through the shared TypeScript/goja engine")
@@ -329,6 +337,12 @@ func emitResult(stdout, stderr io.Writer, jsonMode bool, res model.Result) int {
 		raw, err := json.MarshalIndent(res.Data, "", "  ")
 		if err == nil {
 			_, _ = fmt.Fprintln(stdout, string(raw))
+		}
+		if flowOut, ok := res.Data.(*engine.FlowRunOutput); ok && flowOut != nil && flowOut.Status == "failed" {
+			return 1
+		}
+		if flowOutVal, ok := res.Data.(engine.FlowRunOutput); ok && flowOutVal.Status == "failed" {
+			return 1
 		}
 	} else {
 		_, _ = fmt.Fprintln(stdout, "OK")
@@ -2222,3 +2236,809 @@ func (c *cliContext) handleImport(args []string) model.Result {
 
 	return c.importSvc.ImportPostmanWithOptions(targetDir, input, nameOverride, nil)
 }
+
+// ============================================================================
+// 7. FLOW COMMANDS (`hecto flow`)
+// ============================================================================
+
+type flowReferencedRequestSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Method      string `json:"method,omitempty"`
+	URL         string `json:"url,omitempty"`
+	PathDisplay string `json:"path_display,omitempty"`
+	Missing     bool   `json:"missing,omitempty"`
+}
+
+type flowGetOutput struct {
+	model.Flow
+	ReferencedRequests []flowReferencedRequestSummary `json:"referenced_requests"`
+}
+
+func flattenFlowFolderList(nodes []model.FlowTreeNode, prefix string) []folderListEntry {
+	out := []folderListEntry{}
+	for _, n := range nodes {
+		if n.Type == "flow_folder" {
+			p := n.Name
+			if prefix != "" {
+				p = prefix + "/" + n.Name
+			}
+			out = append(out, folderListEntry{
+				ID:          n.ID,
+				Name:        n.Name,
+				PathDisplay: p,
+			})
+			if len(n.Children) > 0 {
+				out = append(out, flattenFlowFolderList(n.Children, p)...)
+			}
+		}
+	}
+	return out
+}
+
+func collectReferencedRequestIDs(nodes []model.FlowNode, seen map[string]bool, ordered *[]string) {
+	for _, n := range nodes {
+		for _, st := range n.Steps {
+			reqID := strings.TrimSpace(st.RequestID)
+			if reqID != "" && !seen[reqID] {
+				seen[reqID] = true
+				*ordered = append(*ordered, reqID)
+			}
+		}
+		for _, br := range n.Branches {
+			collectReferencedRequestIDs(br.Nodes, seen, ordered)
+		}
+	}
+}
+
+func (c *cliContext) buildFlowGetOutput(collRoot string, flow model.Flow) flowGetOutput {
+	seen := map[string]bool{}
+	orderedIDs := []string{}
+	collectReferencedRequestIDs(flow.Nodes, seen, &orderedIDs)
+
+	reqLookup := map[string]reqListEntry{}
+	if treeRes := c.collSvc.GetTree(collRoot); treeRes.Success {
+		if treeNodes, ok := treeRes.Data.([]model.TreeNode); ok {
+			for _, entry := range c.flattenRequests(treeNodes, "") {
+				reqLookup[entry.ID] = entry
+			}
+		}
+	}
+
+	summaries := make([]flowReferencedRequestSummary, 0, len(orderedIDs))
+	for _, reqID := range orderedIDs {
+		if entry, ok := reqLookup[reqID]; ok {
+			summaries = append(summaries, flowReferencedRequestSummary{
+				ID:          entry.ID,
+				Name:        entry.Name,
+				Method:      entry.Method,
+				URL:         entry.URL,
+				PathDisplay: entry.PathDisplay,
+			})
+			continue
+		}
+		summaries = append(summaries, flowReferencedRequestSummary{
+			ID:      reqID,
+			Missing: true,
+		})
+	}
+
+	return flowGetOutput{
+		Flow:               flow,
+		ReferencedRequests: summaries,
+	}
+}
+
+// parseFlowStepsFlag parses `--steps "<req1>,<req2>||<req3>,..."` into []model.FlowNode.
+// Comma `,` separates sequential FlowNodes; `||` separates parallel FlowSteps within the same FlowNode.
+func (c *cliContext) parseFlowStepsFlag(collRoot, raw string) ([]model.FlowNode, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []model.FlowNode{}, nil
+	}
+
+	rowTokens := strings.Split(trimmed, ",")
+	nodes := make([]model.FlowNode, 0, len(rowTokens))
+	for _, rowTok := range rowTokens {
+		rowTok = strings.TrimSpace(rowTok)
+		if rowTok == "" {
+			return nil, fmt.Errorf("%s: empty step token in --steps %q", model.ErrValidation, raw)
+		}
+		stepTokens := strings.Split(rowTok, "||")
+		steps := make([]model.FlowStep, 0, len(stepTokens))
+		for _, stepTok := range stepTokens {
+			stepSel := strings.TrimSpace(stepTok)
+			if stepSel == "" {
+				return nil, fmt.Errorf("%s: empty request selector in --steps %q", model.ErrValidation, raw)
+			}
+			req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, stepSel)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, model.FlowStep{
+				ID:        uuid.NewString(),
+				RequestID: req.ID,
+				Enabled:   true,
+			})
+		}
+		if len(steps) > 0 {
+			nodes = append(nodes, model.FlowNode{
+				ID:    uuid.NewString(),
+				Steps: steps,
+			})
+		}
+	}
+	return nodes, nil
+}
+
+type rawFlowStepJSON struct {
+	ID        string `json:"id"`
+	RequestID string `json:"request_id"`
+	Enabled   *bool  `json:"enabled"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+type rawFlowBranchJSON struct {
+	ID        string                    `json:"id"`
+	Name      string                    `json:"name,omitempty"`
+	Condition model.FlowBranchCondition `json:"condition"`
+	Nodes     []rawFlowNodeJSON         `json:"nodes"`
+}
+
+type rawFlowNodeJSON struct {
+	ID       string              `json:"id"`
+	Steps    []rawFlowStepJSON   `json:"steps"`
+	Branches []rawFlowBranchJSON `json:"branches,omitempty"`
+}
+
+func (c *cliContext) convertRawFlowNodes(collRoot string, rawNodes []rawFlowNodeJSON) ([]model.FlowNode, error) {
+	if len(rawNodes) == 0 {
+		return []model.FlowNode{}, nil
+	}
+	out := make([]model.FlowNode, 0, len(rawNodes))
+	for _, rn := range rawNodes {
+		nodeID := strings.TrimSpace(rn.ID)
+		if nodeID == "" {
+			nodeID = uuid.NewString()
+		}
+		steps := make([]model.FlowStep, 0, len(rn.Steps))
+		for _, rs := range rn.Steps {
+			if rs.TimeoutMs < 0 {
+				return nil, fmt.Errorf("%s: step timeout_ms cannot be negative (%d)", model.ErrValidation, rs.TimeoutMs)
+			}
+			reqSel := strings.TrimSpace(rs.RequestID)
+			if reqSel == "" {
+				return nil, fmt.Errorf("%s: step in --nodes-json is missing request_id", model.ErrValidation)
+			}
+			resolvedReqID := reqSel
+			if req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, reqSel); err == nil && req.ID != "" {
+				resolvedReqID = req.ID
+			} else if _, uuidErr := uuid.Parse(reqSel); uuidErr != nil {
+				return nil, err
+			}
+			stepID := strings.TrimSpace(rs.ID)
+			if stepID == "" {
+				stepID = uuid.NewString()
+			}
+			enabled := true
+			if rs.Enabled != nil {
+				enabled = *rs.Enabled
+			}
+			steps = append(steps, model.FlowStep{
+				ID:        stepID,
+				RequestID: resolvedReqID,
+				Enabled:   enabled,
+				TimeoutMs: rs.TimeoutMs,
+			})
+		}
+
+		var branches []model.FlowBranch
+		if len(rn.Branches) > 0 {
+			branches = make([]model.FlowBranch, 0, len(rn.Branches))
+			for _, rb := range rn.Branches {
+				brID := strings.TrimSpace(rb.ID)
+				if brID == "" {
+					brID = uuid.NewString()
+				}
+				childNodes, err := c.convertRawFlowNodes(collRoot, rb.Nodes)
+				if err != nil {
+					return nil, err
+				}
+				cond := rb.Condition
+				condType := strings.ToLower(strings.TrimSpace(cond.Type))
+				if condType == "" {
+					condType = "success"
+				}
+				switch condType {
+				case "success", "error":
+					cond.Type = condType
+				case "custom":
+					cond.Type = "custom"
+					src := strings.ToLower(strings.TrimSpace(cond.Source))
+					switch src {
+					case "status_code", "body_json", "variable":
+						cond.Source = src
+					default:
+						return nil, fmt.Errorf("%s: invalid custom branch condition.source %q (expected status_code, body_json, or variable)", model.ErrValidation, cond.Source)
+					}
+					op := strings.ToLower(strings.TrimSpace(cond.Operator))
+					switch op {
+					case "==", "!=", ">", "<", ">=", "<=", "contains", "matches", "exists":
+						cond.Operator = op
+					default:
+						return nil, fmt.Errorf("%s: invalid custom branch condition.operator %q (expected ==, !=, >, <, >=, <=, contains, matches, or exists)", model.ErrValidation, cond.Operator)
+					}
+				default:
+					return nil, fmt.Errorf("%s: invalid branch condition.type %q (expected success, error, or custom)", model.ErrValidation, cond.Type)
+				}
+				branches = append(branches, model.FlowBranch{
+					ID:        brID,
+					Name:      rb.Name,
+					Condition: cond,
+					Nodes:     childNodes,
+				})
+			}
+		}
+
+		out = append(out, model.FlowNode{
+			ID:       nodeID,
+			Steps:    steps,
+			Branches: branches,
+		})
+	}
+	return out, nil
+}
+
+func (c *cliContext) parseFlowNodesJSONFlag(collRoot, raw string) ([]model.FlowNode, error) {
+	content, err := readStringOrFileFlag(raw)
+	if err != nil {
+		return nil, err
+	}
+	var rawNodes []rawFlowNodeJSON
+	if err := json.Unmarshal([]byte(content), &rawNodes); err != nil {
+		return nil, fmt.Errorf("%s: invalid --nodes-json: %v", model.ErrValidation, err)
+	}
+	return c.convertRawFlowNodes(collRoot, rawNodes)
+}
+
+func (c *cliContext) handleFlowFolder(collRoot string, args []string) model.Result {
+	if len(args) == 0 {
+		return model.NewError(model.ErrValidation, "missing flow folder verb (expected: list|tree|get|create|update|delete|move)")
+	}
+	verb := strings.ToLower(strings.TrimSpace(args[0]))
+	rest := args[1:]
+
+	switch verb {
+	case "tree":
+		fset := flag.NewFlagSet("flow folder tree", flag.ContinueOnError)
+		if _, err := parseSubcommandFlags(fset, rest); err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		return c.flowSvc.GetTree(collRoot)
+
+	case "list", "ls":
+		fset := flag.NewFlagSet("flow folder list", flag.ContinueOnError)
+		if _, err := parseSubcommandFlags(fset, rest); err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		treeRes := c.flowSvc.GetTree(collRoot)
+		if !treeRes.Success {
+			return treeRes
+		}
+		nodes, _ := treeRes.Data.([]model.FlowTreeNode)
+		return model.NewSuccess(flattenFlowFolderList(nodes, ""))
+
+	case "get", "show":
+		fset := flag.NewFlagSet("flow folder get", flag.ContinueOnError)
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow folder selector <id|path> is required")
+		}
+		node, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		return c.flowSvc.LoadFlowFolder(node.ID)
+
+	case "create", "add":
+		fset := flag.NewFlagSet("flow folder create", flag.ContinueOnError)
+		var name, parentSel string
+		fset.StringVar(&name, "name", "", "Flow folder name")
+		fset.StringVar(&parentSel, "parent", "", "Parent flow folder <id|path>")
+
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if strings.TrimSpace(name) == "" && len(pos) > 0 {
+			name = pos[0]
+		}
+		if strings.TrimSpace(name) == "" {
+			return model.NewError(model.ErrValidation, "--name is required for `flow folder create`")
+		}
+
+		parentID := ""
+		trimmedParent := strings.TrimSpace(parentSel)
+		if trimmedParent != "" && !strings.EqualFold(trimmedParent, "root") && trimmedParent != "/" {
+			parentNode, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, trimmedParent)
+			if err != nil {
+				return resultFromError(err)
+			}
+			parentID = parentNode.ID
+		}
+		return c.flowSvc.CreateFlowFolderNamed(collRoot, parentID, strings.TrimSpace(name))
+
+	case "update", "patch", "rename":
+		fset := flag.NewFlagSet("flow folder update", flag.ContinueOnError)
+		var name string
+		fset.StringVar(&name, "name", "", "New flow folder name")
+
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow folder selector <id|path> is required")
+		}
+		visited := visitedFlagsMap(fset)
+		if !visited["name"] || strings.TrimSpace(name) == "" {
+			return model.NewError(model.ErrValidation, "--name is required for `flow folder update`")
+		}
+		node, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		return c.flowSvc.RenameFlowFolder(node.ID, strings.TrimSpace(name))
+
+	case "delete", "rm":
+		fset := flag.NewFlagSet("flow folder delete", flag.ContinueOnError)
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow folder selector <id|path> is required")
+		}
+		node, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		delRes := c.flowSvc.DeleteFlowFolder(collRoot, node.ID)
+		if !delRes.Success {
+			return delRes
+		}
+		return model.NewSuccess(map[string]interface{}{
+			"deleted_id": node.ID,
+			"name":       node.Name,
+		})
+
+	case "move", "mv":
+		fset := flag.NewFlagSet("flow folder move", flag.ContinueOnError)
+		var toSel string
+		fset.StringVar(&toSel, "to", "", "Target parent flow folder <id|path|root>")
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow folder selector <id|path> is required")
+		}
+		visited := visitedFlagsMap(fset)
+		if !visited["to"] {
+			return model.NewError(model.ErrValidation, "--to <target-id|path|root> is required for `flow folder move`")
+		}
+		node, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		targetParentID := ""
+		trimmedTo := strings.TrimSpace(toSel)
+		if trimmedTo != "" && !strings.EqualFold(trimmedTo, "root") && trimmedTo != "/" {
+			targetNode, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, trimmedTo)
+			if err != nil {
+				return resultFromError(err)
+			}
+			targetParentID = targetNode.ID
+		}
+		moveRes := c.flowSvc.MoveNode(collRoot, node.ID, targetParentID, -1)
+		if !moveRes.Success {
+			return moveRes
+		}
+		return c.flowSvc.LoadFlowFolder(node.ID)
+
+	default:
+		return model.NewError(model.ErrValidation, fmt.Sprintf("unknown flow folder verb %q (expected: list|tree|get|create|update|delete|move)", verb))
+	}
+}
+
+func (c *cliContext) handleFlow(args []string) model.Result {
+	if len(args) == 0 {
+		return model.NewError(model.ErrValidation, "missing flow verb (expected: list|tree|get|create|update|delete|move|folder|run)")
+	}
+	verb := strings.ToLower(strings.TrimSpace(args[0]))
+	rest := args[1:]
+
+	coll, collRoot, err := c.resolveTargetCollection("")
+	if err != nil {
+		return resultFromError(err)
+	}
+
+	switch verb {
+	case "folder", "folders":
+		return c.handleFlowFolder(collRoot, rest)
+
+	case "tree":
+		fset := flag.NewFlagSet("flow tree", flag.ContinueOnError)
+		if _, err := parseSubcommandFlags(fset, rest); err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		return c.flowSvc.GetTree(collRoot)
+
+	case "list", "ls":
+		fset := flag.NewFlagSet("flow list", flag.ContinueOnError)
+		var folderSel string
+		fset.StringVar(&folderSel, "folder", "", "Filter flows by flow folder <id|path>")
+		if _, err := parseSubcommandFlags(fset, rest); err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		folderID := ""
+		trimmedFolder := strings.TrimSpace(folderSel)
+		if trimmedFolder != "" && !strings.EqualFold(trimmedFolder, "root") && trimmedFolder != "/" {
+			fNode, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, trimmedFolder)
+			if err != nil {
+				return resultFromError(err)
+			}
+			folderID = fNode.ID
+		}
+		return c.flowSvc.ListFlows(collRoot, folderID)
+
+	case "get", "show":
+		fset := flag.NewFlagSet("flow get", flag.ContinueOnError)
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow selector <id|path> is required")
+		}
+		flow, _, err := c.flowSvc.ResolveFlowSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		return model.NewSuccess(c.buildFlowGetOutput(collRoot, flow))
+
+	case "create", "add":
+		fset := flag.NewFlagSet("flow create", flag.ContinueOnError)
+		var name, folderSel, desc, descAlias, layout, directionAlias, stepsRaw, nodesJSONRaw string
+		var timeoutMs, maxSteps int
+		fset.StringVar(&name, "name", "", "Flow name")
+		fset.StringVar(&folderSel, "folder", "", "Parent flow folder <id|path>")
+		fset.StringVar(&desc, "desc", "", "Flow description")
+		fset.StringVar(&descAlias, "description", "", "Flow description")
+		fset.StringVar(&layout, "layout", "vertical", "Flow layout (vertical|horizontal)")
+		fset.StringVar(&directionAlias, "direction", "", "Flow layout alias (vertical|horizontal)")
+		fset.IntVar(&timeoutMs, "timeout-ms", service.DefaultFlowTimeoutMs, "Default per-step timeout in ms")
+		fset.IntVar(&maxSteps, "max-steps", service.DefaultFlowMaxSteps, "Maximum steps executed per run")
+		fset.StringVar(&stepsRaw, "steps", "", "Shorthand steps: '<req1>,<req2>||<req3>'")
+		fset.StringVar(&nodesJSONRaw, "nodes-json", "", "Full FlowNode[] JSON string or @filepath")
+
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if strings.TrimSpace(name) == "" && len(pos) > 0 {
+			name = pos[0]
+		}
+		if strings.TrimSpace(name) == "" {
+			return model.NewError(model.ErrValidation, "--name is required for `flow create`")
+		}
+
+		visited := visitedFlagsMap(fset)
+		if visited["description"] && !visited["desc"] {
+			desc = descAlias
+		}
+		if visited["direction"] && !visited["layout"] {
+			layout = directionAlias
+		}
+		normLayout := strings.ToLower(strings.TrimSpace(layout))
+		if normLayout == "" {
+			normLayout = "vertical"
+		}
+		if normLayout != "vertical" && normLayout != "horizontal" {
+			return model.NewError(model.ErrValidation, fmt.Sprintf("invalid --layout %q (expected vertical or horizontal)", layout))
+		}
+		if visited["timeout-ms"] && timeoutMs <= 0 {
+			return model.NewError(model.ErrValidation, "--timeout-ms must be a positive integer")
+		}
+		if visited["max-steps"] && maxSteps <= 0 {
+			return model.NewError(model.ErrValidation, "--max-steps must be a positive integer")
+		}
+		if visited["steps"] && visited["nodes-json"] {
+			return model.NewError(model.ErrValidation, "cannot specify both --steps and --nodes-json")
+		}
+
+		parentFolderID := ""
+		trimmedFolder := strings.TrimSpace(folderSel)
+		if trimmedFolder != "" && !strings.EqualFold(trimmedFolder, "root") && trimmedFolder != "/" {
+			fNode, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, trimmedFolder)
+			if err != nil {
+				return resultFromError(err)
+			}
+			parentFolderID = fNode.ID
+		}
+
+		nodes := []model.FlowNode{}
+		if visited["steps"] {
+			parsedNodes, err := c.parseFlowStepsFlag(collRoot, stepsRaw)
+			if err != nil {
+				return resultFromError(err)
+			}
+			nodes = parsedNodes
+		} else if visited["nodes-json"] {
+			parsedNodes, err := c.parseFlowNodesJSONFlag(collRoot, nodesJSONRaw)
+			if err != nil {
+				return resultFromError(err)
+			}
+			nodes = parsedNodes
+		}
+
+		return c.flowSvc.CreateFlowWithDetails(collRoot, parentFolderID, model.Flow{
+			Name:        strings.TrimSpace(name),
+			Description: desc,
+			Layout:      normLayout,
+			TimeoutMs:   timeoutMs,
+			MaxSteps:    maxSteps,
+			Nodes:       nodes,
+		})
+
+	case "update", "patch":
+		fset := flag.NewFlagSet("flow update", flag.ContinueOnError)
+		var name, desc, descAlias, layout, directionAlias, folderSel, stepsRaw, nodesJSONRaw string
+		var timeoutMs, maxSteps int
+		fset.StringVar(&name, "name", "", "New flow name")
+		fset.StringVar(&desc, "desc", "", "Flow description")
+		fset.StringVar(&descAlias, "description", "", "Flow description")
+		fset.StringVar(&layout, "layout", "", "Flow layout (vertical|horizontal)")
+		fset.StringVar(&directionAlias, "direction", "", "Flow layout alias (vertical|horizontal)")
+		fset.StringVar(&folderSel, "folder", "", "Target flow folder <id|path|root>")
+		fset.IntVar(&timeoutMs, "timeout-ms", 0, "Default per-step timeout in ms")
+		fset.IntVar(&maxSteps, "max-steps", 0, "Maximum steps executed per run")
+		fset.StringVar(&stepsRaw, "steps", "", "Shorthand steps: '<req1>,<req2>||<req3>'")
+		fset.StringVar(&nodesJSONRaw, "nodes-json", "", "Full FlowNode[] JSON string or @filepath")
+
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow selector <id|path> is required for `flow update`")
+		}
+
+		visited := visitedFlagsMap(fset)
+		hasUpdateFlag := visited["name"] ||
+			visited["desc"] ||
+			visited["description"] ||
+			visited["layout"] ||
+			visited["direction"] ||
+			visited["timeout-ms"] ||
+			visited["max-steps"] ||
+			visited["steps"] ||
+			visited["nodes-json"] ||
+			visited["folder"]
+		if !hasUpdateFlag {
+			return model.NewError(model.ErrValidation, "at least one update flag (--name, --desc, --layout, --timeout-ms, --max-steps, --steps, --nodes-json, --folder) is required for `flow update`")
+		}
+
+		flow, _, err := c.flowSvc.ResolveFlowSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+
+		if visited["steps"] && visited["nodes-json"] {
+			return model.NewError(model.ErrValidation, "cannot specify both --steps and --nodes-json")
+		}
+		if visited["name"] {
+			if strings.TrimSpace(name) == "" {
+				return model.NewError(model.ErrValidation, "flow name cannot be empty")
+			}
+			flow.Name = strings.TrimSpace(name)
+		}
+		if visited["desc"] {
+			flow.Description = desc
+		} else if visited["description"] {
+			flow.Description = descAlias
+		}
+		if visited["layout"] || visited["direction"] {
+			rawLayout := layout
+			if !visited["layout"] {
+				rawLayout = directionAlias
+			}
+			normLayout := strings.ToLower(strings.TrimSpace(rawLayout))
+			if normLayout != "vertical" && normLayout != "horizontal" {
+				return model.NewError(model.ErrValidation, fmt.Sprintf("invalid --layout %q (expected vertical or horizontal)", rawLayout))
+			}
+			flow.Layout = normLayout
+		}
+		if visited["timeout-ms"] {
+			if timeoutMs <= 0 {
+				return model.NewError(model.ErrValidation, "--timeout-ms must be a positive integer")
+			}
+			flow.TimeoutMs = timeoutMs
+		}
+		if visited["max-steps"] {
+			if maxSteps <= 0 {
+				return model.NewError(model.ErrValidation, "--max-steps must be a positive integer")
+			}
+			flow.MaxSteps = maxSteps
+		}
+		if visited["steps"] {
+			parsedNodes, err := c.parseFlowStepsFlag(collRoot, stepsRaw)
+			if err != nil {
+				return resultFromError(err)
+			}
+			flow.Nodes = parsedNodes
+		} else if visited["nodes-json"] {
+			parsedNodes, err := c.parseFlowNodesJSONFlag(collRoot, nodesJSONRaw)
+			if err != nil {
+				return resultFromError(err)
+			}
+			flow.Nodes = parsedNodes
+		}
+		if visited["folder"] {
+			targetFolderID := ""
+			trimmedTo := strings.TrimSpace(folderSel)
+			if trimmedTo != "" && !strings.EqualFold(trimmedTo, "root") && trimmedTo != "/" {
+				targetNode, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, trimmedTo)
+				if err != nil {
+					return resultFromError(err)
+				}
+				targetFolderID = targetNode.ID
+			}
+			if moveRes := c.flowSvc.MoveNode(collRoot, flow.ID, targetFolderID, -1); !moveRes.Success {
+				return moveRes
+			}
+		}
+
+		return c.flowSvc.SaveFlow(flow)
+
+	case "delete", "rm":
+		fset := flag.NewFlagSet("flow delete", flag.ContinueOnError)
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow selector <id|path> is required")
+		}
+		flow, _, err := c.flowSvc.ResolveFlowSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		delRes := c.flowSvc.DeleteFlow(flow.ID)
+		if !delRes.Success {
+			return delRes
+		}
+		return model.NewSuccess(map[string]interface{}{
+			"deleted_id": flow.ID,
+			"name":       flow.Name,
+		})
+
+	case "move", "mv":
+		fset := flag.NewFlagSet("flow move", flag.ContinueOnError)
+		var toSel string
+		fset.StringVar(&toSel, "to", "", "Target flow folder <id|path|root>")
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow selector <id|path> is required")
+		}
+		visited := visitedFlagsMap(fset)
+		if !visited["to"] {
+			return model.NewError(model.ErrValidation, "--to <folder-id|path|root> is required for `flow move`")
+		}
+		flow, _, err := c.flowSvc.ResolveFlowSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		targetFolderID := ""
+		trimmedTo := strings.TrimSpace(toSel)
+		if trimmedTo != "" && !strings.EqualFold(trimmedTo, "root") && trimmedTo != "/" {
+			targetNode, _, err := c.flowSvc.ResolveFlowFolderSelector(collRoot, trimmedTo)
+			if err != nil {
+				return resultFromError(err)
+			}
+			targetFolderID = targetNode.ID
+		}
+		moveRes := c.flowSvc.MoveNode(collRoot, flow.ID, targetFolderID, -1)
+		if !moveRes.Success {
+			return moveRes
+		}
+		return c.flowSvc.GetFlow(flow.ID)
+
+	case "run":
+		fset := flag.NewFlagSet("flow run", flag.ContinueOnError)
+		var envSel string
+		var cliVars multiStringFlag
+		var timeoutMs int
+		var noSaveEnv bool
+
+		fset.StringVar(&envSel, "env", "", "Environment override <id|name|none>")
+		fset.Var(&cliVars, "var", "Runtime variable override K=V")
+		fset.IntVar(&timeoutMs, "timeout-ms", 0, "Per-step HTTP timeout override in milliseconds")
+		fset.BoolVar(&noSaveEnv, "no-save-env", false, "Do not persist script variable/auth mutations to disk")
+
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "flow selector <id|path> is required for `hecto flow run`")
+		}
+
+		visited := visitedFlagsMap(fset)
+		if visited["timeout-ms"] && timeoutMs <= 0 {
+			return model.NewError(model.ErrValidation, "--timeout-ms must be a positive integer (milliseconds)")
+		}
+
+		flow, _, err := c.flowSvc.ResolveFlowSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+
+		activeEnvID := coll.ActiveEnvID
+		if visited["env"] {
+			trimmedEnv := strings.TrimSpace(envSel)
+			if trimmedEnv == "" || strings.EqualFold(trimmedEnv, "none") {
+				activeEnvID = ""
+				coll.ActiveEnvID = ""
+			} else {
+				envObj, err := c.collSvc.ResolveEnvironmentSelector(collRoot, trimmedEnv)
+				if err != nil {
+					return resultFromError(err)
+				}
+				activeEnvID = envObj.ID
+				coll.ActiveEnvID = envObj.ID
+			}
+		}
+
+		overrides := map[string]string{}
+		for _, vRaw := range cliVars {
+			k, v, err := parseKeyValueFlag(vRaw, "=")
+			if err != nil {
+				return resultFromError(err)
+			}
+			overrides[k] = v
+		}
+
+		flowOut, err := engine.ExecuteFlow(engine.FlowRunOptions{
+			FS:              c.fs,
+			CollectionSvc:   c.collSvc,
+			EnvSvc:          c.envSvc,
+			RequestSvc:      c.reqSvc,
+			FlowSvc:         c.flowSvc,
+			ExecutorSvc:     c.execSvc,
+			HistorySvc:      c.histSvc,
+			CollectionsRoot: c.cfg.CollectionsRoot,
+			CollectionRoot:  collRoot,
+			Collection:      coll,
+			Flow:            flow,
+			ActiveEnvID:     activeEnvID,
+			CLIVarOverrides: overrides,
+			TimeoutMs:       timeoutMs,
+			NoSaveEnv:       noSaveEnv,
+		})
+		if err != nil {
+			return resultFromError(err)
+		}
+		return model.NewSuccess(flowOut)
+
+	default:
+		return model.NewError(model.ErrValidation, fmt.Sprintf("unknown flow verb %q (expected: list|tree|get|create|update|delete|move|folder|run)", verb))
+	}
+}
+

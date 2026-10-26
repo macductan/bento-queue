@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, watch, onMounted, computed, onBeforeUnmount, provide } from 'vue'
+import { ref, watch, onMounted, computed, onBeforeUnmount, provide, nextTick } from 'vue'
 import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
@@ -94,6 +94,55 @@ const folderName = computed(() => {
   const node = collectionStore.findNode(collectionStore.tree, folder.value.id)
   return node ? node.name : folder.value.name
 })
+
+const isRenamingFolder = ref(false)
+const editingFolderName = ref('')
+const renameFolderInputRef = ref<HTMLInputElement | null>(null)
+
+watch(
+  () => collectionStore.activeFolderId,
+  () => {
+    isRenamingFolder.value = false
+    editingFolderName.value = ''
+  }
+)
+
+watch(folderName, (newName) => {
+  if (folder.value && newName) {
+    folder.value.name = newName
+  }
+})
+
+const startRenameFolder = async () => {
+  if (!folder.value) return
+  editingFolderName.value = folderName.value || folder.value.name || ''
+  isRenamingFolder.value = true
+  await nextTick()
+  if (renameFolderInputRef.value) {
+    renameFolderInputRef.value.focus()
+    renameFolderInputRef.value.select()
+  }
+}
+
+const cancelRenameFolder = () => {
+  isRenamingFolder.value = false
+  editingFolderName.value = ''
+}
+
+const commitRenameFolder = async () => {
+  if (!isRenamingFolder.value || !folder.value) return
+  const targetId = folder.value.id
+  const currentName = folderName.value || folder.value.name || ''
+  const trimmed = editingFolderName.value.trim()
+  isRenamingFolder.value = false
+  if (!trimmed || trimmed === currentName) {
+    return
+  }
+  const ok = await collectionStore.renameNode(targetId, trimmed, 'folder')
+  if (ok && folder.value && folder.value.id === targetId) {
+    folder.value.name = folderName.value !== currentName ? folderName.value : trimmed
+  }
+}
 
 const parentNodes = computed(() => {
   if (!folder.value) return []
@@ -310,6 +359,8 @@ watch([variables, folder_envs, headers, auth, auth_envs], () => {
 const loadFolderData = async () => {
   if (!collectionStore.activeFolderId) return
   cancelAutoSave()
+  isRenamingFolder.value = false
+  editingFolderName.value = ''
   loading.value = true
   initialData.value = ''
   try {
@@ -344,19 +395,20 @@ const loadFolderData = async () => {
   }
 }
 
-const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> => {
+const saveFolderData = async (options?: { silent?: boolean } | boolean): Promise<boolean> => {
+  const isSilent = typeof options === 'boolean' ? options : Boolean(options?.silent)
   if (activeSavePromise) {
     const prev = await activeSavePromise
     if (!folder.value) return false
     if (!isDirty.value) {
-      if (!options?.silent) uiStore.showToast('Đã lưu cấu hình thư mục')
+      if (!isSilent) uiStore.showToast('Đã lưu cấu hình thư mục')
       return prev
     }
   }
 
   if (!folder.value) return false
   if (!isDirty.value) {
-    if (!options?.silent) uiStore.showToast('Đã lưu cấu hình thư mục')
+    if (!isSilent) uiStore.showToast('Đã lưu cấu hình thư mục')
     return true
   }
 
@@ -397,7 +449,7 @@ const saveFolderData = async (options?: { silent?: boolean }): Promise<boolean> 
         if (folder.value?.id) {
           tabStore.setTabDirty('folder', folder.value.id, false)
         }
-        if (!options?.silent) {
+        if (!isSilent) {
           uiStore.showToast('Đã lưu cấu hình thư mục')
         }
         await collectionStore.loadTree() // Reload tree to reflect new headers/variables in store
@@ -565,13 +617,47 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
       Đang tải...
     </div>
     <div v-else-if="folder" class="flex flex-col h-full">
-      <div class="px-4 py-3 border-b border-border-default flex items-center justify-between">
-        <div class="min-w-0">
+      <div class="px-4 py-3 border-b border-border-default flex items-center justify-between gap-2">
+        <div class="min-w-0 flex-1">
           <div v-if="folderParentPath" data-test="folder-parent-path" class="text-xs font-medium text-text-muted/70 truncate mb-1 select-none">
             {{ folderParentPath }}
           </div>
-          <h2 class="text-lg font-medium text-text-primary flex items-center gap-3">
-            <span>{{ folderName }}</span>
+          <h2 class="text-lg font-medium text-text-primary flex items-center gap-2 min-w-0">
+            <template v-if="!isRenamingFolder">
+              <span
+                data-test="breadcrumb-current-folder"
+                class="truncate cursor-pointer hover:text-brand-primary transition-colors"
+                title="Nháy đúp để đổi tên thư mục"
+                @dblclick.stop="startRenameFolder"
+              >{{ folderName }}</span>
+              <button
+                type="button"
+                data-test="breadcrumb-rename-btn"
+                class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+                title="Đổi tên Thư mục"
+                aria-label="Đổi tên Thư mục"
+                @click.stop="startRenameFolder"
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+              </button>
+            </template>
+            <input
+              v-else
+              ref="renameFolderInputRef"
+              v-model="editingFolderName"
+              data-test="breadcrumb-name-input"
+              type="text"
+              class="bg-zinc-950 border border-indigo-500 rounded px-2 py-0.5 text-sm text-zinc-100 focus:outline-none w-64"
+              @keydown.enter.prevent="commitRenameFolder"
+              @keydown.esc.prevent="cancelRenameFolder"
+              @blur="commitRenameFolder"
+            />
+          </h2>
+        </div>
+        <div class="ml-auto flex items-center gap-3 shrink-0">
           <span
             data-test="folder-save-state-indicator"
             role="status"
@@ -608,16 +694,23 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
               <span class="text-text-muted text-xs">Đã lưu</span>
             </template>
           </span>
-        </h2>
+          <button
+            type="button"
+            data-test="folder-save-btn"
+            :disabled="saving || saveStatus === 'saving'"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 border border-zinc-700 text-[11px] font-medium transition-colors cursor-pointer"
+            title="Lưu thay đổi (Ctrl+S)"
+            @click="saveFolderData(false)"
+          >
+            <svg class="w-3.5 h-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            <span>Lưu</span>
+            <kbd class="text-[9px] text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded border border-zinc-700 font-mono">Ctrl+S</kbd>
+          </button>
         </div>
-        <button 
-          @click="saveFolderData()"
-          :disabled="saving"
-          class="px-3 py-1.5 bg-brand-primary text-white rounded hover:bg-brand-hover transition-colors text-sm font-medium focus-visible:ring-2 focus-visible:ring-brand-primary outline-none"
-          :class="{ 'opacity-50 cursor-not-allowed': saving }"
-        >
-          {{ saving ? 'Đang lưu...' : 'Lưu (Ctrl+S)' }}
-        </button>
       </div>
       
       <!-- Folder Tabs -->

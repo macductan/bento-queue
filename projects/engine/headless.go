@@ -157,6 +157,7 @@ type RunOptions struct {
 	ActiveEnvID     string
 	CLIVarOverrides map[string]string
 	TimeoutSec      int
+	TimeoutMs       int
 	NoSaveEnv       bool
 }
 
@@ -1020,8 +1021,13 @@ func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 		}
 	}
 
-	if opts.TimeoutSec > 0 {
+	if opts.TimeoutMs > 0 {
+		preOut.ExecuteRequest.TimeoutMs = opts.TimeoutMs
+	} else if opts.TimeoutSec > 0 {
 		execSvc.SetTimeout(time.Duration(opts.TimeoutSec) * time.Second)
+		if preOut.ExecuteRequest.TimeoutMs <= 0 {
+			preOut.ExecuteRequest.TimeoutMs = opts.TimeoutSec * 1000
+		}
 	}
 
 	sendRes := execSvc.Send(preOut.ExecuteRequest)

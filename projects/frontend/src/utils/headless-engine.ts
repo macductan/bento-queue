@@ -35,6 +35,31 @@ import {
   parseUrl,
   resolvePathParamsInUrl
 } from './urlParams'
+import {
+  countStepsInNodes,
+  evaluateStepVerdict,
+  evaluateCustomBranchCondition,
+  selectMatchingBranch,
+  mergeParallelScriptUpdates,
+  type FlowBranchConditionType,
+  type FlowBranchSource,
+  type FlowBranchOperator,
+  type FlowBranchCondition,
+  type FlowBranch,
+  type FlowStep,
+  type FlowNode,
+  type Flow,
+  type FlowFolder,
+  type FlowTreeNode,
+  type StepFailureCategory,
+  type StepVerdictInput,
+  type StepVerdictResult,
+  type BranchEvalContext,
+  type BranchSelectionResult,
+  type HeadlessMutableState,
+  type ParallelStepMutationItem,
+  type MergedParallelState
+} from './flowRunner'
 
 export {
   resolveVariables,
@@ -56,7 +81,12 @@ export {
   reconcilePathParamsFromUrl,
   updateUrlWithParams,
   parseUrl,
-  resolvePathParamsInUrl
+  resolvePathParamsInUrl,
+  countStepsInNodes,
+  evaluateStepVerdict,
+  evaluateCustomBranchCondition,
+  selectMatchingBranch,
+  mergeParallelScriptUpdates
 }
 
 export type {
@@ -73,7 +103,25 @@ export type {
   ScopedAuthUpdates,
   ScriptLogEntry,
   ScriptTestResult,
-  ParsedCurlResult
+  ParsedCurlResult,
+  FlowBranchConditionType,
+  FlowBranchSource,
+  FlowBranchOperator,
+  FlowBranchCondition,
+  FlowBranch,
+  FlowStep,
+  FlowNode,
+  Flow,
+  FlowFolder,
+  FlowTreeNode,
+  StepFailureCategory,
+  StepVerdictInput,
+  StepVerdictResult,
+  BranchEvalContext,
+  BranchSelectionResult,
+  HeadlessMutableState,
+  ParallelStepMutationItem,
+  MergedParallelState
 }
 
 export const stripJsonComments = stripJsoncToJson
@@ -582,6 +630,9 @@ export function runHeadlessPostResponse(input: HeadlessPostResponseInput): Scrip
   })
 }
 
+export const prepareRequestExecution = prepareHeadlessExecution
+export const finalizeResponseExecution = runHeadlessPostResponse
+
 const HeadlessBundleExports = {
   resolveVariables,
   parseVariables,
@@ -611,7 +662,14 @@ const HeadlessBundleExports = {
   resolvePathParamsInUrl,
   applyScriptUpdatesInMemory,
   prepareHeadlessExecution,
-  runHeadlessPostResponse
+  prepareRequestExecution,
+  runHeadlessPostResponse,
+  finalizeResponseExecution,
+  countStepsInNodes,
+  evaluateStepVerdict,
+  evaluateCustomBranchCondition,
+  selectMatchingBranch,
+  mergeParallelScriptUpdates
 }
 
 if (typeof globalThis !== 'undefined') {

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, provide } from 'vue'
+import { computed, provide, ref, watch, nextTick } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import UrlBar from './UrlBar.vue'
@@ -76,7 +76,7 @@ const handleFolderClick = async (folderId?: string) => {
 }
 
 const handleRequestClick = async () => {
-  if (!req.value) return
+  if (!req.value || isRenamingRequest.value) return
   await collectionStore.revealNodeInTree(req.value.id)
 }
 
@@ -84,7 +84,56 @@ const req = computed(() => requestStore.current)
 const loading = computed(() => requestStore.loading)
 
 useUrlParamsSync(req)
-useAutoSave(req)
+const autoSave = useAutoSave(req)
+
+const isRenamingRequest = ref(false)
+const editingRequestName = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
+
+watch(
+  () => req.value?.id,
+  () => {
+    isRenamingRequest.value = false
+    editingRequestName.value = ''
+  }
+)
+
+const startRenameRequest = async () => {
+  if (!req.value) return
+  editingRequestName.value = req.value.name || ''
+  isRenamingRequest.value = true
+  await nextTick()
+  if (renameInputRef.value) {
+    renameInputRef.value.focus()
+    renameInputRef.value.select()
+  }
+}
+
+const cancelRenameRequest = () => {
+  isRenamingRequest.value = false
+  editingRequestName.value = ''
+}
+
+const commitRenameRequest = async () => {
+  if (!isRenamingRequest.value || !req.value) return
+  const targetId = req.value.id
+  const currentName = req.value.name || ''
+  const trimmed = editingRequestName.value.trim()
+  isRenamingRequest.value = false
+  if (!trimmed || trimmed === currentName) {
+    return
+  }
+  requestStore.cancelAutoSave()
+  const ok = await collectionStore.renameNode(targetId, trimmed, 'request')
+  if (ok) {
+    if (req.value && req.value.id === targetId && req.value.name === currentName) {
+      req.value.name = trimmed
+    }
+    if (requestStore.original && requestStore.original.id === targetId && requestStore.original.name === currentName) {
+      requestStore.original.name = trimmed
+    }
+  }
+}
 
 const effectiveVariables = computed(() => {
   return resolveHierarchyVariables({
@@ -228,15 +277,42 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             <span class="opacity-40 shrink-0 select-none">/</span>
           </template>
           <h1 class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-primary min-w-0 m-0 p-0 leading-normal">
-            <button
-              type="button"
-              data-test="breadcrumb-request"
-              class="truncate hover:underline hover:text-brand-primary cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded px-0.5 -mx-0.5 font-semibold text-text-primary leading-normal py-0.5"
-              :title="`Xem vị trí '${req.name}' trong cây thư mục`"
-              @click="handleRequestClick"
-            >
-              {{ req.name }}
-            </button>
+            <template v-if="!isRenamingRequest">
+              <button
+                type="button"
+                data-test="breadcrumb-request"
+                class="truncate hover:underline hover:text-brand-primary cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded px-0.5 -mx-0.5 font-semibold text-text-primary leading-normal py-0.5"
+                :title="`Xem vị trí '${req.name}' trong cây thư mục`"
+                @click="handleRequestClick"
+                @dblclick.stop="startRenameRequest"
+              >
+                {{ req.name }}
+              </button>
+              <button
+                type="button"
+                data-test="breadcrumb-rename-btn"
+                class="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+                title="Đổi tên Request"
+                aria-label="Đổi tên Request"
+                @click.stop="startRenameRequest"
+              >
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+              </button>
+            </template>
+            <input
+              v-else
+              ref="renameInputRef"
+              v-model="editingRequestName"
+              data-test="breadcrumb-name-input"
+              type="text"
+              class="bg-zinc-950 border border-indigo-500 rounded px-2 py-0.5 text-xs text-zinc-100 focus:outline-none w-56"
+              @keydown.enter.prevent="commitRenameRequest"
+              @keydown.esc.prevent="cancelRenameRequest"
+              @blur="commitRenameRequest"
+            />
             <span
               v-if="requestStore.saveStatus === 'unsaved'"
               class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"
@@ -245,42 +321,60 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             />
           </h1>
         </div>
-        <span
-          data-test="save-state-indicator"
-          role="status"
-          aria-live="polite"
-          class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full bg-surface-overlay border border-border-default select-none shrink-0"
-          :data-status="requestStore.saveStatus"
-        >
-          <!-- saving -->
-          <template v-if="requestStore.saveStatus === 'saving'">
-            <svg class="animate-spin w-3 h-3 text-brand-primary shrink-0" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        <div class="ml-auto flex items-center gap-3 shrink-0">
+          <span
+            data-test="save-state-indicator"
+            role="status"
+            aria-live="polite"
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full bg-surface-overlay border border-border-default select-none shrink-0"
+            :data-status="requestStore.saveStatus"
+          >
+            <!-- saving -->
+            <template v-if="requestStore.saveStatus === 'saving'">
+              <svg class="animate-spin w-3 h-3 text-brand-primary shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="text-text-secondary text-xs">Đang lưu...</span>
+            </template>
+
+            <!-- unsaved -->
+            <template v-else-if="requestStore.saveStatus === 'unsaved'">
+              <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
+              <span class="text-amber-400 text-xs">Chưa lưu</span>
+            </template>
+
+            <!-- error -->
+            <template v-else-if="requestStore.saveStatus === 'error'">
+              <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" title="Lỗi khi lưu" aria-label="Lỗi khi lưu"></span>
+              <span class="text-red-400 text-xs">Lỗi khi lưu</span>
+            </template>
+
+            <!-- saved -->
+            <template v-else>
+              <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+              <span class="text-text-muted text-xs">Đã lưu</span>
+            </template>
+          </span>
+          <button
+            type="button"
+            data-test="request-save-btn"
+            :disabled="requestStore.saveStatus === 'saving'"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 border border-zinc-700 text-[11px] font-medium transition-colors cursor-pointer"
+            title="Lưu thay đổi (Ctrl+S)"
+            @click="autoSave.saveNow()"
+          >
+            <svg class="w-3.5 h-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
             </svg>
-            <span class="text-text-secondary text-xs">Đang lưu...</span>
-          </template>
-
-          <!-- unsaved -->
-          <template v-else-if="requestStore.saveStatus === 'unsaved'">
-            <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
-            <span class="text-amber-400 text-xs">Chưa lưu</span>
-          </template>
-
-          <!-- error -->
-          <template v-else-if="requestStore.saveStatus === 'error'">
-            <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" title="Lỗi khi lưu" aria-label="Lỗi khi lưu"></span>
-            <span class="text-red-400 text-xs">Lỗi khi lưu</span>
-          </template>
-
-          <!-- saved -->
-          <template v-else>
-            <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span class="text-text-muted text-xs">Đã lưu</span>
-          </template>
-        </span>
+            <span>Lưu</span>
+            <kbd class="text-[9px] text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded border border-zinc-700 font-mono">Ctrl+S</kbd>
+          </button>
+        </div>
       </div>
 
       <UrlBar />
@@ -288,7 +382,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
 
       <!-- Request Tabs and Content -->
       <div class="flex-1 flex flex-col min-h-0">
-        <RequestTabs />
+        <RequestTabs :default-headers-count="defaultHeaders.filter(h => !h.disabled && !h.overridden && (h as any).enabled !== false).length" />
         
         <div class="flex-1 flex flex-col min-h-0 overflow-y-auto mt-1.5">
           <div v-show="uiStore.activeRequestTab === 'params'" role="tabpanel" id="panel-params" aria-labelledby="tab-params" class="space-y-5">

@@ -394,3 +394,121 @@ func TestResolveFolderSelector_And_ResolveRequestSelector(t *testing.T) {
 		t.Errorf("expected error to contain both folder UUIDs, got: %v", err)
 	}
 }
+
+func TestResolveFlowFolderSelector_And_ResolveFlowSelector(t *testing.T) {
+	tmpDir := t.TempDir()
+	fs := storage.NewFileSystem()
+	collSvc := NewCollectionService(fs, newSilentTestLogger())
+	flowSvc := NewFlowService(fs, newSilentTestLogger())
+
+	collRoot := filepath.Join(tmpDir, "default")
+	if err := os.MkdirAll(collRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build flow hierarchy inside <collection>/flows/:
+	// - E2E Checkout (flow_folder)
+	//   - Sub Suite (flow_folder)
+	//     - Deep Flow (flow)
+	//   - Order Payment Flow (flow)
+	e2eFolder := flowSvc.CreateFlowFolderNamed(collRoot, "", "E2E Checkout").Data.(model.FlowFolder)
+	subFolder := flowSvc.CreateFlowFolderNamed(collRoot, e2eFolder.ID, "Sub Suite").Data.(model.FlowFolder)
+
+	orderFlow := flowSvc.CreateFlowWithDetails(collRoot, e2eFolder.ID, model.Flow{
+		Name:        "Order Payment Flow",
+		Description: "Checkout happy path",
+		Layout:      "vertical",
+		TimeoutMs:   25000,
+		MaxSteps:    80,
+		Nodes: []model.FlowNode{
+			{
+				Steps: []model.FlowStep{
+					{RequestID: "req-login", Enabled: true},
+				},
+			},
+		},
+	}).Data.(model.Flow)
+
+	deepFlow := flowSvc.CreateFlowWithDetails(collRoot, subFolder.ID, model.Flow{
+		Name:   "Deep Flow",
+		Layout: "horizontal",
+	}).Data.(model.Flow)
+
+	// 1. ResolveFlowFolderSelector by hierarchical path and by UUID
+	ffNode, ffAncestors, err := ResolveFlowFolderSelector(fs, collRoot, " /E2E Checkout//Sub Suite/ ")
+	if err != nil {
+		t.Fatalf("ResolveFlowFolderSelector by path failed: %v", err)
+	}
+	if ffNode.ID != subFolder.ID {
+		t.Errorf("got flow folder ID %q, want %q", ffNode.ID, subFolder.ID)
+	}
+	if len(ffAncestors) != 1 || ffAncestors[0].ID != e2eFolder.ID {
+		t.Errorf("expected 1 ancestor (E2E Checkout), got: %+v", ffAncestors)
+	}
+
+	ffByUUID, ffAncByUUID, err := collSvc.ResolveFlowFolderSelector(collRoot, subFolder.ID)
+	if err != nil || ffByUUID.ID != subFolder.ID || len(ffAncByUUID) != 1 {
+		t.Fatalf("ResolveFlowFolderSelector by UUID failed: err=%v node=%+v", err, ffByUUID)
+	}
+
+	// 2. ResolveFlowSelector by path "E2E Checkout/Order Payment Flow" and by UUID
+	gotFlow, flowAncestors, err := ResolveFlowSelector(fs, collRoot, "E2E Checkout/Order Payment Flow")
+	if err != nil {
+		t.Fatalf("ResolveFlowSelector('E2E Checkout/Order Payment Flow') failed: %v", err)
+	}
+	if gotFlow.ID != orderFlow.ID || gotFlow.TimeoutMs != 25000 || len(gotFlow.Nodes) != 1 {
+		t.Errorf("unexpected resolved flow: %+v", gotFlow)
+	}
+	if len(flowAncestors) != 1 || flowAncestors[0].ID != e2eFolder.ID {
+		t.Errorf("expected ancestor [E2E Checkout], got: %+v", flowAncestors)
+	}
+
+	gotByUUID, ancByUUID, err := collSvc.ResolveFlowSelector(collRoot, deepFlow.ID)
+	if err != nil || gotByUUID.ID != deepFlow.ID || len(ancByUUID) != 2 {
+		t.Fatalf("ResolveFlowSelector by UUID failed: err=%v flow=%+v anc=%+v", err, gotByUUID, ancByUUID)
+	}
+
+	// 2b. ResolveFlowSelector and ResolveFlowFolderSelector by unambiguous 6-char UUID prefix
+	gotByPrefix, ancByPrefix, err := flowSvc.ResolveFlowSelector(collRoot, deepFlow.ID[:6])
+	if err != nil || gotByPrefix.ID != deepFlow.ID || len(ancByPrefix) != 2 {
+		t.Fatalf("ResolveFlowSelector by 6-char UUID prefix (%s) failed: err=%v flow=%+v", deepFlow.ID[:6], err, gotByPrefix)
+	}
+	ffByPrefix, ffAncByPrefix, err := flowSvc.ResolveFlowFolderSelector(collRoot, subFolder.ID[:6])
+	if err != nil || ffByPrefix.ID != subFolder.ID || len(ffAncByPrefix) != 1 {
+		t.Fatalf("ResolveFlowFolderSelector by 6-char UUID prefix (%s) failed: err=%v node=%+v", subFolder.ID[:6], err, ffByPrefix)
+	}
+
+	// 3. Duplicate flow names in same folder -> VALIDATION error listing both UUIDs
+	dupOrderFlow := flowSvc.CreateFlowWithDetails(collRoot, e2eFolder.ID, model.Flow{
+		Name: "Order Payment Flow",
+	}).Data.(model.Flow)
+
+	_, _, err = flowSvc.ResolveFlowSelector(collRoot, "E2E Checkout/Order Payment Flow")
+	if err == nil || !strings.HasPrefix(err.Error(), model.ErrValidation) {
+		t.Fatalf("expected VALIDATION error for duplicate flow names, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), orderFlow.ID) || !strings.Contains(err.Error(), dupOrderFlow.ID) {
+		t.Errorf("expected duplicate error to list both flow UUIDs (%s, %s), got: %v", orderFlow.ID, dupOrderFlow.ID, err)
+	}
+
+	// 4. Duplicate flow folder names at same level -> VALIDATION error listing both UUIDs
+	dupSubFolder := flowSvc.CreateFlowFolderNamed(collRoot, e2eFolder.ID, "Sub Suite").Data.(model.FlowFolder)
+	_, _, err = flowSvc.ResolveFlowFolderSelector(collRoot, "E2E Checkout/Sub Suite")
+	if err == nil || !strings.HasPrefix(err.Error(), model.ErrValidation) {
+		t.Fatalf("expected VALIDATION error for duplicate flow folder names, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), subFolder.ID) || !strings.Contains(err.Error(), dupSubFolder.ID) {
+		t.Errorf("expected duplicate error to list both flow folder UUIDs (%s, %s), got: %v", subFolder.ID, dupSubFolder.ID, err)
+	}
+
+	// 5. Not found -> NOT_FOUND
+	_, _, err = flowSvc.ResolveFlowSelector(collRoot, "E2E Checkout/NonExistent")
+	if err == nil || !strings.HasPrefix(err.Error(), model.ErrNotFound) {
+		t.Errorf("expected NOT_FOUND for missing flow, got: %v", err)
+	}
+	_, _, err = flowSvc.ResolveFlowFolderSelector(collRoot, "NonExistentFolder")
+	if err == nil || !strings.HasPrefix(err.Error(), model.ErrNotFound) {
+		t.Errorf("expected NOT_FOUND for missing flow folder, got: %v", err)
+	}
+}
+

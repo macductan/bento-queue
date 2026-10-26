@@ -44,7 +44,7 @@ func (s *CollectionService) GetTree(rootPath string) model.Result {
 	}
 
 	s.fs.SetCollectionRoot(rootPath)
-	s.fs.IndexClear()
+	s.fs.IndexClearExceptSubdir(flowsDirName)
 
 	tree, err := s.buildTree(rootPath)
 	if err != nil {
@@ -68,7 +68,7 @@ func (s *CollectionService) buildTree(dirPath string) ([]model.TreeNode, error) 
 		name := entry.Name()
 		fullPath := filepath.Join(dirPath, name)
 
-		if entry.IsDir() && (name == "environments" || name == ".git" || name == ".history") {
+		if entry.IsDir() && (name == "environments" || name == "flows" || name == ".git" || name == ".history") {
 			continue
 		}
 
@@ -353,6 +353,9 @@ func (s *CollectionService) RenameFolder(id, newName string) model.Result {
 	if err != nil {
 		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
 	}
+	if isPathInFlowsDir(s.fs, "", folderDir, true) {
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
+	}
 
 	metaPath := filepath.Join(folderDir, folderMetaFile)
 	var folder model.Folder
@@ -415,13 +418,19 @@ func (s *CollectionService) DeleteFolder(rootPath, id string) model.Result {
 }
 
 // isDeletableFolderPath reports whether folderPath lies strictly inside rootPath
-// and is not the environments/ directory (or anything under it).
+// and is not the environments/ or flows/ directory (or anything under them).
 func isDeletableFolderPath(rootPath, folderPath string) bool {
 	rel, err := filepath.Rel(rootPath, folderPath)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}
-	return rel != "environments" && !strings.HasPrefix(rel, "environments"+string(filepath.Separator))
+	if rel == "environments" || strings.HasPrefix(rel, "environments"+string(filepath.Separator)) {
+		return false
+	}
+	if rel == "flows" || strings.HasPrefix(rel, "flows"+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 // isInsideRoot reports whether path p is inside rootPath.
@@ -446,7 +455,7 @@ func (s *CollectionService) MoveRequest(rootPath, id, targetFolderID string) mod
 	if err != nil {
 		return model.NewError(model.ErrNotFound, ErrRequestNotFound)
 	}
-	if !strings.HasSuffix(srcPath, ".json") {
+	if !strings.HasSuffix(srcPath, ".json") || isPathInFlowsDir(s.fs, rootPath, srcPath, true) {
 		return model.NewError(model.ErrValidation, ErrRequestFileInvalid)
 	}
 
@@ -691,6 +700,9 @@ func (s *CollectionService) LoadFolder(id string) model.Result {
 	if err != nil {
 		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
 	}
+	if isPathInFlowsDir(s.fs, "", folderPath, true) {
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
+	}
 
 	var folder model.Folder
 	folderMetaPath := filepath.Join(folderPath, folderMetaFile)
@@ -719,6 +731,9 @@ func (s *CollectionService) UpdateFolder(folder model.Folder) model.Result {
 	folderPath, err := s.fs.FindByUUID(folder.ID)
 	if err != nil {
 		return model.NewError(model.ErrNotFound, ErrFolderNotFound)
+	}
+	if isPathInFlowsDir(s.fs, "", folderPath, true) {
+		return model.NewError(model.ErrValidation, ErrInvalidFolderPath)
 	}
 
 	var existingFolder model.Folder

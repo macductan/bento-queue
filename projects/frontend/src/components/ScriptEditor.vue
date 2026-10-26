@@ -4,6 +4,7 @@ import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useUiStore } from '@/stores/uiStore'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import { executeScript } from '@/utils/scriptRunner'
 import {
@@ -23,6 +24,7 @@ const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const envStore = useEnvironmentStore()
 const collectionStore = useCollectionStore()
+const uiStore = useUiStore()
 
 const selectedPhase = ref<'pre_request' | 'post_response'>('pre_request')
 const showHints = ref(true)
@@ -544,6 +546,9 @@ async function runScriptPreview() {
   }
   if (!res.success) {
     responseStore.scriptError = res.error || `Lỗi thực thi ${label} Script`
+    uiStore.showToast(`Lỗi khi chạy ${label} Script`)
+  } else {
+    uiStore.showToast(`Đã chạy thử ${label} Script`)
   }
 
   // Apply request mutations if any
@@ -663,11 +668,11 @@ async function runScriptPreview() {
         </button>
         <button
           type="button"
-          class="rounded border border-brand-primary/50 bg-brand-primary/10 px-2.5 py-1 text-[11px] font-semibold text-brand-primary hover:bg-brand-primary/20 whitespace-nowrap cursor-pointer"
+          class="px-2.5 py-1 text-xs rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors cursor-pointer font-medium flex items-center gap-1 whitespace-nowrap"
           data-test="run-pre-script-btn"
           @click="runScriptPreview"
         >
-          Chạy thử Script
+          ▶ Chạy thử Script
         </button>
       </div>
     </div>

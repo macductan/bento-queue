@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BMad Forge Report — API Flow Runner (hecto-api)</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --surface: #131b2e;
+      --surface-2: #19233c;
+      --border: #263457;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --sky: #38bdf8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 40px 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+    .header-card {
+      position: relative;
+      background: linear-gradient(135deg, #131b2e 0%, #0f172a 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      margin-bottom: 12px;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 28px;
+      color: #f8fafc;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .seal-wrap {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px 28px;
+      margin-bottom: 24px;
+    }
+    h2 {
+      margin-top: 0;
+      font-size: 19px;
+      color: var(--sky);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+      margin-bottom: 16px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 12px;
+    }
+    li strong {
+      color: #f8fafc;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .persona-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .persona-header {
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .persona-role {
+      font-size: 12px;
+      color: var(--amber);
+      font-weight: 600;
+    }
+    .persona-voice {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 6px 0 0 0;
+    }
+    code {
+      background: rgba(15, 23, 42, 0.75);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      color: #38bdf8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-card">
+      <div>
+        <span class="badge">BMad Idea Forge • Session Complete</span>
+        <h1>API Flow — Chạy Chuỗi &amp; Sơ Đồ Khối API Bằng 1 Nút Bấm</h1>
+        <p class="subtitle">Dự án: <code>hecto-api</code> • Workspace: <code>_bmad-output/forge/api-flow-runner</code></p>
+      </div>
+      <div class="seal-wrap" aria-label="HARDENED Seal">
+        <svg width="136" height="136" viewBox="0 0 140 140" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="waxGrad" cx="50%" cy="40%" r="55%">
+              <stop offset="0%" stop-color="#34d399"/>
+              <stop offset="65%" stop-color="#059669"/>
+              <stop offset="100%" stop-color="#064e3b"/>
+            </radialGradient>
+          </defs>
+          <circle cx="70" cy="70" r="62" fill="url(#waxGrad)" stroke="#6ee7b7" stroke-width="3" stroke-dasharray="6,3"/>
+          <circle cx="70" cy="70" r="50" fill="none" stroke="#a7f3d0" stroke-width="1.5"/>
+          <text x="70" y="54" text-anchor="middle" fill="#ecfdf5" font-size="10" font-weight="700" letter-spacing="2">BMAD FORGE</text>
+          <text x="70" y="76" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="900" letter-spacing="1.5">HARDENED</text>
+          <text x="70" y="95" text-anchor="middle" fill="#d1fae5" font-size="9" font-weight="600" letter-spacing="1">READY TO SPEC</text>
+        </svg>
+      </div>
+    </div>
+
+    <section>
+      <h2>🔒 Các Quyết Định Đã Khóa (Locked Decisions)</h2>
+      <ul>
+        <li><strong>Thực thể <code>Flow</code> độc lập &amp; Phân nhóm tại <code>&lt;collection&gt;/flows/</code>:</strong> Lưu tách biệt khỏi cây Request; hỗ trợ tạo <strong>Flow Folder</strong> thuần phân loại (<code>id, name, order</code>, không chứa Variables/Auth/Headers riêng) để gom nhóm, tìm kiếm và kéo-thả sắp xếp các Flow.</li>
+        <li><strong>Bước thực thi là Con trỏ mỏng (Thin Pointer):</strong> Mỗi bước tham chiếu <code>request_id</code> xuyên qua nhiều Folder mà không cần nhân bản Request. Tái sử dụng 100% cơ chế giải biến 4 tầng, Auth Inheritance và Pre/Post-response scripts của Request gốc.</li>
+        <li><strong>Chuyển đổi Không gian làm việc <code>[ APIs | Flows ]</code>:</strong> Giữ nguyên bố cục 2 cột chuẩn của ứng dụng (Sidebar trái hiển thị cây Nhóm/Flow + ContentArea phải hiển thị Sơ đồ &amp; Trình chạy Flow).</li>
+        <li><strong>Sơ đồ khối tự căn bố cục (Structured Flowchart) 2 trục vuông góc + Nút <code>[ ↕ Dọc | ↔ Ngang ]</code>:</strong> Không làm Freeform Canvas nặng nề. Tự động xếp bước nối tiếp theo trục chính, còn hàng <strong>Song song (<code>||</code>)</strong> và <strong>Nhánh rẽ (<code>↙ ↘</code>)</strong> bung theo trục vuông góc; kèm nút đảo hướng toàn sơ đồ <code>Dọc / Ngang</code> để tối ưu cho khung nhìn gần vuông.</li>
+        <li><strong>Chạy Tuần tự, Song song (<code>Promise.all</code>), Rẽ nhánh 3 chế độ &amp; Timeout:</strong> Mở khóa <code>ExecutorService.Send</code> để hỗ trợ nhiều request bay đồng thời và nhận <code>TimeoutMs</code>; gom kết quả cập nhật biến sau khi hàng song song chạy xong để chống race condition; hỗ trợ rẽ nhánh <strong>✅ Thành công</strong>, <strong>❌ Khi Lỗi</strong> và <strong>⚡ Điều kiện tùy chỉnh</strong> (3 ô chọn: <code>Status Code | Body JSON | Biến</code> &rarr; <code>Toán tử</code> &rarr; <code>Giá trị</code>).</li>
+        <li><strong>Thêm Request nhanh &amp; Step Inspector Panel:</strong> Nút <code>+</code> mở <code>Searchable Request Picker</code> kết hợp kéo-thả khối trên sơ đồ; click vào khối mở <code>Step Inspector Panel</code> (tái sử dụng <code>ResponseViewer</code>) xem Response/Tests/Logs kèm nút <code>Mở Request gốc ↗</code>.</li>
+        <li><strong>Đồng bộ CLI <code>hecto flow</code> &amp; Git/Watcher (7A):</strong> Đồng bộ <code>flows/</code> với <code>CollectionWatcher</code>, <code>smartReload()</code> và <code>GitSync</code>; bổ sung lệnh <code>hecto flow</code> (<code>list, tree, get, create, update, delete, move, run</code>) và cập nhật <code>SKILL.md</code> (<code>hecto agent-guide</code>).</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>🚫 Các Phương Án Đã Loại Bỏ &amp; Lý Do (Rejected Options)</h2>
+      <ul>
+        <li><strong>Folder Runner thuần túy (chỉ chạy các Request trong cùng 1 Folder):</strong> Buộc phải nhân bản (duplicate) các Request từ nhiều module (<code>Auth/</code>, <code>Orders/</code>, <code>Payments/</code>) vào chung 1 folder, gây lệch dữ liệu khi API thay đổi.</li>
+        <li><strong>Biến/Script riêng cấp Step (Phương án 2B/2C):</strong> Làm phình cấu trúc dữ liệu của Flow trong khi cơ chế biến 4 tầng và Script của Request gốc đã đáp ứng đủ.</li>
+        <li><strong>Đặt Flow lẫn trong cây Request hoặc nhét vào Modal nổi:</strong> Đặt chung cây gây nhầm lẫn kế thừa biến của Folder chứa Flow; đặt trong Modal thì diện tích quá hẹp cho cả cây Flow lẫn sơ đồ khối.</li>
+        <li><strong>Freeform Infinite Canvas (tự kéo tọa độ <code>x, y</code>, pan/zoom, vẽ dây Bézier):</strong> Tốn ~70% công sức UI mà không tăng giá trị thực thi so với Sơ đồ khối tự căn hàng.</li>
+        <li><strong>Chọn hướng rẽ ngang/dọc lẻ tẻ trên từng bước (Per-step Direction):</strong> Khi trộn lẫn bước rẽ ngang và bước rẽ dọc, các nhánh con sẽ đâm chéo và đè lên nhau (collision).</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>⚡ Các Điểm Yếu Đã Vượt Qua Thử Lửa (Weak Points Survived Scrutiny)</h2>
+      <ul>
+        <li><strong>Chặn đứng lỗi chặn đơn luồng trong <code>ExecutorService.Send</code>:</strong> Phát hiện <code>s.inflight</code> trong <code>projects/service/executor.go</code> đang chặn cứng chỉ cho 1 HTTP request chạy tại 1 thời điểm và khóa cứng timeout 30s — đã chốt hướng mở khóa để chạy hàng Song song và truyền <code>TimeoutMs</code>.</li>
+        <li><strong>Chống ghi đè file JSON khi chạy Song song:</strong> Vì chọn 2A (script ghi biến xuống đĩa), khi 2 request chạy song song cùng cập nhật biến, bộ chạy sẽ gom (merge) các thay đổi biến sau khi hàng song song hoàn tất rồi mới ghi đĩa một lần.</li>
+        <li><strong>Xử lý tham chiếu gãy (Deleted Request) &amp; Vòng lặp:</strong> Khi Request gốc bị xóa bên màn <code>APIs</code>, khối trên sơ đồ hiển thị cảnh báo rõ ràng và đánh dấu <code>Failed</code> ngay khi chạm tới; giới hạn <code>max_steps</code> chống treo ứng dụng.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>🎭 Đội Ngũ Personas Tham Gia Phản Biện</h2>
+      <div class="grid-2">
+        <div class="persona-card">
+          <div class="persona-header">🎯 Yui <span class="persona-role">The Craftsman (Custom)</span></div>
+          <p class="persona-voice">Chất vấn sự trùng lặp với <code>model.Folder</code>, bác bỏ Freeform Canvas và cảnh báo lỗi đè khối nếu cho phép rẽ ngang/dọc lẻ tẻ ở từng bước.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">🌶️ Boundary <span class="persona-role">Edge-Case Hunter (Custom)</span></div>
+          <p class="persona-voice">Chỉ ra bài toán mù biến khác nhánh thư mục, quy tắc gom lỗi <code>AND</code> cho hàng chạy song song và trường hợp Request gốc bị xóa.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">🏗️ Winston <span class="persona-role">System Architect (BMad)</span></div>
+          <p class="persona-voice">Soi trực tiếp mã nguồn <code>executor.go</code> (cờ <code>inflight</code> và <code>DefaultTimeout</code>), đề xuất bố cục 2 cột <code>[ APIs | Flows ]</code> và lưu trữ <code>&lt;collection&gt;/flows/</code>.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">🎨 Sally <span class="persona-role">UX Designer (BMad)</span></div>
+          <p class="persona-voice">Thiết kế quy tắc 2 trục vuông góc tự động + nút đảo hướng <code>[ ↕ Dọc | ↔ Ngang ]</code> tối ưu cho màn hình gần vuông và luồng Step Inspector.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">🧪 Murat <span class="persona-role">Master Test Architect (BMad)</span></div>
+          <p class="persona-voice">Phân tách rõ 4 nguyên nhân thất bại của một Step (Network/Timeout, Script Error, Test Assertion, HTTP 4xx/5xx) và bài toán Negative Test.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">🚢 Dana &amp; 💻 Amelia <span class="persona-role">Pragmatist &amp; Senior SWE</span></div>
+          <p class="persona-voice">Cân đối phạm vi thực thi để làm trọn vẹn cả Sơ đồ khối, Song song, Rẽ nhánh lẫn CLI <code>hecto flow</code> bằng cách tái sử dụng <code>ResponseViewer</code> và <code>headless-engine.ts</code>.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-header">🧑‍💻 Kiên, Lâm, Đức, Hải <span class="persona-role">Generated Outside Voices</span></div>
+          <p class="persona-voice">Đại diện góc nhìn người dùng thực tế: ghép luồng E2E xuyên các folder domain, chống bẩn Git working tree, chọn nhanh Request và xử lý Rate Limit / Timeout.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

@@ -10,6 +10,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useResponseStore } from '@/stores/responseStore'
+import { useMockServerStore } from '@/stores/mockServerStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   ListCollections: vi.fn().mockResolvedValue({ success: true, data: [] }),
@@ -293,6 +294,130 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(false)
 
       wrapper.unmount()
+    })
+
+    it('renders AppHeader left cluster with CollectionSwitcher and right cluster with Git Sync pill, Mock Server pill, and Import Postman ^I button (CAP-2)', async () => {
+      const collectionStore = useCollectionStore()
+      const mockStore = useMockServerStore()
+
+      collectionStore.collections = [
+        { id: 'default', name: 'Default Collection', is_default: true } as any,
+        { id: 'custom-1', name: 'Custom API', is_default: false } as any
+      ]
+      collectionStore.activeCollectionId = 'default'
+
+      const headerWrapper = mount(AppHeader, {
+        global: {
+          stubs: {
+            EnvSelector: true,
+            ImportErrorModal: true,
+            SettingsModal: true,
+            CollectionModal: true,
+            CollectionEnvModal: true
+          }
+        }
+      })
+
+      // Left cluster contains Logo, vertical divider bg-zinc-800, and CollectionSwitcher with Default badge
+      const leftCluster = headerWrapper.find('header > div:first-child')
+      expect(leftCluster.find('div.h-5.w-px.bg-zinc-800').exists()).toBe(true)
+      expect(leftCluster.find('[data-test="collection-switcher-btn"]').exists()).toBe(true)
+      expect(leftCluster.find('[data-test="collection-default-badge"]').exists()).toBe(true)
+      expect(leftCluster.find('[data-test="collection-default-badge"]').text()).toBe('Default')
+
+      // Git Sync Pill: unconfigured state
+      const gitBtn = headerWrapper.find('[data-test="git-config-btn"]')
+      expect(gitBtn.exists()).toBe(true)
+      expect(gitBtn.text()).toContain('Git Sync')
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(false)
+      expect(headerWrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(false)
+
+      // Git Sync Pill: configured without branch -> fallback 'main'
+      collectionStore.collections[0]!.git_remote_url = 'https://github.com/org/repo.git'
+      await nextTick()
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').exists()).toBe(true)
+      expect(gitBtn.text()).toContain('Git: main')
+
+      // Git Sync Pill: configured with branch 'develop'
+      collectionStore.gitSyncStatus = {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/repo.git',
+        branch: 'develop',
+        has_changes: false,
+        has_conflicts: false
+      } as any
+      await nextTick()
+      expect(gitBtn.text()).toContain('Git: develop')
+
+      // Git Sync Pill: conflict state with 2 files
+      collectionStore.gitConflictError = { message: 'Conflict', files: ['a.json', 'b.json'] }
+      await nextTick()
+      expect(headerWrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
+      expect(gitBtn.text()).toContain('Xung đột Git (2)')
+      expect(gitBtn.classes()).toContain('text-amber-300')
+
+      // Git Sync Pill: conflict state with empty files array -> fallback 1
+      collectionStore.gitConflictError = { message: 'Conflict', files: [] }
+      await nextTick()
+      expect(gitBtn.text()).toContain('Xung đột Git (1)')
+
+      // Git Sync Pill: conflict via gitSyncStatus when gitConflictError is null (conflict_files & conflicts fallback)
+      collectionStore.gitConflictError = null
+      collectionStore.gitSyncStatus = {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/repo.git',
+        branch: 'develop',
+        has_changes: true,
+        has_conflicts: true,
+        conflict_files: ['req1.json', 'req2.json', 'req3.json']
+      } as any
+      await nextTick()
+      expect(headerWrapper.find('[data-test="git-status-badge-conflict"]').exists()).toBe(true)
+      expect(gitBtn.text()).toContain('Xung đột Git (3)')
+
+      // When conflict_files is [] but conflicts is non-empty, uses conflicts.length
+      collectionStore.gitSyncStatus = {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/repo.git',
+        branch: 'develop',
+        has_changes: true,
+        has_conflicts: true,
+        conflict_files: [],
+        conflicts: [{ file_path: 'req1.json' }, { file_path: 'req2.json' }]
+      } as any
+      await nextTick()
+      expect(gitBtn.text()).toContain('Xung đột Git (2)')
+
+      // Mock Server Pill: stopped vs running
+      const mockBtn = headerWrapper.find('[data-test="open-mock-server-btn"]')
+      expect(mockBtn.exists()).toBe(true)
+      expect(mockBtn.text()).toContain('Mock Server')
+      expect(headerWrapper.find('[data-test="mock-server-running-indicator"]').exists()).toBe(false)
+
+      mockStore.running = true
+      mockStore.port = 4010
+      await nextTick()
+      expect(headerWrapper.find('[data-test="mock-server-running-indicator"]').exists()).toBe(true)
+      expect(mockBtn.text()).toContain('Mock :4010')
+      expect(mockBtn.classes()).toContain('text-emerald-300')
+
+      // Non-default port 5050 and invalid port 0 fallback to 4010
+      mockStore.port = 5050
+      await nextTick()
+      expect(mockBtn.text()).toContain('Mock :5050')
+
+      mockStore.port = 0
+      await nextTick()
+      expect(mockBtn.text()).toContain('Mock :4010')
+
+      // Import Postman button: amber upload icon + 'Import Postman' + <kbd>^I</kbd>
+      const importBtn = headerWrapper.find('[data-test="import-collection-btn"]')
+      expect(importBtn.exists()).toBe(true)
+      expect(importBtn.find('svg.text-amber-400').exists()).toBe(true)
+      expect(importBtn.text()).toContain('Import Postman')
+      expect(importBtn.find('kbd').text()).toBe('^I')
+
+      headerWrapper.unmount()
     })
   })
 

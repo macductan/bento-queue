@@ -23,16 +23,17 @@ import (
 const (
 	MaxResponseBodySize = 10 * 1024 * 1024 // 10MB
 	DefaultTimeout      = 30 * time.Second
+	MaxTimeoutMs        = 3600000 // 1 hour max per-request timeout override
 )
 
 // ExecutorService handles HTTP request execution via net/http.
 type ExecutorService struct {
-	logger   *slog.Logger
-	client   *http.Client
-	timeout  time.Duration
-	mu       sync.Mutex
-	inflight bool
-	cancelFn context.CancelFunc
+	logger        *slog.Logger
+	client        *http.Client
+	timeout       time.Duration
+	mu            sync.Mutex
+	nextReqID     uint64
+	activeCancels map[uint64]context.CancelFunc
 }
 
 // NewExecutorService creates a new ExecutorService.
@@ -42,12 +43,15 @@ func NewExecutorService(logger *slog.Logger) *ExecutorService {
 		client: &http.Client{
 			// We don't set Timeout here because we use context timeout to distinguish errors.
 		},
-		timeout: DefaultTimeout,
+		timeout:       DefaultTimeout,
+		activeCancels: make(map[uint64]context.CancelFunc),
 	}
 }
 
 // SetTimeout allows tests to override the default timeout.
 func (s *ExecutorService) SetTimeout(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.timeout = d
 }
 
@@ -70,23 +74,29 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 		return model.NewError(model.ErrValidation, ErrURLInvalid)
 	}
 
-	// Concurrency check
+	// Register active cancel function and determine effective timeout
 	s.mu.Lock()
-	if s.inflight {
-		s.mu.Unlock()
-		return model.NewError(model.ErrValidation, ErrRequestInProgress)
+	timeout := s.timeout
+	if req.TimeoutMs > 0 {
+		ms := req.TimeoutMs
+		if ms > MaxTimeoutMs {
+			ms = MaxTimeoutMs
+		}
+		timeout = time.Duration(ms) * time.Millisecond
 	}
-	s.inflight = true
-
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
-	s.cancelFn = cancel
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	s.nextReqID++
+	reqID := s.nextReqID
+	if s.activeCancels == nil {
+		s.activeCancels = make(map[uint64]context.CancelFunc)
+	}
+	s.activeCancels[reqID] = cancel
 	s.mu.Unlock()
 
 	defer func() {
 		cancel()
 		s.mu.Lock()
-		s.inflight = false
-		s.cancelFn = nil
+		delete(s.activeCancels, reqID)
 		s.mu.Unlock()
 	}()
 
@@ -214,13 +224,21 @@ func (s *ExecutorService) Send(req model.ExecuteRequest) model.Result {
 	return model.NewSuccess(resp)
 }
 
-// Abort cancels the current in-flight request.
+// Abort cancels all current in-flight requests.
 func (s *ExecutorService) Abort() model.Result {
 	s.logger.Info("AbortRequest called")
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.inflight && s.cancelFn != nil {
-		s.cancelFn()
+	cancels := make([]context.CancelFunc, 0, len(s.activeCancels))
+	for id, cancel := range s.activeCancels {
+		if cancel != nil {
+			cancels = append(cancels, cancel)
+		}
+		delete(s.activeCancels, id)
+	}
+	s.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
 	}
 	return model.NewSuccess(nil)
 }

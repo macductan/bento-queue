@@ -7,6 +7,8 @@ import ContentArea from '../ContentArea.vue'
 import App from '@/App.vue'
 import { useTabStore } from '@/stores/tabStore'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
+import { useFlowStore } from '@/stores/flowStore'
+import { useUiStore } from '@/stores/uiStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { useResponseStore } from '@/stores/responseStore'
 import { createMockRequest } from '@/stores/__tests__/utils'
@@ -97,12 +99,14 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
     // Tab 0: GET Users
     expect(tabItems[0].find('[data-test="tab-method-badge"]').text()).toBe('GET')
     expect(tabItems[0].find('[data-test="tab-method-badge"]').classes()).toContain('text-method-get')
+    expect(tabItems[0].find('[data-test="tab-method-badge"]').classes()).toContain('method-badge-get')
     expect(tabItems[0].find('[data-test="tab-name"]').text()).toBe('GET Users')
     expect(tabItems[0].attributes('data-active')).toBeUndefined()
 
     // Tab 1: POST Login
     expect(tabItems[1].find('[data-test="tab-method-badge"]').text()).toBe('POST')
     expect(tabItems[1].find('[data-test="tab-method-badge"]').classes()).toContain('text-method-post')
+    expect(tabItems[1].find('[data-test="tab-method-badge"]').classes()).toContain('method-badge-post')
     expect(tabItems[1].find('[data-test="tab-name"]').text()).toBe('POST Login')
 
     // Tab 2: Folder Auth Module (active)
@@ -473,7 +477,93 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
     expect(rootPath.exists()).toBe(true)
     expect(rootPath.text()).toBe('My API')
     expect(rootPath.attributes('title')).toBe('My API / Root Healthcheck')
+    expect(rootTab.find('[data-test="tab-method-badge"]').classes()).toContain('text-method-head')
+    expect(rootTab.find('[data-test="tab-method-badge"]').classes()).toContain('method-badge-head')
+
+    wrapper.unmount()
+  })
+
+  it('calls flowStore.loadFlowTree() on App.vue mount and dispatches Ctrl+S, Ctrl+N, and Ctrl+Shift+N to flowStore in flows mode', async () => {
+    const flowStore = useFlowStore()
+    const uiStore = useUiStore()
+    const tabStore = useTabStore()
+
+    const loadFlowTreeSpy = vi.spyOn(flowStore, 'loadFlowTree').mockResolvedValue()
+    const saveCurrentFlowSpy = vi.spyOn(flowStore, 'saveCurrentFlow').mockResolvedValue(true)
+    const createFlowSpy = vi.spyOn(flowStore, 'createFlow').mockResolvedValue(null)
+    const createFlowFolderSpy = vi.spyOn(flowStore, 'createFlowFolder').mockResolvedValue(null)
+    const closeTabSpy = vi.spyOn(tabStore, 'closeTab').mockResolvedValue(true)
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          AppHeader: true,
+          AppSidebar: true,
+          ContentArea: true,
+          ToastNotification: true,
+          ConfirmDialog: true,
+          TreeContextMenu: true,
+          UnsavedChangesDialog: true,
+          EnvModal: true,
+          GitSyncModal: true,
+          GitConflictResolverModal: true,
+          HistoryModal: true,
+          MockServerModal: true
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(loadFlowTreeSpy).toHaveBeenCalledTimes(1)
+
+    uiStore.workspaceMode = 'flows'
+    flowStore.currentFlow = { id: 'flow-1', name: 'Sample Flow', nodes: [] } as any
+    tabStore.activeTabId = 'request:req-1'
+
+    // Ctrl+S -> saveCurrentFlow
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }))
+    expect(saveCurrentFlowSpy).toHaveBeenCalledTimes(1)
+
+    // Ctrl+N -> createFlow
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true }))
+    expect(createFlowSpy).toHaveBeenCalledTimes(1)
+
+    // Ctrl+Shift+N -> createFlowFolder
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'N', ctrlKey: true, shiftKey: true, cancelable: true }))
+    expect(createFlowFolderSpy).toHaveBeenCalledTimes(1)
+
+    // Ctrl+W in flows mode does NOT close API tab
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true }))
+    expect(closeTabSpy).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('applies both text-method-<method> and method-badge-<method> classes for all 7 HTTP methods on AppTabBar (CAP-1)', () => {
+    const tabStore = useTabStore()
+    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+    tabStore.tabs = methods.map((m, idx) => ({
+      id: `request:req-${idx}`,
+      entityId: `req-${idx}`,
+      type: 'request' as const,
+      name: `${m} Endpoint`,
+      method: m,
+      isDirty: false
+    }))
+    tabStore.activeTabId = 'request:req-0'
+
+    const wrapper = mount(AppTabBar)
+    const badges = wrapper.findAll('[data-test="tab-method-badge"]')
+    expect(badges).toHaveLength(7)
+
+    methods.forEach((m, idx) => {
+      const lower = m.toLowerCase()
+      expect(badges[idx]!.text()).toBe(m)
+      expect(badges[idx]!.classes()).toContain(`text-method-${lower}`)
+      expect(badges[idx]!.classes()).toContain(`method-badge-${lower}`)
+    })
 
     wrapper.unmount()
   })
 })
+

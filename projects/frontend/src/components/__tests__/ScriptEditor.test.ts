@@ -167,8 +167,14 @@ describe('ScriptEditor.vue', () => {
 
     const runBtn = wrapper.find('[data-test="run-pre-script-btn"]')
     expect(runBtn.exists()).toBe(true)
+    expect(runBtn.text()).toBe('▶ Chạy thử Script')
+    expect(runBtn.classes()).toContain('bg-emerald-500/15')
+    expect(runBtn.classes()).toContain('text-emerald-300')
     await runBtn.trigger('click')
 
+    const { useUiStore } = await import('@/stores/uiStore')
+    const uiStore = useUiStore()
+    expect(uiStore.toast?.text).toBe('Đã chạy thử Pre-request Script')
     expect(resStore.scriptLogs).toContain('[Pre-request] Generating auth token')
     expect(envStore.variablesMap.get('my_token')).toBe('abc-123')
     expect(wrapper.text()).toContain('[Pre-request] Generating auth token')
@@ -189,6 +195,9 @@ describe('ScriptEditor.vue', () => {
 
     await wrapper.find('[data-test="run-pre-script-btn"]').trigger('click')
 
+    const { useUiStore } = await import('@/stores/uiStore')
+    const uiStore = useUiStore()
+    expect(uiStore.toast?.text).toBe('Lỗi khi chạy Pre-request Script')
     expect(resStore.scriptError).toBeTruthy()
     const banner = wrapper.find('[data-test="script-error-banner"]')
     expect(banner.exists()).toBe(true)

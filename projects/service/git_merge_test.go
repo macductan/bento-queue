@@ -663,3 +663,87 @@ func BenchmarkMergeJSONObjects(b *testing.B) {
 		_, _ = MergeJSONObjects("orders/bench-req.json", baseObj, oursObj, theirsObj)
 	}
 }
+
+func TestDetectEntityMeta_And_MergeJSONObjects_FlowAndFlowFolder(t *testing.T) {
+	// 1. Flow entity detection & 3-Way JSON Merge
+	baseFlow := map[string]interface{}{
+		"id":          "flow-1",
+		"name":        "Order Payment Flow",
+		"description": "Initial checkout flow",
+		"layout":      "vertical",
+		"timeout_ms":  float64(30000),
+		"max_steps":   float64(100),
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "node-1",
+				"steps": []interface{}{
+					map[string]interface{}{"id": "step-1", "request_id": "req-login", "enabled": true},
+				},
+			},
+		},
+	}
+
+	oursFlow := cloneJSONMap(baseFlow)
+	oursFlow["description"] = "Updated checkout description"
+	oursFlow["layout"] = "horizontal"
+	oursFlow["timeout_ms"] = float64(15000)
+
+	theirsFlow := cloneJSONMap(baseFlow)
+	theirsFlow["layout"] = "vertical-custom" // conflict with oursFlow["layout"]
+	theirsFlow["max_steps"] = float64(50)    // non-overlapping update
+
+	entType, entName := detectEntityMeta("flows/order-flow.json", baseFlow, oursFlow, theirsFlow)
+	if entType != "flow" || entName != "Order Payment Flow" {
+		t.Fatalf("expected entity_type='flow' and entity_name='Order Payment Flow', got type=%q name=%q", entType, entName)
+	}
+
+	mergedFlow, flowConflicts := MergeJSONObjects("flows/order-flow.json", baseFlow, oursFlow, theirsFlow)
+	if mergedFlow["description"] != "Updated checkout description" {
+		t.Errorf("expected non-conflicting description from Ours, got %v", mergedFlow["description"])
+	}
+	if mergedFlow["max_steps"] != float64(50) {
+		t.Errorf("expected non-conflicting max_steps=50 from Theirs, got %v", mergedFlow["max_steps"])
+	}
+	if mergedFlow["timeout_ms"] != float64(15000) {
+		t.Errorf("expected non-conflicting timeout_ms=15000 from Ours, got %v", mergedFlow["timeout_ms"])
+	}
+	if len(flowConflicts) != 1 || flowConflicts[0].FieldPath != "layout" {
+		t.Fatalf("expected 1 conflict on 'layout', got %+v", flowConflicts)
+	}
+	if flowConflicts[0].Label != "Bố cục sơ đồ (Layout)" {
+		t.Errorf("expected Vietnamese field label 'Bố cục sơ đồ (Layout)', got %q", flowConflicts[0].Label)
+	}
+	if got := friendlyFieldLabel("direction"); got != "Bố cục sơ đồ (Layout)" {
+		t.Errorf("expected friendlyFieldLabel('direction') == 'Bố cục sơ đồ (Layout)', got %q", got)
+	}
+
+	// 2. FlowFolder entity detection & 3-Way JSON Merge
+	baseFolder := map[string]interface{}{
+		"id":    "ff-1",
+		"name":  "E2E Checkout",
+		"order": []interface{}{"flow-1"},
+	}
+	oursFolder := cloneJSONMap(baseFolder)
+	oursFolder["order"] = []interface{}{"flow-1", "flow-2"}
+	theirsFolder := cloneJSONMap(baseFolder)
+	theirsFolder["order"] = []interface{}{"flow-2", "flow-1"}
+
+	ffType, ffName := detectEntityMeta("flows/e2e/_folder.json", baseFolder, oursFolder, theirsFolder)
+	if ffType != "flow_folder" || ffName != "E2E Checkout" {
+		t.Fatalf("expected entity_type='flow_folder' and entity_name='E2E Checkout', got type=%q name=%q", ffType, ffName)
+	}
+
+	rootFFType, _ := detectEntityMeta("flows/_folder.json", nil, nil, nil)
+	if rootFFType != "flow_folder" {
+		t.Errorf("expected entity_type='flow_folder' for flows/_folder.json, got %q", rootFFType)
+	}
+
+	_, ffConflicts := MergeJSONObjects("flows/e2e/_folder.json", baseFolder, oursFolder, theirsFolder)
+	if len(ffConflicts) != 1 || ffConflicts[0].FieldPath != "order" {
+		t.Fatalf("expected 1 conflict on 'order', got %+v", ffConflicts)
+	}
+	if ffConflicts[0].Label != "Thứ tự sắp xếp (Order)" {
+		t.Errorf("expected Vietnamese field label 'Thứ tự sắp xếp (Order)', got %q", ffConflicts[0].Label)
+	}
+}
+

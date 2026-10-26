@@ -129,10 +129,18 @@ export const useUiStore = defineStore('ui', () => {
     }
   }
 
-  // Context menu state
-  const contextMenu = ref<{ x: number; y: number; nodeId: string; nodeType: 'folder' | 'request' } | null>(null)
+  // Workspace mode state ('apis' | 'flows')
+  const workspaceMode = ref<'apis' | 'flows'>('apis')
 
-  function openContextMenu(x: number, y: number, nodeId: string, nodeType: 'folder' | 'request') {
+  function setWorkspaceMode(mode: 'apis' | 'flows') {
+    workspaceMode.value = mode
+    closeContextMenu()
+  }
+
+  // Context menu state
+  const contextMenu = ref<{ x: number; y: number; nodeId: string; nodeType: 'folder' | 'request' | 'flow_folder' | 'flow' } | null>(null)
+
+  function openContextMenu(x: number, y: number, nodeId: string, nodeType: 'folder' | 'request' | 'flow_folder' | 'flow') {
     contextMenu.value = { x, y, nodeId, nodeType }
   }
 
@@ -336,6 +344,8 @@ export const useUiStore = defineStore('ui', () => {
     confirm,
     requestConfirm,
     resolveConfirm,
+    workspaceMode,
+    setWorkspaceMode,
     contextMenu,
     openContextMenu,
     closeContextMenu,

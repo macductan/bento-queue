@@ -192,3 +192,98 @@ hecto req create --folder "AuthFlow" --name "Login" --method POST \
 # 4. Run Login -> automatically saves token into AuthFlow/_folder.json
 hecto run "AuthFlow/Login" --json
 ```
+
+---
+
+## 6. API Flow Orchestration (`hecto flow`)
+
+Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scenarios using thin pointers (`request_id`) to existing `model.Request` items.
+- **Sequential steps:** Each `FlowNode` in `flow.nodes` runs sequentially.
+- **Parallel rows (`[Req 1 || Req 2]`):** A `FlowNode` with `len(steps) >= 2` executes all enabled steps concurrently on deep-copied state, then deterministically merges script variable/auth mutations (`index 0 -> 1 -> ...`) and writes to disk once.
+- **3-mode branching (`branches`):** After a `FlowNode` completes, `custom` branch conditions (`status_code`, `body_json`, `variable` with `==`, `!=`, `>`, `<`, `contains`, `exists`) are evaluated first in order, followed by `success` (if `nodePassed === true`) or `error` (if `nodePassed === false`). When a failed node matches an `error` or `custom` branch whose child nodes succeed, the error is treated as handled (`handledByBranch = true`) and the flow continues.
+
+### 6.1. `hecto flow` Command Matrix
+
+| Command | Flags & Usage |
+|---|---|
+| `hecto flow list` | `[--folder <id\|path>] [-c <coll>] [--json]` — Flat list of flows in the collection or inside a FlowFolder. |
+| `hecto flow tree` | `[-c <coll>] [--json]` — Full hierarchical `FlowFolder` and `Flow` tree in `<collection>/flows/`. |
+| `hecto flow get <id\|path>` | `[-c <coll>] [--json]` — Full `Flow` JSON plus `referenced_requests` summary. |
+| `hecto flow create` | `--name <name> [--folder <id\|path>] [--desc <text>] [--layout vertical\|horizontal] [--timeout-ms <ms>] [--max-steps <n>] [--steps "<req1>,<req2>\|\|<req3>,..."] [--nodes-json <json\|@file>] [-c <coll>] [--json]` |
+| `hecto flow update <id\|path>` | `[--name <name>] [--desc <text>] [--layout vertical\|horizontal] [--timeout-ms <ms>] [--max-steps <n>] [--steps "..."] [--nodes-json <json\|@file>] [-c <coll>] [--json]` — Read-Merge-Write patch semantics. |
+| `hecto flow delete <id\|path>` | `[-c <coll>] [--json]` — Delete a flow file from `<collection>/flows/`. |
+| `hecto flow move <id\|path>` | `--to <folder-id\|path\|root> [-c <coll>] [--json]` — Move a flow to another FlowFolder or root. |
+| `hecto flow folder <verb>` | `create --name <name> [--parent <id\|path>]` \| `update <id\|path> --name <name>` \| `delete <id\|path>` \| `move <id\|path> --to <id\|path\|root>` \| `list` \| `tree` \| `get <id\|path>` |
+| `hecto flow run <id\|path>` | `[-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
+
+### 6.2. Shorthand `--steps` vs Full `--nodes-json`
+- **`--steps` shorthand:** Comma `,` separates sequential `FlowNode` rows; `||` separates parallel `FlowStep` items within the same row. Each token is a Request UUID or `<Folder>/<Request>` path:
+  ```bash
+  hecto flow create --name "Checkout E2E" --folder "E2E Suite" \
+    --steps "AuthFlow/Login,Users/Get Profile||Catalog/Get Cart,Orders/Checkout" --json
+  ```
+- **`--nodes-json` (supports 3-mode `branches` and per-step `timeout_ms`):**
+  ```bash
+  hecto flow update "E2E Suite/Checkout E2E" --nodes-json '[
+    {
+      "steps": [{ "request_id": "AuthFlow/Login", "enabled": true, "timeout_ms": 5000 }],
+      "branches": [
+        {
+          "name": "Rate Limited",
+          "condition": { "type": "custom", "source": "status_code", "operator": "==", "value": "429" },
+          "nodes": [{ "steps": [{ "request_id": "Queue/RetryLater", "enabled": true }] }]
+        },
+        {
+          "name": "On Success",
+          "condition": { "type": "success" },
+          "nodes": [
+            { "steps": [{ "request_id": "Users/Get Profile" }, { "request_id": "Catalog/Get Cart" }] },
+            { "steps": [{ "request_id": "Orders/Checkout" }] }
+          ]
+        },
+        {
+          "name": "On Error",
+          "condition": { "type": "error" },
+          "nodes": [{ "steps": [{ "request_id": "Alerts/NotifyFailure" }] }]
+        }
+      ]
+    }
+  ]' --json
+  ```
+
+### 6.3. `hecto flow run --json` Output Structure (`FlowRunOutput`)
+```json
+{
+  "success": true,
+  "data": {
+    "flow_id": "...",
+    "flow_name": "Checkout E2E",
+    "status": "passed",
+    "total_time_ms": 42,
+    "steps_executed": 4,
+    "steps_passed": 4,
+    "steps_failed": 0,
+    "steps_skipped": 2,
+    "node_results": [
+      {
+        "node_id": "...",
+        "status": "passed",
+        "matched_branch_id": "...",
+        "step_results": [
+          {
+            "step_id": "...",
+            "node_id": "...",
+            "request_id": "...",
+            "request_name": "Login",
+            "method": "POST",
+            "status": "passed",
+            "run_output": { "status_code": 200, "time_ms": 12 }
+          }
+        ]
+      }
+    ],
+    "step_results": []
+  }
+}
+```
+

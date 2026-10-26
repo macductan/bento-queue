@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import TreeNodeRow from '../TreeNodeRow.vue'
 import TreeContextMenu from '../TreeContextMenu.vue'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
+import { useFlowStore, type FlowTreeNode } from '@/stores/flowStore'
 import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -742,4 +743,385 @@ describe('TreeNodeRow.vue', () => {
     expect(row.classes()).toContain('bg-brand-primary/30')
     expect(wrapper.find('[data-test="tree-row-highlight-bar"]').exists()).toBe(true)
   })
+
+  it('supports flow and flow_folder nodes in TreeNodeRow: icon, unsaved dot, click selection, folder toggle, inline rename, delete, Ctrl+D duplicate, sort, and drag-and-drop reorder', async () => {
+    const flowStore = useFlowStore()
+    const uiStore = useUiStore()
+    uiStore.workspaceMode = 'flows'
+
+    const selectFlowSpy = vi.spyOn(flowStore, 'selectFlow').mockResolvedValue(true)
+    const toggleFlowFolderSpy = vi.spyOn(flowStore, 'toggleFlowFolder')
+    const renameFlowSpy = vi.spyOn(flowStore, 'renameFlow').mockResolvedValue(true)
+    const renameFlowFolderSpy = vi.spyOn(flowStore, 'renameFlowFolder').mockResolvedValue(true)
+    const deleteFlowSpy = vi.spyOn(flowStore, 'deleteFlow').mockResolvedValue(true)
+    const duplicateFlowSpy = vi.spyOn(flowStore, 'duplicateFlow').mockResolvedValue(null)
+    const sortFlowNodesSpy = vi.spyOn(flowStore, 'sortFlowNodes').mockResolvedValue(true)
+    const reorderFlowPosSpy = vi.spyOn(flowStore, 'reorderNodePosition').mockResolvedValue(true)
+    vi.spyOn(flowStore, 'canReorderNode').mockReturnValue(true)
+
+    const flowNode: FlowTreeNode = {
+      id: 'flow-1',
+      name: 'Checkout Flow',
+      type: 'flow',
+      path: 'flows/checkout.json',
+      created_at: ''
+    }
+    const flowFolderNode: FlowTreeNode = {
+      id: 'ff-1',
+      name: 'Order Flows',
+      type: 'flow_folder',
+      path: 'flows/ff-1',
+      children: [flowNode],
+      created_at: ''
+    }
+    flowStore.flowTree = [flowFolderNode]
+    flowStore.activeFlowId = 'flow-1'
+    flowStore.currentFlow = {
+      id: 'flow-1',
+      name: 'In-Memory Checkout Flow',
+      description: '',
+      variables: [],
+      nodes: [],
+      created_at: '',
+      updated_at: ''
+    } as any
+    flowStore.savedSnapshot = '{"id":"flow-1","name":"Checkout Flow"}'
+
+    const flowWrapper = mount(TreeNodeRow, {
+      props: { node: flowNode, depth: 1 }
+    })
+
+    // Flow node icon and unsaved dot
+    expect(flowWrapper.find('[data-test="flow-node-icon"]').exists()).toBe(true)
+    expect(flowWrapper.find('[data-test="tree-row-unsaved-dot"]').exists()).toBe(true)
+    expect(flowWrapper.text()).toContain('In-Memory Checkout Flow')
+
+    // Click flow node -> selectFlow
+    const flowRow = flowWrapper.find('[data-tree-row="true"]')
+    await flowRow.trigger('click')
+    expect(selectFlowSpy).toHaveBeenCalledWith('flow-1')
+
+    // Inline rename uses effectiveRawName and calls flowStore.renameFlow
+    await flowRow.trigger('keydown', { key: 'F2' })
+    await flushPromises()
+    const input = flowWrapper.find('input')
+    expect((input.element as HTMLInputElement).value).toBe('In-Memory Checkout Flow')
+    await input.setValue('Renamed Flow')
+    await input.trigger('keydown.enter')
+    await flushPromises()
+    expect(renameFlowSpy).toHaveBeenCalledWith('flow-1', 'Renamed Flow')
+
+    // Ctrl+D duplicate
+    await flowRow.trigger('keydown', { key: 'd', ctrlKey: true })
+    expect(duplicateFlowSpy).toHaveBeenCalledWith('flow-1')
+
+    // Delete key prompts with effectiveRawName and calls flowStore.deleteFlow
+    const confirmSpy = vi.spyOn(uiStore, 'requestConfirm').mockResolvedValueOnce(true)
+    await flowRow.trigger('keydown', { key: 'Delete' })
+    await flushPromises()
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('In-Memory Checkout Flow'))
+    expect(deleteFlowSpy).toHaveBeenCalledWith('flow-1')
+
+    // Mount flow_folder node
+    const folderWrapper = mount(TreeNodeRow, {
+      props: { node: flowFolderNode, depth: 0 }
+    })
+    const folderRow = folderWrapper.find('[data-tree-row="true"]')
+    await folderRow.trigger('click')
+    expect(toggleFlowFolderSpy).toHaveBeenCalledWith('ff-1')
+
+    // Folder sort button
+    await folderWrapper.find('[data-test="folder-sort-btn"]').trigger('click')
+    expect(sortFlowNodesSpy).toHaveBeenCalledWith('ff-1')
+
+    // Folder inline rename
+    await folderRow.trigger('keydown', { key: 'F2' })
+    await flushPromises()
+    const folderInput = folderWrapper.find('input')
+    await folderInput.setValue('Renamed Flow Folder')
+    await folderInput.trigger('keydown.enter')
+    await flushPromises()
+    expect(renameFlowFolderSpy).toHaveBeenCalledWith('ff-1', 'Renamed Flow Folder')
+
+    // Drag-and-drop reorder in flow mode
+    flowStore.setDraggingNode({ id: 'flow-1', type: 'flow' })
+    folderRow.element.getBoundingClientRect = () => ({
+      top: 100,
+      bottom: 200,
+      height: 100,
+      left: 0,
+      right: 200,
+      width: 200,
+      x: 0,
+      y: 100,
+      toJSON: () => {}
+    })
+    await folderRow.trigger('dragover', { clientY: 190 })
+    await folderRow.trigger('drop')
+    expect(reorderFlowPosSpy).toHaveBeenCalledWith('flow-1', 'flow', 'ff-1', 'after')
+  })
+
+  it('supports flow and flow_folder in TreeContextMenu: dirty indicator, parent/descendant filtering, and flowStore actions', async () => {
+    const flowStore = useFlowStore()
+    const uiStore = useUiStore()
+    uiStore.workspaceMode = 'flows'
+
+    const createFlowSpy = vi.spyOn(flowStore, 'createFlow').mockResolvedValue(null)
+    const createFlowFolderSpy = vi.spyOn(flowStore, 'createFlowFolder').mockResolvedValue(null)
+    const sortFlowNodesSpy = vi.spyOn(flowStore, 'sortFlowNodes').mockResolvedValue(true)
+    const duplicateFlowSpy = vi.spyOn(flowStore, 'duplicateFlow').mockResolvedValue(null)
+    const moveFlowNodeSpy = vi.spyOn(flowStore, 'moveFlowNode').mockResolvedValue(true)
+    const deleteFlowSpy = vi.spyOn(flowStore, 'deleteFlow').mockResolvedValue(true)
+    const deleteFlowFolderSpy = vi.spyOn(flowStore, 'deleteFlowFolder').mockResolvedValue(true)
+
+    const childFolder: FlowTreeNode = {
+      id: 'ff-sub',
+      name: 'Sub Flow Folder',
+      type: 'flow_folder',
+      path: 'flows/ff-main/ff-sub',
+      children: [],
+      created_at: ''
+    }
+    const flowInsideMain: FlowTreeNode = {
+      id: 'flow-1',
+      name: 'Main Flow',
+      type: 'flow',
+      path: 'flows/ff-main/flow-1.json',
+      created_at: ''
+    }
+    const mainFolder: FlowTreeNode = {
+      id: 'ff-main',
+      name: 'Main Flow Folder',
+      type: 'flow_folder',
+      path: 'flows/ff-main',
+      children: [childFolder, flowInsideMain],
+      created_at: ''
+    }
+    const otherFolder: FlowTreeNode = {
+      id: 'ff-other',
+      name: 'Other Flow Folder',
+      type: 'flow_folder',
+      path: 'flows/ff-other',
+      children: [],
+      created_at: ''
+    }
+
+    flowStore.flowTree = [mainFolder, otherFolder]
+    flowStore.activeFlowId = 'flow-1'
+    flowStore.currentFlow = {
+      id: 'flow-1',
+      name: 'Modified Main Flow',
+      description: '',
+      variables: [],
+      nodes: [],
+      created_at: '',
+      updated_at: ''
+    } as any
+    flowStore.savedSnapshot = '{"id":"flow-1","name":"Main Flow"}'
+
+    const wrapper = mount(TreeContextMenu)
+
+    // 1. Open context menu on dirty flow-1 (parent is ff-main)
+    uiStore.openContextMenu(100, 100, 'flow-1', 'flow')
+    await flushPromises()
+    expect(wrapper.find('[data-test="context-menu-unsaved-indicator"]').exists()).toBe(true)
+
+    // Move submenu for flow-1 should exclude current parent 'Main Flow Folder', but include 'Gốc flows', 'Sub Flow Folder', and 'Other Flow Folder'
+    const flowMoveSubmenu = wrapper.findAll('.relative').find(el => el.text().includes('Di chuyển tới'))!
+    const flowMoveTexts = flowMoveSubmenu.findAll('button').map(b => b.text())
+    expect(flowMoveTexts).toContain('Gốc flows')
+    expect(flowMoveTexts).toContain('Other Flow Folder')
+    expect(flowMoveTexts).not.toContain('Main Flow Folder')
+
+    // Click 'Other Flow Folder' -> moveFlowNode
+    await flowMoveSubmenu.findAll('button').find(b => b.text().includes('Other Flow Folder'))!.trigger('click')
+    expect(moveFlowNodeSpy).toHaveBeenCalledWith('flow-1', 'flow', 'ff-other')
+
+    // Duplicate flow-1
+    uiStore.openContextMenu(100, 100, 'flow-1', 'flow')
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Sao chép')!.trigger('click')
+    expect(duplicateFlowSpy).toHaveBeenCalledWith('flow-1')
+
+    // Delete flow-1
+    vi.spyOn(uiStore, 'requestConfirm').mockResolvedValueOnce(true)
+    uiStore.openContextMenu(100, 100, 'flow-1', 'flow')
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Xóa')!.trigger('click')
+    await flushPromises()
+    expect(deleteFlowSpy).toHaveBeenCalledWith('flow-1')
+
+    // 2. Open context menu on root flow_folder ff-main (parent is '')
+    uiStore.openContextMenu(100, 100, 'ff-main', 'flow_folder')
+    await flushPromises()
+
+    // Move submenu for root folder ff-main excludes 'Gốc flows' (already at root), self ('Main Flow Folder'), and descendant ('Sub Flow Folder')
+    const folderMoveSubmenu = wrapper.findAll('.relative').find(el => el.text().includes('Di chuyển tới'))!
+    const folderMoveTexts = folderMoveSubmenu.findAll('button').map(b => b.text())
+    expect(folderMoveTexts).not.toContain('Gốc flows')
+    expect(folderMoveTexts).not.toContain('Main Flow Folder')
+    expect(folderMoveTexts).not.toContain('Sub Flow Folder')
+    expect(folderMoveTexts).toContain('Other Flow Folder')
+
+    // Create flow / create folder / sort / delete folder
+    await wrapper.findAll('button').find(b => b.text() === 'Thêm flow')!.trigger('click')
+    expect(createFlowSpy).toHaveBeenCalledWith('ff-main')
+
+    uiStore.openContextMenu(100, 100, 'ff-main', 'flow_folder')
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Thêm thư mục')!.trigger('click')
+    expect(createFlowFolderSpy).toHaveBeenCalledWith('ff-main')
+
+    uiStore.openContextMenu(100, 100, 'ff-main', 'flow_folder')
+    await flushPromises()
+    await wrapper.find('[data-test="context-menu-sort-btn"]').trigger('click')
+    expect(sortFlowNodesSpy).toHaveBeenCalledWith('ff-main')
+
+    vi.spyOn(uiStore, 'requestConfirm').mockResolvedValueOnce(true)
+    uiStore.openContextMenu(100, 100, 'ff-main', 'flow_folder')
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Xóa')!.trigger('click')
+    await flushPromises()
+    expect(deleteFlowFolderSpy).toHaveBeenCalledWith('ff-main')
+  })
+
+  it('renders quick folder-settings-btn on folder row in APIs mode, calls store.openFolderSettings without toggling folder, and hides it in flows mode or while editing (CAP-3)', async () => {
+    const store = useCollectionStore()
+    const uiStore = useUiStore()
+    uiStore.workspaceMode = 'apis'
+
+    const openSettingsSpy = vi.spyOn(store, 'openFolderSettings')
+    const toggleFolderSpy = vi.spyOn(store, 'toggleFolder')
+
+    const folderNode: TreeNode = {
+      id: 'folder-payments',
+      name: 'Payments',
+      type: 'folder',
+      path: '/folder-payments',
+      children: [],
+      created_at: '2026-10-26'
+    }
+
+    const wrapper = mount(TreeNodeRow, {
+      props: {
+        node: folderNode,
+        depth: 0
+      }
+    })
+
+    const settingsBtn = wrapper.find('[data-test="folder-settings-btn"]')
+    const sortBtn = wrapper.find('[data-test="folder-sort-btn"]')
+    const menuBtn = wrapper.find('[data-test="tree-node-menu-btn"]')
+    expect(settingsBtn.exists()).toBe(true)
+    expect(settingsBtn.attributes('title')).toBe('Cài đặt Thư mục (Auth, Headers, Vars, Scripts)')
+    expect(sortBtn.exists()).toBe(true)
+    expect(menuBtn.exists()).toBe(true)
+
+    await settingsBtn.trigger('click')
+    await flushPromises()
+
+    expect(openSettingsSpy).toHaveBeenCalledWith('folder-payments')
+    expect(store.activeFolderId).toBe('folder-payments')
+    expect(toggleFolderSpy).not.toHaveBeenCalled()
+
+    // Double-clicking action buttons does not bubble to the row and does not enter inline rename
+    await settingsBtn.trigger('dblclick')
+    await sortBtn.trigger('dblclick')
+    await menuBtn.trigger('dblclick')
+    expect(wrapper.find('input[type="text"]').exists()).toBe(false)
+
+    // openFolderSettings guards against empty/whitespace IDs
+    const setActiveFolderSpy = vi.spyOn(store, 'setActiveFolderId')
+    setActiveFolderSpy.mockClear()
+    await store.openFolderSettings('   ')
+    expect(setActiveFolderSpy).not.toHaveBeenCalled()
+
+    // Entering inline edit mode hides folder-settings-btn
+    await wrapper.find('[data-tree-row="true"]').trigger('dblclick')
+    expect(wrapper.find('[data-test="folder-settings-btn"]').exists()).toBe(false)
+
+    // In Flows mode (flow_folder), folder-settings-btn and ctx-folder-settings are hidden
+    uiStore.workspaceMode = 'flows'
+    const flowFolderWrapper = mount(TreeNodeRow, {
+      props: {
+        node: {
+          id: 'ff-1',
+          name: 'Flow Group',
+          type: 'flow_folder',
+          path: 'flows/ff-1',
+          children: [],
+          created_at: ''
+        },
+        depth: 0
+      }
+    })
+    expect(flowFolderWrapper.find('[data-test="folder-settings-btn"]').exists()).toBe(false)
+
+    const ctxWrapper = mount(TreeContextMenu)
+    uiStore.openContextMenu(50, 50, 'ff-1', 'flow_folder')
+    await flushPromises()
+    expect(ctxWrapper.find('[data-test="ctx-folder-settings"]').exists()).toBe(false)
+
+    // Root context menu in APIs mode also hides ctx-folder-settings
+    uiStore.workspaceMode = 'apis'
+    uiStore.openContextMenu(50, 50, '', 'folder')
+    await flushPromises()
+    expect(ctxWrapper.find('[data-test="ctx-folder-settings"]').exists()).toBe(false)
+
+    // Folder context menu in APIs mode shows ctx-folder-settings with text-indigo-400 icon
+    uiStore.openContextMenu(50, 50, 'folder-payments', 'folder')
+    await flushPromises()
+    const ctxSettingsBtn = ctxWrapper.find('[data-test="ctx-folder-settings"]')
+    expect(ctxSettingsBtn.exists()).toBe(true)
+    expect(ctxSettingsBtn.find('svg').classes()).toContain('text-indigo-400')
+    await ctxSettingsBtn.trigger('click')
+    await flushPromises()
+    expect(openSettingsSpy).toHaveBeenCalledWith('folder-payments')
+  })
+
+  it('renders HTTP method badge with both text-method-* and method-badge-* classes and fallback for custom methods (CAP-1 & CAP-3)', () => {
+    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+    for (const method of methods) {
+      const mLower = method.toLowerCase()
+      const wrapper = mount(TreeNodeRow, {
+        props: {
+          node: {
+            id: `req-${mLower}`,
+            name: `${method} Request`,
+            type: 'request',
+            method,
+            path: `/req-${mLower}`,
+            created_at: ''
+          },
+          depth: 0
+        }
+      })
+      const badge = wrapper.find('[data-test="tree-row-method-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe(method)
+      expect(badge.classes()).toContain(`text-method-${mLower}`)
+      expect(badge.classes()).toContain(`method-badge-${mLower}`)
+    }
+
+    // Custom method fallback
+    const customWrapper = mount(TreeNodeRow, {
+      props: {
+        node: {
+          id: 'req-custom',
+          name: 'Custom Request',
+          type: 'request',
+          method: 'PURGE',
+          path: '/req-custom',
+          created_at: ''
+        },
+        depth: 0
+      }
+    })
+    const customBadge = customWrapper.find('[data-test="tree-row-method-badge"]')
+    expect(customBadge.exists()).toBe(true)
+    expect(customBadge.classes()).toContain('text-text-secondary')
+    expect(customBadge.classes()).toContain('method-badge-options')
+  })
 })
+
+

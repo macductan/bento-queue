@@ -1,15 +1,17 @@
 <script lang="ts" setup>
 import { computed, ref, nextTick, watch } from 'vue'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
+import { useFlowStore, type FlowTreeNode } from '@/stores/flowStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { useUiStore } from '@/stores/uiStore'
 
 const props = defineProps<{
-  node: TreeNode
+  node: TreeNode | FlowTreeNode
   depth: number
 }>()
 
 const store = useCollectionStore()
+const flowStore = useFlowStore()
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
 
@@ -20,18 +22,48 @@ watch(() => uiStore.renameTrigger, (newVal) => {
   }
 })
 
-const isFolder = computed(() => props.node.type === 'folder')
-const isExpanded = computed(() => store.expandedFolders.has(props.node.id))
+const isFlowMode = computed(
+  () => props.node.type === 'flow_folder' || props.node.type === 'flow' || uiStore.workspaceMode === 'flows'
+)
+const isFolder = computed(() => props.node.type === 'folder' || props.node.type === 'flow_folder')
+const isExpanded = computed(() =>
+  isFlowMode.value
+    ? flowStore.expandedFlowFolders.has(props.node.id)
+    : store.expandedFolders.has(props.node.id)
+)
 const isHighlighted = computed(() => uiStore.highlightedNodeId === props.node.id)
 const isActive = computed(() => {
+  if (isFlowMode.value) {
+    return !isFolder.value && flowStore.activeFlowId === props.node.id
+  }
   if (isFolder.value) {
     return store.activeFolderId === props.node.id && !store.activeRequestId
   }
   return store.activeRequestId === props.node.id
 })
 
+const isDirtyNode = computed(() => {
+  if (isFolder.value) return false
+  if (isFlowMode.value) {
+    return flowStore.activeFlowId === props.node.id && flowStore.isDirty
+  }
+  return isActive.value && requestStore.current?.id === props.node.id && requestStore.isDirty
+})
+
+const activeDraggingNode = computed(() =>
+  isFlowMode.value ? flowStore.draggingNode : store.draggingNode
+)
+
 const toggle = () => {
   if (isEditing.value) return
+  if (isFlowMode.value) {
+    if (isFolder.value) {
+      flowStore.toggleFlowFolder(props.node.id)
+    } else {
+      void flowStore.selectFlow(props.node.id)
+    }
+    return
+  }
   if (isFolder.value) {
     store.toggleFolder(props.node.id)
   } else {
@@ -44,7 +76,7 @@ const editName = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 
 const startEdit = async () => {
-  editName.value = props.node.name
+  editName.value = isFlowMode.value ? effectiveRawName.value : props.node.name
   isEditing.value = true
   await nextTick()
   if (nameInput.value) {
@@ -67,12 +99,21 @@ const saveEdit = async () => {
     return
   }
   
-  if (newName === props.node.name) {
+  const currentName = isFlowMode.value ? effectiveRawName.value : props.node.name
+  if (newName === currentName) {
     cancelEdit()
     return
   }
 
   isEditing.value = false
+  if (isFlowMode.value) {
+    if (isFolder.value) {
+      await flowStore.renameFlowFolder(props.node.id, newName)
+    } else {
+      await flowStore.renameFlow(props.node.id, newName)
+    }
+    return
+  }
   if (isFolder.value) {
     await store.renameFolder(props.node.id, newName)
   } else {
@@ -81,12 +122,25 @@ const saveEdit = async () => {
 }
 
 const handleDelete = async () => {
-  const msg = isFolder.value
-    ? `Xóa thư mục '${props.node.name}'? Tất cả request bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
-    : `Xóa request '${props.node.name}'? Hành động này không thể hoàn tác.`
+  const targetName = isFlowMode.value ? effectiveRawName.value : props.node.name
+  const msg = isFlowMode.value
+    ? isFolder.value
+      ? `Xóa thư mục '${targetName}'? Tất cả flow bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
+      : `Xóa flow '${targetName}'? Hành động này không thể hoàn tác.`
+    : isFolder.value
+      ? `Xóa thư mục '${targetName}'? Tất cả request bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
+      : `Xóa request '${targetName}'? Hành động này không thể hoàn tác.`
 
   const confirmed = await uiStore.requestConfirm(msg)
   if (confirmed) {
+    if (isFlowMode.value) {
+      if (isFolder.value) {
+        await flowStore.deleteFlowFolder(props.node.id)
+      } else {
+        await flowStore.deleteFlow(props.node.id)
+      }
+      return
+    }
     if (isFolder.value) {
       await store.deleteFolder(props.node.id)
     } else {
@@ -106,7 +160,11 @@ const onKeyDown = async (e: KeyboardEvent) => {
     await handleDelete()
   } else if (e.ctrlKey && e.key.toLowerCase() === 'd' && !isFolder.value) {
     e.preventDefault()
-    store.duplicateRequest(props.node.id)
+    if (isFlowMode.value) {
+      void flowStore.duplicateFlow(props.node.id)
+    } else {
+      store.duplicateRequest(props.node.id)
+    }
   } else if (e.key === 'Enter') {
     e.preventDefault()
     toggle()
@@ -124,41 +182,62 @@ const onKeyDown = async (e: KeyboardEvent) => {
   }
 }
 
+const resolvedContextNodeType = computed<'folder' | 'request' | 'flow_folder' | 'flow'>(() => {
+  if (isFlowMode.value) {
+    return isFolder.value ? 'flow_folder' : 'flow'
+  }
+  return props.node.type as 'folder' | 'request'
+})
+
 const handleContextMenu = async (e: MouseEvent) => {
-  uiStore.openContextMenu(e.clientX, e.clientY, props.node.id, props.node.type as 'folder' | 'request')
+  uiStore.openContextMenu(e.clientX, e.clientY, props.node.id, resolvedContextNodeType.value)
 }
 
 const handleMenuClick = (e: MouseEvent) => {
   const btn = e.currentTarget as HTMLElement
   const rect = btn.getBoundingClientRect()
-  uiStore.openContextMenu(rect.left, rect.bottom, props.node.id, props.node.type as 'folder' | 'request')
+  uiStore.openContextMenu(rect.left, rect.bottom, props.node.id, resolvedContextNodeType.value)
 }
 
-const displayName = computed(() => {
-  return props.node.name.trim() || '(không tên)'
+const effectiveRawName = computed(() => {
+  if (
+    !isFolder.value &&
+    isFlowMode.value &&
+    isActive.value &&
+    flowStore.currentFlow?.id === props.node.id &&
+    typeof flowStore.currentFlow.name === 'string'
+  ) {
+    return flowStore.currentFlow.name
+  }
+  return props.node.name || ''
 })
-const isUnnamed = computed(() => !props.node.name.trim())
+
+const displayName = computed(() => {
+  return effectiveRawName.value.trim() || '(không tên)'
+})
+const isUnnamed = computed(() => !effectiveRawName.value.trim())
 
 const methodColors: Record<string, string> = {
-  get: 'text-method-get',
-  post: 'text-method-post',
-  put: 'text-method-put',
-  patch: 'text-method-patch',
-  delete: 'text-method-delete',
-  head: 'text-cyan-400',
-  options: 'text-purple-400'
+  get: 'text-method-get method-badge-get',
+  post: 'text-method-post method-badge-post',
+  put: 'text-method-put method-badge-put',
+  patch: 'text-method-patch method-badge-patch',
+  delete: 'text-method-delete method-badge-delete',
+  head: 'text-method-head method-badge-head',
+  options: 'text-method-options method-badge-options'
 }
 
 const effectiveMethod = computed(() => {
+  if (isFlowMode.value) return undefined
   if (!isFolder.value && requestStore.current?.id === props.node.id && requestStore.current?.method) {
     return requestStore.current.method
   }
-  return props.node.method
+  return (props.node as TreeNode).method
 })
 
 const methodColorClass = computed(() => {
   if (!effectiveMethod.value) return ''
-  return methodColors[effectiveMethod.value.toLowerCase()] || 'text-text-secondary'
+  return methodColors[effectiveMethod.value.toLowerCase()] || 'text-text-secondary method-badge-options'
 })
 
 const INDENT_STEP = 14
@@ -183,8 +262,17 @@ const isDragOver = ref(false)
 const isInvalidTarget = ref(false)
 const dropPosition = ref<'before' | 'after' | 'inside' | null>(null)
 
+const handleOpenFolderSettings = async () => {
+  if (isFlowMode.value || !isFolder.value) return
+  await store.openFolderSettings(props.node.id)
+}
+
 const handleSortFolder = async () => {
-  await store.sortNodes(props.node.id)
+  if (isFlowMode.value) {
+    await flowStore.sortFlowNodes(props.node.id)
+  } else {
+    await store.sortNodes(props.node.id)
+  }
 }
 
 const onDragStart = (e: DragEvent) => {
@@ -193,7 +281,14 @@ const onDragStart = (e: DragEvent) => {
     return
   }
   isDragging.value = true
-  store.setDraggingNode({ id: props.node.id, type: props.node.type as 'folder' | 'request' })
+  if (isFlowMode.value) {
+    flowStore.setDraggingNode({
+      id: props.node.id,
+      type: isFolder.value ? 'flow_folder' : 'flow'
+    })
+  } else {
+    store.setDraggingNode({ id: props.node.id, type: props.node.type as 'folder' | 'request' })
+  }
   if (e.dataTransfer) {
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('application/x-hecto-tree-node', JSON.stringify({ id: props.node.id, type: props.node.type }))
@@ -206,11 +301,15 @@ const onDragEnd = () => {
   isDragOver.value = false
   isInvalidTarget.value = false
   dropPosition.value = null
-  store.setDraggingNode(null)
+  if (isFlowMode.value) {
+    flowStore.setDraggingNode(null)
+  } else {
+    store.setDraggingNode(null)
+  }
 }
 
 watch(
-  () => store.draggingNode,
+  () => activeDraggingNode.value,
   (node) => {
     if (!node) {
       isDragging.value = false
@@ -222,7 +321,7 @@ watch(
 )
 
 const onDragOver = (e: DragEvent) => {
-  const dragging = store.draggingNode
+  const dragging = activeDraggingNode.value
   if (!dragging) return
 
   e.stopPropagation()
@@ -246,7 +345,11 @@ const onDragOver = (e: DragEvent) => {
     pos = offsetY < rect.height * 0.5 ? 'before' : 'after'
   }
 
-  if (store.canReorderNode(dragging.id, dragging.type, props.node.id, pos)) {
+  const canReorder = isFlowMode.value
+    ? flowStore.canReorderNode(dragging.id, dragging.type as 'flow_folder' | 'flow', props.node.id, pos)
+    : store.canReorderNode(dragging.id, dragging.type as 'folder' | 'request', props.node.id, pos)
+
+  if (canReorder) {
     e.preventDefault()
     if (e.dataTransfer) {
       e.dataTransfer.dropEffect = 'move'
@@ -290,7 +393,7 @@ const onDrop = async (e: DragEvent) => {
   e.preventDefault()
   e.stopPropagation()
 
-  const dragging = store.draggingNode
+  const dragging = activeDraggingNode.value
   const pos = dropPosition.value
   dropPosition.value = null
   isDragOver.value = false
@@ -298,8 +401,23 @@ const onDrop = async (e: DragEvent) => {
 
   if (!dragging || !pos) return
 
-  store.setDraggingNode(null)
-  await store.reorderNodePosition(dragging.id, dragging.type, props.node.id, pos)
+  if (isFlowMode.value) {
+    flowStore.setDraggingNode(null)
+    await flowStore.reorderNodePosition(
+      dragging.id,
+      dragging.type as 'flow_folder' | 'flow',
+      props.node.id,
+      pos
+    )
+  } else {
+    store.setDraggingNode(null)
+    await store.reorderNodePosition(
+      dragging.id,
+      dragging.type as 'folder' | 'request',
+      props.node.id,
+      pos
+    )
+  }
 }
 </script>
 
@@ -391,10 +509,19 @@ const onDrop = async (e: DragEvent) => {
         <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
       </svg>
 
+      <!-- Flow Icon -->
+      <span
+        v-if="isFlowMode && !isFolder"
+        data-test="flow-node-icon"
+        aria-hidden="true"
+        class="mr-2 shrink-0 text-xs pointer-events-none"
+      >🔀</span>
+
       <!-- Request Method Badge -->
       <span 
-        v-if="!isFolder && effectiveMethod"
-        class="text-[10px] font-bold mr-2 min-w-9 shrink-0 text-left pointer-events-none"
+        v-if="!isFlowMode && !isFolder && effectiveMethod"
+        data-test="tree-row-method-badge"
+        class="text-[10px] font-mono font-bold mr-2 w-11 shrink-0 text-left pointer-events-none"
         :class="methodColorClass"
       >
         {{ effectiveMethod }}
@@ -404,7 +531,7 @@ const onDrop = async (e: DragEvent) => {
       <span v-if="!isEditing" class="truncate ui-sm min-w-0 flex items-center gap-2 flex-1 pointer-events-none" :class="{ 'italic text-text-tertiary': isUnnamed }">
         <span data-test="tree-row-name" class="truncate pointer-events-none">{{ displayName }}</span>
         <span
-          v-if="!isFolder && isActive && requestStore.current?.id === props.node.id && requestStore.isDirty"
+          v-if="isDirtyNode"
           data-test="tree-row-unsaved-dot"
           aria-label="Chưa lưu"
           class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0 pointer-events-none"
@@ -424,16 +551,42 @@ const onDrop = async (e: DragEvent) => {
         @click.stop
       />
 
+      <!-- Folder Settings Quick Button (APIs mode only) -->
+      <button
+        v-if="!isEditing && isFolder && !isFlowMode"
+        type="button"
+        class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-indigo-400 hover:bg-zinc-700/80 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary cursor-pointer"
+        :class="{ 'pointer-events-none': !!activeDraggingNode }"
+        data-test="folder-settings-btn"
+        title="Cài đặt Thư mục (Auth, Headers, Vars, Scripts)"
+        aria-label="Cài đặt Thư mục (Auth, Headers, Vars, Scripts)"
+        @click.stop="handleOpenFolderSettings"
+        @dblclick.stop
+      >
+        <svg class="w-3.5 h-3.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="21" x2="4" y2="14"></line>
+          <line x1="4" y1="10" x2="4" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12" y2="3"></line>
+          <line x1="20" y1="21" x2="20" y2="16"></line>
+          <line x1="20" y1="12" x2="20" y2="3"></line>
+          <line x1="2" y1="14" x2="6" y2="14"></line>
+          <line x1="10" y1="8" x2="14" y2="8"></line>
+          <line x1="18" y1="16" x2="22" y2="16"></line>
+        </svg>
+      </button>
+
       <!-- Folder Sort Button -->
       <button 
         v-if="!isEditing && isFolder"
         type="button"
-        class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-surface-elevated opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary cursor-pointer"
-        :class="{ 'pointer-events-none': !!store.draggingNode }"
+        class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-zinc-700/80 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary cursor-pointer"
+        :class="{ 'pointer-events-none': !!activeDraggingNode }"
         data-test="folder-sort-btn"
         title="Sắp xếp thư mục theo A-Z"
         aria-label="Sắp xếp thư mục theo A-Z"
         @click.stop="handleSortFolder"
+        @dblclick.stop
       >
         <svg class="w-3.5 h-3.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="m3 16 4 4 4-4"/>
@@ -447,10 +600,13 @@ const onDrop = async (e: DragEvent) => {
       <!-- Menu Button -->
       <button 
         v-if="!isEditing"
-        class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-surface-elevated opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary"
-        :class="{ 'pointer-events-none': !!store.draggingNode }"
+        type="button"
+        data-test="tree-node-menu-btn"
+        class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-zinc-700/80 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary"
+        :class="{ 'pointer-events-none': !!activeDraggingNode }"
         aria-label="Tùy chọn"
         @click.stop="handleMenuClick"
+        @dblclick.stop
       >
         <svg class="w-4 h-4 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="1"></circle>

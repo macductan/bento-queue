@@ -6,36 +6,46 @@
    ============================================================ */
 
 @theme {
-  /* --- Nền & Bề mặt (Surface) --- */
-  --color-surface-base: #020617;
-  --color-surface-raised: #0f172a;
-  --color-surface-overlay: #1e293b;
-  --color-surface-input: #0d1117;
-  --color-surface-hover: #293548;
+  /* --- Nền & Bề mặt (Surface — Dark Zinc + Indigo) --- */
+  --color-surface-base: #09090B;
+  --color-surface-raised: #18181B;
+  --color-surface-overlay: #27272A;
+  --color-surface-input: #09090B;
+  --color-surface-hover: #27272A;
+
+  /* --- Nền (Background tokens đồng bộ Mockup) --- */
+  --color-bg-base: #09090B;
+  --color-bg-surface: #18181B;
+  --color-bg-elevated: #27272A;
+  --color-bg-hover: #27272A;
 
   /* --- Viền & Phân cách (Border) --- */
-  --color-border-default: #1e293b;
-  --color-border-subtle: #1e293b80;
-  --color-border-focus: #3b82f680;
+  --color-border-default: #27272A;
+  --color-border-subtle: #27272A;
+  --color-border-focus: #6366F1;
 
   /* --- Chữ (Text) --- */
-  --color-text-primary: #e2e8f0;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #64748b;
-  --color-text-inverse: #020617;
+  --color-text-primary: #F4F4F5;
+  --color-text-secondary: #A1A1AA;
+  --color-text-muted: #71717A;
+  --color-text-inverse: #09090B;
 
-  /* --- Thương hiệu (Brand) --- */
-  --color-brand-primary: #3b82f6;
-  --color-brand-primary-hover: #60a5fa;
-  --color-brand-gradient-from: #3b82f6;
-  --color-brand-gradient-to: #6366f1;
+  /* --- Thương hiệu & Điểm nhấn (Brand & Accent) --- */
+  --color-brand-primary: #6366F1;
+  --color-brand-primary-hover: #818CF8;
+  --color-brand-gradient-from: #4F46E5;
+  --color-brand-gradient-to: #6366F1;
+  --color-accent-primary: #4F46E5;
+  --color-accent-hover: #6366F1;
 
-  /* --- Method HTTP --- */
+  /* --- Method HTTP (Giữ nguyên bộ màu chuẩn trước đây) --- */
   --color-method-get: #10b981;
   --color-method-post: #f59e0b;
   --color-method-put: #3b82f6;
   --color-method-patch: #f97316;
   --color-method-delete: #ef4444;
+  --color-method-head: #22d3ee;
+  --color-method-options: #c084fc;
 
   /* --- Status Code --- */
   --color-status-2xx: #10b981;
@@ -72,9 +82,9 @@
   --color-error-bg: #ef444418;
 
   /* --- Scrollbar --- */
-  --color-scrollbar-track: #0f172a;
-  --color-scrollbar-thumb: #334155;
-  --color-scrollbar-thumb-hover: #475569;
+  --color-scrollbar-track: #09090B;
+  --color-scrollbar-thumb: #27272A;
+  --color-scrollbar-thumb-hover: #3F3F46;
 
   /* --- Corner Radius --- */
   --radius-sm: 4px;
@@ -320,4 +330,39 @@ body {
   width: 0;
   height: 0;
 }
+
+/* ============================================================
+   HTTP Method Badges (Chỉ tô màu chữ, không tô màu nền)
+   ============================================================ */
+
+@layer components {
+  .method-badge-get {
+    color: var(--color-method-get);
+  }
+
+  .method-badge-post {
+    color: var(--color-method-post);
+  }
+
+  .method-badge-put {
+    color: var(--color-method-put);
+  }
+
+  .method-badge-patch {
+    color: var(--color-method-patch);
+  }
+
+  .method-badge-delete {
+    color: var(--color-method-delete);
+  }
+
+  .method-badge-head {
+    color: var(--color-method-head);
+  }
+
+  .method-badge-options {
+    color: var(--color-method-options);
+  }
+}
+
 

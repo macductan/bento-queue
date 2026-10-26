@@ -23,9 +23,45 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 - **Nguồn duy nhất cho Version (Single Source of Truth)**:
   - Trường `"version"` trong `projects/frontend/package.json`.
 - **AI Agent CLI (`hecto`) & Shared TypeScript Engine (`goja` - từ `v1.14.0`)**:
-  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`), `hecto run` và `hecto import`.
-  - Shared TypeScript Execution Engine (`projects/frontend/src/utils/headless-engine.ts` $\rightarrow$ `projects/engine/headless-engine.js`) nhúng qua `//go:embed` trên pure-Go `github.com/dop251/goja` đảm bảo đồng nhất 100% logic giải biến 4 tầng, kế thừa Auth/Header, `btoa`/`atob` Latin-1 (hỗ trợ tiếng Việt/Unicode) và thực thi `ha.*` Pre-request/Post-response scripts giữa Desktop UI và CLI.
+  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`), `hecto run`, `hecto flow run` và `hecto import`.
+  - Shared TypeScript Execution Engine (`projects/frontend/src/utils/headless-engine.ts` $\rightarrow$ `projects/engine/headless-engine.js`) nhúng qua `//go:embed` trên pure-Go `github.com/dop251/goja` đảm bảo đồng nhất 100% logic giải biến 4 tầng, kế thừa Auth/Header, `btoa`/`atob` Latin-1 (hỗ trợ tiếng Việt/Unicode), thực thi `ha.*` Pre-request/Post-response scripts và đánh giá luồng đa nhánh `flowRunner.ts` giữa Desktop UI và CLI.
   - Đồng bộ file 3 lớp (`projects/storage/watcher.go` dùng `fsnotify` + lọc self-write 400ms + debounce 300ms + `collectionStore.smartReload()`): tự động phát hiện thay đổi từ CLI/Git/Editor ngoài, giữ nguyên trạng thái mở cây thư mục (`expandedFolders`) và bảo vệ các tab đang chỉnh sửa dở (`isDirty`).
+- **API Flow (Structured Flowchart Runner - từ `v1.15.0`)**:
+  - Lưu trữ độc lập tại `<collection>/flows/` với `FlowFolder` (`_folder.json`) và `Flow` (`<flow-uuid>.json`).
+  - Bước thực thi kiểu Con trỏ mỏng (`Thin Pointer` trỏ tới `request_id` gốc), tái sử dụng 100% biến 4 tầng, kế thừa Auth/Header và Script của Request gốc; hỗ trợ chạy Tuần tự, Hàng Song song (`Promise.all` / goroutines kèm gom tuần tự thay đổi biến sau hàng), và Rẽ nhánh 3 chế độ (`success`, `error`, `custom` 3 ô).
+
+---
+
+## [v1.15.0] - 2026-10-26
+
+### Added
+- **API Flow Runner (Structured Flowchart), `[ APIs | Flows ]` Workspace & `hecto flow` CLI**:
+  - **Storage, Service & Git 3-Way Merge (`projects/service/flow.go`, `projects/service/git_merge.go`, `projects/service/selector.go`)**:
+    - Quản lý thực thể `Flow` và `FlowFolder` độc lập tại `<collection>/flows/`, đồng bộ với chỉ mục UUID tự phục hồi (`FindByUUID`), hỗ trợ phân giải đường dẫn/UUID (`ResolveFlowSelector`, `ResolveFlowFolderSelector`) và nhận diện `flow` / `flow_folder` trong `GitConflictResolverModal.vue` & `GitSyncService`.
+  - **Concurrent HTTP Execution & Per-Request Timeout (`projects/service/executor.go`)**:
+    - Nâng cấp `ExecutorService` hỗ trợ thực thi nhiều HTTP Request đồng thời (`activeCancels map[uint64]context.CancelFunc` bảo vệ bởi `sync.Mutex`), ghi đè `timeout_ms` trên từng Request và hủy tức thì toàn bộ Request đang bay khi gọi `Abort()`.
+  - **Shared Multi-Branch / Parallel Flow Engine (`projects/frontend/src/utils/flowRunner.ts`, `projects/engine/flow.go`)**:
+    - Hiện thực hóa mô hình bước Con trỏ mỏng (`Thin Pointer`), thực thi Hàng Song song với cơ chế gom tuần tự cập nhật biến/Auth (`mergeParallelStepUpdates`) chống race condition, đánh giá rẽ nhánh 3 chế độ (`success`, `error`, `custom` so khớp `status_code | body_json | variable`), và giới hạn an toàn `max_steps`.
+  - **Interactive Flowchart UI & Right-Hand Step Inspector Drawer (`projects/frontend/src/components/flow/`)**:
+    - Xây dựng sơ đồ khối tự căn bố cục 2 trục vuông góc (`FlowEditor.vue`, `FlowToolbar.vue`, `FlowNodeItem.vue`, `FlowStepCard.vue`, `FlowBranchEditor.vue`, `FlowRequestPickerModal.vue`) với nút đảo hướng `[ ↕ Dọc | ↔ Ngang ]` và điều kiện rẽ nhánh dùng `CustomSelect.vue`.
+    - Bổ sung ngăn kéo dọc bên phải (`w-96 border-l`) cho `StepInspectorPanel.vue`, nhúng trực tiếp `ResponseViewer.vue` (chế độ `overrideData`) để soi chi tiết Body, Headers, Tests, Console/Logs của từng bước kèm nút `Mở Request gốc ↗`.
+  - **CLI `hecto flow` Suite (`projects/cmd/hecto/`)**:
+    - Bổ sung trọn bộ lệnh `hecto flow list | tree | get | create | update | delete | move | folder | run` và cập nhật tài liệu `hecto agent-guide` (`SKILL.md`).
+- **Desktop UI Mockup Alignment & Dark Zinc + Indigo Theme**:
+  - **Theme & Header (`style.css`, `AppHeader.vue`, `CollectionSwitcher.vue`)**:
+    - Chuẩn hóa hệ màu Dark Zinc (`#09090b`, `#18181b`, `#27272a`) + Indigo (`#4f46e5`, `#6366f1`) với bộ màu chữ HTTP Method sắc nét trên nền tối (không tô nền màu).
+    - Tái cấu trúc `AppHeader.vue`: đặt `CollectionSwitcher.vue` (kèm badge `Default`) ở cụm trái cạnh Logo; bổ sung trạng thái `Git: <branch>` / `Xung đột Git (n)`, trạng thái `Mock :<port>` / `Mock Server` và nút `Import Postman ^I` ở cụm phải.
+  - **Sidebar Two-Row Toolbar, External Disk Change Banner & Quick Folder Settings (`AppSidebar.vue`, `TreeNodeRow.vue`)**:
+    - Bổ sung biểu tượng cho bộ chuyển đổi `[ APIs | Flows ]`, tách riêng hàng ô tìm kiếm và hàng công cụ `[Làm mới | Thu gọn | Sắp xếp A-Z]` + nút pill `+ Tạo mới ▾`.
+    - Thêm banner cảnh báo nổi `"Phát hiện ổ đĩa thay đổi (Git/CLI)"` kèm nút `[Tải lại]` và nút hover `Cài đặt Thư mục` (icon sliders) trên dòng Folder.
+  - **Request/Folder Editor Enhancements (`RequestEditor.vue`, `FolderEditor.vue`, `UrlBar.vue`, `WarningBanner.vue`, `RequestTabs.vue`, `ScriptEditor.vue`)**:
+    - Hỗ trợ đổi tên nhanh inline trực tiếp trên Breadcrumb và nút `Lưu (Ctrl+S)` thủ công cạnh chỉ báo trạng thái lưu.
+    - Tinh chỉnh menu chọn HTTP Method trên `UrlBar.vue` gọn sạch với dấu tích chọn và nút `Gửi ^Enter`.
+    - Bổ sung nút hành động nhanh `Chuyển Body sang None` trên `WarningBanner.vue`.
+    - Hiển thị đầy đủ các badge kiểu `Auth`, tổng số `Headers` đang bật (gồm cả default/inherited headers), kiểu `Body` trên `RequestTabs.vue`.
+    - Bổ sung nút `▶ Chạy thử Script` màu xanh lục bảo (`emerald`) trong `ScriptEditor.vue` để thực thi nhanh kịch bản và xem kết quả ngay trong bảng Console/Logs.
+  - **Dynamic Line-Number Gutter & Isolated CustomSelect Tests (`BodyEditor.vue`, `CustomSelect.test.ts`)**:
+    - Đồng bộ độ rộng cột số dòng động `gutterWidth(lineCount)` trên `BodyEditor.vue` và bổ sung bộ unit test cô lập cho `CustomSelect.vue`.
 
 ---
 
