@@ -54,12 +54,12 @@ Chuẩn hóa và gom (squash) toàn bộ commit trên nhánh `develop` tính t�
 - Cập nhật trường `version` trong `projects/frontend/package.json`.
 - Cập nhật file `CHANGELOG.md` ở thư mục gốc với chi tiết phiên bản mới (`## [v<version>] - YYYY-MM-DD`) để lưu trữ lịch sử phát triển cho dự án và AI Agents.
 
-### Bước 3: Chạy toàn bộ Test & Type-check
-Trước khi gom commit, bắt buộc kiểm tra chất lượng code:
+### Bước 3: Chạy toàn bộ Lint, Type-check, Unit Test & E2E Test
+Trước khi gom commit, bắt buộc kiểm tra chất lượng code đầy đủ giống hệt pipeline CI (`.gitlab-ci.yml`):
 ```bash
 source ~/.nvm/nvm.sh && nvm use
-cd projects/frontend && bun run type-check && bun run test
-cd ../ && go test ./...
+cd projects/frontend && bun run lint && bun run type-check && bun run test && bun run test:e2e
+cd ../ && go vet ./... && go test ./...
 ```
 Nếu có lỗi, báo cáo và dừng quy trình để khắc phục.
 

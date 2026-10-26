@@ -634,8 +634,8 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
                 type="button"
                 data-test="breadcrumb-rename-btn"
                 class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
-                title="Đổi tên Thư mục"
-                aria-label="Đổi tên Thư mục"
+                title="Sửa tên Thư mục"
+                aria-label="Sửa tên Thư mục"
                 @click.stop="startRenameFolder"
               >
                 <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
