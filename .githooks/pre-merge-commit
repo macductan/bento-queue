@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$CURRENT_BRANCH" == "develop" || "$CURRENT_BRANCH" == "main" ]]; then
+  ROOT_DIR="$(git rev-parse --show-toplevel)"
+  exec "$ROOT_DIR/scripts/verify-local-ci.sh"
+fi

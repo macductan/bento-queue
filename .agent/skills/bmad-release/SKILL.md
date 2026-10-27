@@ -1,107 +1,92 @@
 ---
 name: bmad-release
-description: 'Gom và chuẩn hóa commit trên nhánh develop, bump version theo Semantic Versioning từ nguồn duy nhất package.json khi chốt tính năng, push force và tạo MR vào main. Use when user says "release", "bmad-release", "chốt tính năng", "gom commit", "chuẩn hóa commit"'
+description: 'Gom và chuẩn hóa commit trực tiếp trên nhánh develop từ mốc commit chuẩn v<version> gần nhất, đánh version mới theo Semantic Versioning từ nguồn duy nhất package.json, và chạy full test local qua hook/script. Use when user says "release", "bmad-release", "chốt tính năng", "gom commit", "chuẩn hóa commit"'
 ---
 
-# BMad Release & Commit Standardization Workflow
+# BMad Release & Commit Standardization Workflow (`develop`)
 
 ## Mục đích
 
-Chuẩn hóa và gom (squash) toàn bộ commit trên nhánh `develop` tính từ mốc commit chuẩn gần nhất (commit release trước đó, ví dụ `v1.1.0 (build 3)`) thành 1 commit release duy nhất theo Semantic Versioning với tiêu đề `v<version>`. Hỗ trợ push force lên remote, tạo GitLab Merge Request vào `main` và đóng gói bản `.deb` cho Ubuntu.
+Làm việc trực tiếp trên nhánh `develop`: chuẩn hóa và gom (squash) các thay đổi đang phát triển (kèm các commit lẻ/sai chuẩn phát sinh sau mốc commit chuẩn `v<version>` gần nhất trên `develop`) thành 1 commit release duy nhất theo Semantic Versioning với tiêu đề `v<version>`, kiểm thử toàn diện ở local (`./scripts/verify-local-ci.sh`).
 
 ## Quy tắc bắt buộc
 
-1. **Single Source of Truth cho Version**: Version duy nhất nằm tại `projects/frontend/package.json`. Mọi script build (`build-dmg.sh`, `build-deb.sh`) phải đọc từ file này.
-2. **Semantic Versioning (SemVer)**:
-   - Thêm tính năng mới (không breaking): Bump MINOR (`1.1.0` -> `1.2.0`).
-   - Sửa lỗi / cải tiến nhỏ: Bump PATCH (`1.2.0` -> `1.2.1`).
-   - Breaking change: Bump MAJOR (`1.2.0` -> `2.0.0`).
-3. **Quy ước Commit Message (RẤT QUAN TRỌNG)**:
-   - **Tiêu đề (subject line)**: BẮT BUỘC chỉ là `v<version>` (ví dụ: `v1.2.0`, `v1.1.0`). **TUYỆT ĐỐI KHÔNG** dùng prefix `feat: release v...` hay mô tả dài trên dòng đầu.
+1. **Làm việc trực tiếp trên nhánh `develop`**:
+   - Mọi tính năng/story/fix được phát triển trực tiếp trên nhánh `develop` (không tạo nhánh phụ `feat/*` hay `fix/*`).
+   - Khi chạy `/bmad-release`, tìm mốc commit chuẩn gần nhất trên `develop` (có tiêu đề chuẩn `v<MAJOR>.<MINOR>.<PATCH>`, ví dụ `v1.15.1` hoặc `v1.15.0`). Nếu có các commit lẻ/sai chuẩn nằm sau mốc đó thì gom (`git reset --soft <baseline_commit>`) cùng thay đổi hiện tại thành 1 commit `v<version>` duy nhất nối tiếp ngay sau mốc chuẩn đó.
+2. **Single Source of Truth cho Version**:
+   - Version duy nhất nằm tại `projects/frontend/package.json`. Mọi script build (`build-dmg.sh`, `build-deb.sh`, `install-cli.sh`) đều đọc từ file này.
+3. **Semantic Versioning (SemVer) dựa trên mốc commit chuẩn gần nhất của `develop`**:
+   - Đọc version từ mốc commit chuẩn gần nhất trên nhánh `develop`:
+     - Thêm tính năng mới (không breaking): Bump MINOR (`1.15.0` -> `1.16.0`).
+     - Sửa lỗi / cải tiến nhỏ: Bump PATCH (`1.15.0` -> `1.15.1`).
+     - Breaking change: Bump MAJOR (`1.15.0` -> `2.0.0`).
+4. **Quy ước Commit Message trên `develop` (RẤT QUAN TRỌNG)**:
+   - **Tiêu đề (subject line)**: BẮT BUỘC chỉ là `v<version>` (ví dụ: `v1.16.0`, `v1.15.1`). **TUYỆT ĐỐI KHÔNG** dùng prefix `feat: release v...`, `v1.x.x (build n)` hay `Merge branch ...`.
    - **Phần thân (body)**: Cách tiêu đề 1 dòng trống, liệt kê các thay đổi dạng bullet points:
-     ```
-     v1.2.0
+     ```text
+     v1.16.0
 
-     - feat(backend): implement multi-collection CRUD, directory structure and slug-UUID convention
-     - feat(store): implement collection store, active collection switching and state isolation
-     - feat(ui): implement CollectionSwitcher, CollectionModal and settings management
-     - chore: upgrade bmad to v6.12.2
-     - chore(release): bump version to 1.2.0 in package.json
+     - feat(...): ...
+     - fix(...): ...
+     - docs(changelog): document v1.16.0 release notes in CHANGELOG.md
+     - chore(release): bump version to 1.16.0 in package.json
      ```
-4. **Wails Binding Model Type Export & CI Generation (Lưu ý kỹ thuật)**:
-   - Mọi struct Go (như `model.Collection`, `model.Folder`,...) muốn xuất hiện trong `projects/frontend/wailsjs/go/models.ts` để frontend TypeScript biên dịch được thì BẮT BUỘC phải được tham chiếu trực tiếp qua tham số hoặc kiểu trả về của một method trên `*App` (ví dụ `UpdateCollection(collection model.Collection) model.Result`). Nếu chỉ nằm trong `model.Result.Data` (`interface{}`), Wails CLI sẽ bỏ qua và không sinh TypeScript type.
-   - Thư mục `projects/frontend/wailsjs/` là thư mục sinh tự động và được đưa vào `.gitignore` (không commit lên Git). Pipeline CI sẽ tự động sinh bindings qua job `generate:bindings` và truyền artifact cho các job frontend.
-5. **MANDATORY CONFIRMATION**: Tuyệt đối không tự ý chạy `git commit`, `git reset`, hoặc `git push` nếu chưa xin ý kiến và nhận được sự xác nhận của người dùng (ngoại lệ: quy trình Build Fix sau Release bên dưới).
-6. **Quy trình Build Fix sau Release (Tự động hóa)**:
-   - Khi pipeline CI bị fail sau release hoặc cần fix nóng cho bản release hiện tại:
-     - Tiêu đề commit chuẩn hóa: `v<version> (build <n>)` (với `n` tự tăng dần: `v1.3.0 (build 1)`, `v1.3.0 (build 2)`,...).
-     - Khi người dùng gửi log lỗi build/CI của bản release hoặc yêu cầu fix build, agent tự động sửa lỗi, chạy kiểm thử xác nhận pass 100%, tự động commit `v<version> (build <n>)` và push lên `develop` mà không cần dừng lại xin xác nhận lần 2.
+5. **Local CI Hook thay thế GitLab CI/CD**:
+   - GitLab CI/CD đã được tắt (`workflow: rules: - when: never` trong `.gitlab-ci.yml`).
+   - Hệ thống Git Hooks tại `.githooks/` (`pre-merge-commit`, `pre-commit`, `post-merge`) tự động kích hoạt `./scripts/verify-local-ci.sh` mỗi khi commit/merge vào `develop`.
+6. **MANDATORY CONFIRMATION**:
+   - Tuyệt đối không tự ý chạy `git reset`, `git commit`, hoặc `git push` nếu chưa trình bày tóm tắt và nhận được sự xác nhận của người dùng.
 
 ## Các bước thực hiện
 
-### Bước 1: Kiểm tra trạng thái Git & Commit chuẩn
-- Tìm commit chuẩn gần nhất:
-  - Kiểm tra commit release gần nhất trên `develop` (dạng `v1.x.x` hoặc `v1.x.x (build n)`) hoặc merge commit gần nhất trên `main`:
-    ```bash
-    git log --oneline -n 10 develop
-    ```
-  - Xác định các commit lẻ cần gom lại và mốc baseline commit hash.
-- Đảm bảo working tree sạch sẽ trước khi thao tác (`git status`).
+### Bước 1: Kiểm tra trạng thái Git & Mốc Commit chuẩn trên `develop`
+- Kiểm tra lịch sử commit gần đây trên `develop`:
+  ```bash
+  git branch --show-current
+  git log --oneline -n 10 develop
+  git status --short
+  ```
+- Xác định mốc commit chuẩn gần nhất (commit có tiêu đề khớp chính xác `v<MAJOR>.<MINOR>.<PATCH>`, không kèm `(build n)` hay prefix khác) và danh sách các commit sai chuẩn (nếu có) cần gom lại.
 
-### Bước 2: Phân tích thay đổi, Xác định Version mới & Cập nhật CHANGELOG.md
-- Đọc git log / diff để phân loại các thay đổi: `feat`, `fix`, `docs`, `test`, `chore`.
-- Đề xuất version SemVer mới (ví dụ `1.2.0`).
-- Cập nhật trường `version` trong `projects/frontend/package.json`.
-- Cập nhật file `CHANGELOG.md` ở thư mục gốc với chi tiết phiên bản mới (`## [v<version>] - YYYY-MM-DD`) để lưu trữ lịch sử phát triển cho dự án và AI Agents.
+### Bước 2: Phân tích thay đổi, Xác định Version mới & Cập nhật `CHANGELOG.md`
+- Đối chiếu toàn bộ thay đổi tính từ mốc commit chuẩn gần nhất đến working tree hiện tại để phân loại `feat`, `fix`, `docs`, `test`, `chore`.
+- Xác định version SemVer mới nối tiếp từ mốc commit chuẩn đó.
+- Cập nhật trường `"version"` trong `projects/frontend/package.json`.
+- Cập nhật file `CHANGELOG.md` ở thư mục gốc với mục mới `## [v<version>] - YYYY-MM-DD`.
 
-### Bước 3: Chạy toàn bộ Test & Type-check
-Trước khi gom commit, bắt buộc kiểm tra chất lượng code:
+### Bước 3: Chạy toàn bộ Local CI Verification (`./scripts/verify-local-ci.sh`)
+Trước khi commit vào `develop`, bắt buộc chạy script kiểm thử toàn diện:
 ```bash
-source ~/.nvm/nvm.sh && nvm use
-cd projects/frontend && bun run type-check && bun run test
-cd ../ && go test ./...
+./scripts/verify-local-ci.sh
 ```
-Nếu có lỗi, báo cáo và dừng quy trình để khắc phục.
+Script này tự động thực thi:
+1. `bun run build:headless`
+2. `bun run lint`
+3. `bun run type-check`
+4. `bun run test`
+5. `go vet ./... && go test ./...`
+6. `bun run test:e2e`
 
-### Bước 4: Soạn Commit Message chuẩn hóa
-Tạo commit message theo đúng quy ước:
-```
-v<version>
+Nếu có bất kỳ lỗi nào, khắc phục triệt để và chạy lại cho đến khi pass 100%.
 
-- feat(...): ...
-- fix(...): ...
-- chore(...): ...
-```
-
-### Bước 5: Cổng xác nhận (Confirmation Gate)
+### Bước 4: Cổng xác nhận (Confirmation Gate)
 Trình bày tóm tắt cho người dùng:
-1. Version mới: `v<version>`
-2. Danh sách các commit sẽ được gom lại và baseline hash.
+1. Mốc commit chuẩn gần nhất trên `develop` và các commit sai chuẩn (nếu có) sẽ được gom.
+2. Version mới: `v<version>`.
 3. Nội dung commit message chuẩn bị tạo.
-4. Lệnh Git sẽ chạy:
+4. Các lệnh Git sẽ thực thi:
    ```bash
-   git add projects/frontend/package.json
-   git reset --soft <baseline_commit_hash>
-   git commit -m "<commit_message>"
+   # Nếu có commit sai chuẩn sau <baseline_commit>:
+   git reset --soft <baseline_commit>
+   git add -A
+   SKIP_LOCAL_CI=1 git commit -m "<commit_message>"
    ```
 5. Đợi người dùng phản hồi **xác nhận** mới thực thi.
 
-### Bước 6: Push Remote & Tạo Merge Request vào main
-Sau khi commit release được tạo thành công trên `develop`:
-- Hỏi xác nhận hoặc thực thi đẩy lên remote:
-  ```bash
-  git push -o merge_request.create -o merge_request.target=main -o merge_request.title="v<version>" origin develop --force
-  ```
-- Lệnh này sẽ push force cập nhật nhánh `develop` trên GitLab đồng thời tự động tạo Merge Request nhắm vào `main`, kích hoạt GitLab CI pipeline kiểm thử.
-- Cung cấp link GitLab Merge Request cho người dùng.
-
-### Bước 7: Hỗ trợ đóng gói bản cài đặt Ubuntu (.deb)
-- Hỏi người dùng nếu muốn build file cài đặt `.deb` để test/cập nhật:
-  ```bash
-  ./projects/build-deb.sh
-  ```
-- File `.deb` sẽ được xuất tại `projects/build/hecto-api_<version>_amd64.deb`.
-- Hướng dẫn người dùng lệnh cài đặt:
-  ```bash
-  sudo dpkg -i projects/build/hecto-api_<version>_amd64.deb
-  ```
+### Bước 5: Thực thi Commit trên `develop` & Tùy chọn Push / Build `.deb`
+- Thực thi các lệnh ở Bước 4 sau khi người dùng xác nhận.
+- Kiểm tra lại `git log --oneline -n 5 develop` để xác nhận commit `v<version>` đã nằm ngay trên đỉnh mốc commit chuẩn trước đó.
+- Hỏi người dùng nếu muốn:
+  1. Push nhánh `develop` lên remote (`git push origin develop` hoặc `--force-with-lease` nếu có gom lại commit đã push trước đó).
+  2. Đóng gói bản cài đặt `.deb` cho Ubuntu (`./projects/build-deb.sh`) và cập nhật CLI (`./projects/install-cli.sh`).

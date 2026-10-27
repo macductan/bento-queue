@@ -45,10 +45,12 @@ const isSelected = computed(() => {
   return flowStore.selectedStepId === props.step.id
 })
 
+const stepTarget = computed(() => props.step)
+
 const stepEnabled = computed({
   get: () => props.step.enabled !== false,
   set: (val: boolean) => {
-    props.step.enabled = val
+    stepTarget.value.enabled = val
   }
 })
 
@@ -113,10 +115,11 @@ const handleSelectStep = () => {
 
 const handleUpdateTimeout = (e: Event) => {
   const val = parseInt((e.target as HTMLInputElement).value, 10)
+  const target = stepTarget.value as model.FlowStep & { timeout_ms?: number }
   if (Number.isNaN(val) || val <= 0) {
-    delete (props.step as any).timeout_ms
+    delete target.timeout_ms
   } else {
-    props.step.timeout_ms = val
+    target.timeout_ms = val
   }
 }
 

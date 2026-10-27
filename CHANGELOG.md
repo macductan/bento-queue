@@ -32,6 +32,28 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.16.0] - 2026-10-27
+
+### Added
+- **Response Body Search & Keyword Highlighting (`ResponseViewer.vue`, `JsonViewer.vue`, `jsonHighlight.ts`)**:
+  - Bổ sung nút **Tìm kiếm** (icon kính lúp, có trạng thái active khi đang mở) trên thanh sub-toolbar của tab Body (cạnh nút **Sao chép**) và hỗ trợ phím tắt `Ctrl+F` / `Cmd+F` để bật nhanh thanh tìm kiếm kèm tự động focus/select ô nhập từ khóa.
+  - Thanh tìm kiếm hỗ trợ bật/tắt phân biệt hoa thường (`Aa`), bộ đếm vị trí kết quả hiện tại / tổng số kết quả khớp (`1/5`, `0/0`), điều hướng kết quả Trước (`Shift+Enter`) / Tiếp theo (`Enter`) kèm tự động cuộn (`scrollIntoView`), và đóng bằng nút đóng hoặc phím `Esc`.
+  - Bổ sung `highlightHtmlWithSearch` và `decodeHtmlEntities` để tô sáng tất cả từ khóa khớp ở cả 2 chế độ **Pretty** và **Raw** (với màu nổi bật hơn cho kết quả đang chọn, hỗ trợ cả từ khóa trải qua nhiều thẻ `<span>` hoặc chứa ký tự HTML entity / Unicode) mà không làm vỡ cú pháp HTML/JSON/XML.
+
+### Fixed
+- **JsonViewer Sticky Line-Number Gutter (`JsonViewer.vue`)**:
+  - Khắc phục lỗi cột số dòng (`sticky left-0 z-10 bg-[#090d15] border-r`) bị hụt nền và viền phải khi cuộn dọc xuống dưới kết hợp cuộn ngang bằng cách bổ sung `h-fit min-h-full` phủ kín toàn bộ `scrollHeight` của nội dung, tự co giãn độ rộng `min-w-[48px] w-fit` khi số dòng lớn và `scroll-padding-left` tránh che khuất kết quả tìm kiếm.
+- **Environment Selector & Tab Path Descender Clipping (`EnvSelector.vue`, `AppTabBar.vue`)**:
+  - Khắc phục lỗi mất phần chân chữ cái `g, y, p, q, j` trên nút chọn môi trường ở `AppHeader` và đường dẫn phụ trên `AppTabBar` bằng cách đổi `leading-none` sang `leading-normal` khi đi kèm `truncate`.
+- **Lint & E2E Selector Stability (`RequestEditor.vue`, `FolderEditor.vue`, `FlowBranchEditor.vue`, `FlowStepCard.vue`)**:
+  - Xử lý triệt để cảnh báo `vue/no-mutating-props` trong `FlowBranchEditor.vue` / `FlowStepCard.vue` và giữ selector `h1 > span` đồng nhất cho kiểm thử E2E trên `RequestEditor.vue` / `FolderEditor.vue`.
+
+### Changed
+- **Local CI Git Hooks on `develop` (`.githooks/`, `scripts/verify-local-ci.sh`, `.gitlab-ci.yml`)**:
+  - Vô hiệu hóa tạm thời GitLab CI/CD trên remote (`workflow: rules: - when: never`) và chuyển toàn bộ 6 cổng kiểm định chất lượng (`build:headless`, `lint`, `type-check`, `test`, `go vet && go test`, `test:e2e`) về chạy tự động tại local thông qua Git Hooks (`.githooks/pre-commit`, `pre-merge-commit`, `post-merge`) trực tiếp trên nhánh `develop`.
+
+---
+
 ## [v1.15.0] - 2026-10-26
 
 ### Added

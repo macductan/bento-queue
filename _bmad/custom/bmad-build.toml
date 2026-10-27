@@ -1,6 +1,5 @@
 [workflow]
 persistent_facts = [
-
   "Do NOT automatically commit code at the end of the workflow. Always skip the automatic commit step and ask for explicit user approval before running any `git commit` command.",
   "Review gate: The gate between step-03 and step-04 exists so the human can switch models. After step-03 finishes and verification passes, you MUST: 1. Set sprint-status to 'review' (spec 'in-review'). 2. Tell the human the story is at the review gate and they can switch model. 3. STOP / HALT. Do NOT start step-04 in the same turn. NEVER self-review inline. When the human resumes and tells you to proceed, run step-04 using subagents.",
   "CRITICAL MANDATORY STEP: You MUST execute the sprint_plan.py command (detailed in the on_complete section) to update the sprint status file IMMEDIATELY BEFORE you HALT. Do not end the workflow without running this command."

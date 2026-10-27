@@ -48,38 +48,43 @@ When testing Epic 2 features visually, verify the following:
 - Package manager is **bun** (see `projects/wails.json`, `projects/frontend/bun.lock`). Always use `bun install` / `bun run <script>` — never `npm`, `npx`, `yarn`, or `pnpm`, even if a spec says `npm run ...`.
 - Shell default Node is v18, but the project needs Node 24 (`.nvmrc`). Before running any frontend/Node/bun/wails command, run `source ~/.nvm/nvm.sh && nvm use` in the project root (in the same shell invocation as the command).
 
-## Git rules (OVERRIDES policy above)
+## Git, Branching & Local CI Hook Rules (OVERRIDES policy above)
 
-- **Branching**: Story work (`/bmad-build`) is done DIRECTLY on the `develop` branch. Do NOT create feature branches. Do NOT ask the user which branch to use. Ignore the "Never push to develop" policy for story work.
-- **Safety**: Never run `git commit`, `git push`, or any version-control write operation without explicit user approval. Always ask first.
-- **Skill Tracking**: Các thư mục skill (`.agent/skills/`, `.agents/skills/`, `.claude/skills/`, `.kiro/skills/`) được commit và track trong Git (đã gỡ khỏi `.gitignore`).
+- **Branch**: All development work is done directly on the `develop` branch. Push to `develop` is allowed when requested by the user.
+- **Safety**: Never run `git commit`, `git merge`, `git push`, or any version-control write operation without explicit user approval. Always ask first.
+- **Skill Tracking**: Các thư mục skill (`.agent/skills/`, `.agents/skills/`, `.claude/skills/`, `.kiro/skills/`) và `.githooks/` được commit và track trong Git.
+- **Tắt GitLab CI/CD & Chạy Local CI qua Git Hooks (`.githooks/`)**:
+  - GitLab CI/CD trên remote đã được **vô hiệu hóa tạm thời** (`workflow: rules: - when: never` trong `.gitlab-ci.yml`) để không tốn quota CI miễn phí.
+  - Dự án sử dụng **Local Git Hooks** tại `.githooks/` (`git config core.hooksPath .githooks`, gồm `pre-merge-commit`, `pre-commit`, `post-merge`) tự động kích hoạt `scripts/verify-local-ci.sh` mỗi khi commit hoặc merge vào nhánh `develop` (hoặc `main`).
+  - Script `scripts/verify-local-ci.sh` bắt buộc chạy và pass 100% toàn bộ 6 bước tại máy local trước khi cho phép commit/merge vào `develop`:
+    1. `bun run build:headless`
+    2. `bun run lint`
+    3. `bun run type-check`
+    4. `bun run test`
+    5. `go vet ./... && go test ./...`
+    6. `bun run test:e2e`
 
-## Release, Versioning & Commit Squashing
+## Release, Versioning & Commit Standardization (`/bmad-release`)
 
 - **Lịch sử & Ngữ cảnh Kiến trúc (`CHANGELOG.md`)**:
   - File `CHANGELOG.md` ở thư mục gốc lưu giữ toàn bộ lịch sử tiến hóa, kiến trúc cốt lõi và thay đổi của tất cả các phiên bản từ `v1.0.0` đến hiện tại. AI Agents nên đọc `CHANGELOG.md` khi cần nắm bắt bối cảnh lịch sử hoặc hành vi của các tính năng qua các phiên bản.
 - **Single Source of Truth cho Version**:
-  - Toàn bộ ứng dụng và các script đóng gói (`projects/build-dmg.sh`, `projects/build-deb.sh`,...) BẮT BUỘC lấy version từ `projects/frontend/package.json`. Tuyệt đối không hardcode version ở từng script riêng rẽ.
+  - Toàn bộ ứng dụng và các script đóng gói (`projects/build-dmg.sh`, `projects/build-deb.sh`, `projects/install-cli.sh`) BẮT BUỘC lấy version từ `projects/frontend/package.json`. Tuyệt đối không hardcode version ở từng script riêng rẽ.
   - Giao diện UI (`AppHeader.vue`) import trực tiếp version từ `package.json`.
 - **Semantic Versioning**:
-  - Tuân thủ SemVer (MAJOR.MINOR.PATCH):
-    - Thêm tính năng mới tương thích ngược -> tăng MINOR (ví dụ: `1.0.0` -> `1.1.0`).
-    - Sửa lỗi -> tăng PATCH (ví dụ: `1.1.0` -> `1.1.1`).
+  - Tuân thủ SemVer (`MAJOR.MINOR.PATCH`) nối tiếp từ version của commit chuẩn cuối trên `develop`:
+    - Thêm tính năng mới tương thích ngược -> tăng MINOR (ví dụ: `1.15.0` -> `1.16.0`).
+    - Sửa lỗi / cải tiến nhỏ -> tăng PATCH (ví dụ: `1.15.0` -> `1.15.1`).
     - Thay đổi phá vỡ tương thích (breaking changes) -> tăng MAJOR.
-- **Quy trình gom và chuẩn hóa commit khi chốt tính năng**:
+- **Quy trình Gom & Chuẩn hóa Commit trên `develop` khi chốt tính năng**:
+  - Làm việc trực tiếp trên nhánh `develop` (không cần checkout ra nhánh phụ).
   - Khi hoàn thành chốt một đợt tính năng / milestone:
-    1. Cập nhật version mới trong `projects/frontend/package.json` và bổ sung mục release mới vào đầu file `CHANGELOG.md`.
-    2. Chạy kiểm tra toàn diện (`bun run type-check`, `bun run test`, `go test ./...`) đảm bảo pass 100%.
-    3. Tiến hành gom (squash) toàn bộ các commit lẻ trên nhánh `develop` tính từ commit chuẩn gần nhất (`v1.x.x`) thành 1 commit duy nhất chuẩn hóa: **Tiêu đề BẮT BUỘC chỉ là `v<version>`** (ví dụ: `v1.2.0`, `v1.1.0`), phần thân là danh sách bullet points thay đổi. Tuyệt đối không dùng prefix `feat: release ...`.
-    4. **Push & Tạo MR vào `main`**: Push force nhánh `develop` và tự động tạo Merge Request vào `main` qua Git push options (`git push -o merge_request.create -o merge_request.target=main -o merge_request.title="v<version>" origin develop --force`).
-    5. **MANDATORY CONFIRMATION**: Luôn trình bày tóm tắt thay đổi và xin xác nhận của người dùng trước khi chạy các lệnh `git commit`, `git reset`, `git push`. (Ngoại lệ: xem Quy trình Build Fix sau Release bên dưới).
-- **Quy trình Build Fix sau Release (Tự động hóa)**:
-  - Khi pipeline CI bị fail sau release hoặc cần fix nóng cho bản release hiện tại:
-    - Tiêu đề commit chuẩn hóa: `v<version> (build <n>)` (với `n` tự tăng dần: `v1.3.0 (build 1)`, `v1.3.0 (build 2)`,...).
-    - **Ngoại lệ xác nhận:** Khi người dùng gửi log lỗi build/CI của bản release hoặc yêu cầu fix build, agent tự động sửa lỗi, chạy kiểm thử xác nhận pass 100%, tự động commit `v<version> (build <n>)` và push lên `develop` mà không cần hỏi lại xác nhận.
+    1. Tìm mốc commit chuẩn gần nhất trên `develop` (tiêu đề dạng `v<MAJOR>.<MINOR>.<PATCH>`, ví dụ `v1.15.1` hoặc `v1.15.0`), xác định version mới theo SemVer, cập nhật `projects/frontend/package.json` và bổ sung mục `## [v<version>] - YYYY-MM-DD` vào đầu `CHANGELOG.md`.
+    2. Chạy kiểm tra toàn diện tại local qua `./scripts/verify-local-ci.sh` (`bun run build:headless`, `bun run lint`, `bun run type-check`, `bun run test`, `go vet ./...`, `go test ./...`, `bun run test:e2e`) đảm bảo pass 100%.
+    3. Nếu có các commit lẻ/sai chuẩn phát sinh sau mốc commit chuẩn gần nhất, gom (squash) chúng cùng thay đổi hiện tại thành 1 commit chuẩn hóa duy nhất nối tiếp ngay sau mốc commit chuẩn đó: **Tiêu đề BẮT BUỘC chỉ là `v<version>`** (ví dụ: `v1.16.0`), phần thân là danh sách bullet points thay đổi (`- feat(...): ...`).
+    4. **MANDATORY CONFIRMATION**: Luôn trình bày tóm tắt (mốc commit chuẩn gần nhất, version mới `v<version>`, nội dung commit message, danh sách lệnh Git) và xin xác nhận của người dùng trước khi chạy `git reset`, `git commit`, `git push`.
 - **Wails Binding Model Generation**:
   - Thư mục `projects/frontend/wailsjs/` là thư mục sinh tự động và được đưa vào `.gitignore` (không commit lên Git).
-  - Pipeline CI tự động sinh `wailsjs/` qua job `generate:bindings` (Golang + Wails CLI) và chia sẻ sang các job frontend qua CI artifact.
 
 ## Review gate (bmad-build)
 

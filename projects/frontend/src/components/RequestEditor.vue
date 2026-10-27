@@ -32,14 +32,6 @@ const pathNodes = computed(() => {
   return full.filter(n => n.type === 'folder')
 })
 
-const requestPath = computed(() => {
-  if (!req.value) return []
-  const full = collectionStore.findFolderPath(collectionStore.tree, req.value.id) || []
-  const names = full.map(n => n.name)
-  const collName = collectionStore.activeCollection?.name
-  return collName ? [collName, ...names] : names
-})
-
 interface BreadcrumbPart {
   id?: string
   name: string
@@ -278,6 +270,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
           </template>
           <h1 class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-primary min-w-0 m-0 p-0 leading-normal">
             <template v-if="!isRenamingRequest">
+              <span class="sr-only">{{ req.name }}</span>
               <button
                 type="button"
                 data-test="breadcrumb-request"
@@ -292,8 +285,8 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 type="button"
                 data-test="breadcrumb-rename-btn"
                 class="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
-                title="Đổi tên Request"
-                aria-label="Đổi tên Request"
+                title="Sửa tên Request"
+                aria-label="Sửa tên Request"
                 @click.stop="startRenameRequest"
               >
                 <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

@@ -7,6 +7,146 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
+export function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+}
+
+export function highlightHtmlWithSearch(
+  html: string,
+  query: string,
+  caseSensitive = false,
+  activeMatchIndex = 0
+): { html: string; matchCount: number } {
+  if (!query || !html) {
+    return { html, matchCount: 0 }
+  }
+
+  interface HtmlSegment {
+    isTag: boolean
+    raw: string
+    text: string
+    startOffset: number
+    endOffset: number
+  }
+
+  const segments: HtmlSegment[] = []
+  let fullText = ''
+  const tokenRegex = /<[^>]+>|[^<]+|</g
+  let tokenMatch: RegExpExecArray | null
+
+  while ((tokenMatch = tokenRegex.exec(html)) !== null) {
+    const raw = tokenMatch[0]
+    if (raw.startsWith('<') && raw.length > 1) {
+      segments.push({
+        isTag: true,
+        raw,
+        text: '',
+        startOffset: fullText.length,
+        endOffset: fullText.length
+      })
+    } else {
+      const decoded = decodeHtmlEntities(raw)
+      const startOffset = fullText.length
+      fullText += decoded
+      segments.push({
+        isTag: false,
+        raw,
+        text: decoded,
+        startOffset,
+        endOffset: fullText.length
+      })
+    }
+  }
+
+  if (!fullText) {
+    return { html, matchCount: 0 }
+  }
+
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const matchRegex = new RegExp(escapedQuery, caseSensitive ? 'g' : 'gi')
+
+  const matches: Array<{ start: number; end: number; index: number }> = []
+  let mExec: RegExpExecArray | null
+  while ((mExec = matchRegex.exec(fullText)) !== null) {
+    if (mExec[0].length === 0) {
+      matchRegex.lastIndex++
+      continue
+    }
+    matches.push({
+      start: mExec.index,
+      end: mExec.index + mExec[0].length,
+      index: matches.length
+    })
+  }
+
+  if (matches.length === 0) {
+    return { html, matchCount: 0 }
+  }
+
+  const safeActiveIdx = ((activeMatchIndex % matches.length) + matches.length) % matches.length
+  const out: string[] = []
+  let mPtr = 0
+
+  for (const seg of segments) {
+    if (seg.isTag) {
+      out.push(seg.raw)
+      continue
+    }
+
+    while (mPtr < matches.length && matches[mPtr].end <= seg.startOffset) {
+      mPtr++
+    }
+
+    let cursor = seg.startOffset
+    let tempPtr = mPtr
+
+    while (tempPtr < matches.length && matches[tempPtr].start < seg.endOffset) {
+      const m = matches[tempPtr]
+      const overlapStart = Math.max(seg.startOffset, m.start)
+      const overlapEnd = Math.min(seg.endOffset, m.end)
+
+      if (overlapStart > cursor) {
+        out.push(escapeHtml(fullText.slice(cursor, overlapStart)))
+      }
+
+      const matchedText = escapeHtml(fullText.slice(overlapStart, overlapEnd))
+      const isActive = m.index === safeActiveIdx
+      const markClass = isActive
+        ? 'bg-orange-500 text-slate-950 font-semibold rounded-[2px] ring-1 ring-orange-300 search-match-active'
+        : 'bg-amber-400/35 text-amber-100 rounded-[2px] search-match'
+
+      out.push(
+        `<mark data-search-match="true" data-match-index="${m.index}"${
+          isActive ? ' data-active-match="true"' : ''
+        } class="${markClass}">${matchedText}</mark>`
+      )
+
+      cursor = overlapEnd
+
+      if (m.end <= seg.endOffset) {
+        tempPtr++
+        mPtr = tempPtr
+      } else {
+        break
+      }
+    }
+
+    if (cursor < seg.endOffset) {
+      out.push(escapeHtml(fullText.slice(cursor, seg.endOffset)))
+    }
+  }
+
+  return {
+    html: out.join(''),
+    matchCount: matches.length
+  }
+}
+
 export function isJsonContentType(headers: Record<string, string[]>): boolean {
   for (const [key, values] of Object.entries(headers)) {
     if (key.toLowerCase() === 'content-type') {
