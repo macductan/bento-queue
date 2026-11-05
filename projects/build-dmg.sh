@@ -15,16 +15,18 @@ ARCH=$(uname -m)
 
 echo "🔥 Bắt đầu build ứng dụng và đóng gói file .dmg cho ${APP_NAME} (${ARCH}) v${APP_VERSION}..."
 
-# 1. Kích hoạt môi trường Go và Node
+# 1. Kích hoạt môi trường Go và Node (tạm tắt set -e vì gvm/nvm dùng biến nội bộ có thể trả mã khác 0)
+set +e
 if [[ -s "$HOME/.gvm/scripts/gvm" ]]; then
   source "$HOME/.gvm/scripts/gvm"
-  gvm use go1.27.1 > /dev/null 2>&1 || true
+  gvm use go1.27.1 > /dev/null 2>&1
 fi
 
 if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
   source "$HOME/.nvm/nvm.sh"
-  nvm use > /dev/null 2>&1 || true
+  nvm use > /dev/null 2>&1
 fi
+set -e
 
 # 2. Build ứng dụng bằng Wails
 echo "1. Biên dịch ứng dụng bằng Wails..."

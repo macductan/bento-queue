@@ -9,7 +9,9 @@ import EnvSelector from '@/components/environment/EnvSelector.vue'
 import CollectionSwitcher from '@/components/CollectionSwitcher.vue'
 import ImportErrorModal from '@/components/ImportErrorModal.vue'
 import SettingsModal from '@/components/SettingsModal.vue'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
 const mockStore = useMockServerStore()
@@ -42,12 +44,12 @@ const gitBranchName = computed(() => {
 
 const gitButtonLabel = computed(() => {
   if (hasGitConflict.value) {
-    return `Xung đột Git (${gitConflictCount.value})`
+    return t('header.gitConflict', { count: gitConflictCount.value })
   }
   if (isGitConfigured.value) {
     return `Git: ${gitBranchName.value}`
   }
-  return 'Git Sync'
+  return t('header.gitSync')
 })
 
 const isMockRunning = computed(() => {
@@ -116,8 +118,8 @@ onUnmounted(() => {
       <button
         type="button"
         data-test="git-config-btn"
-        title="Đồng bộ Git / Cấu hình Remote"
-        aria-label="Đồng bộ Git / Cấu hình Remote"
+        :title="t('header.gitSyncTitle')"
+        :aria-label="t('header.gitSyncTitle')"
         class="px-2.5 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 border transition-colors cursor-pointer"
         :class="
           hasGitConflict
@@ -163,7 +165,7 @@ onUnmounted(() => {
             ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
             : 'border-zinc-700/80 bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300'
         "
-        :title="isMockRunning ? `Local Mock Server (Đang chạy tại :${mockPort})` : 'Local Mock Server'"
+        :title="isMockRunning ? t('header.mockRunningTitle', { port: mockPort }) : t('header.mockServer')"
       >
         <span
           v-if="isMockRunning"
@@ -174,7 +176,7 @@ onUnmounted(() => {
           v-else
           class="w-2 h-2 rounded-full bg-zinc-600 shrink-0"
         />
-        <span>{{ isMockRunning ? `Mock :${mockPort}` : 'Mock Server' }}</span>
+        <span>{{ isMockRunning ? t('header.mockRunning', { port: mockPort }) : t('header.mockServer') }}</span>
       </button>
 
       <!-- Import Postman Button -->
@@ -184,7 +186,7 @@ onUnmounted(() => {
         @click="triggerImport"
         :disabled="isImporting"
         class="px-2.5 py-1.5 rounded-md text-xs font-medium bg-zinc-800/70 hover:bg-zinc-800 text-zinc-200 border border-zinc-700/80 transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-        title="Import Postman (Ctrl+I)"
+        :title="`${t('header.importPostman')} (Ctrl+I)`"
       >
         <svg v-if="isImporting" class="animate-spin h-3.5 w-3.5 text-amber-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -195,7 +197,7 @@ onUnmounted(() => {
           <polyline points="17 8 12 3 7 8"></polyline>
           <line x1="12" y1="3" x2="12" y2="15"></line>
         </svg>
-        <span>{{ collectionStore.importProgress ? collectionStore.importProgress : (isImporting ? 'Đang import...' : 'Import Postman') }}</span>
+        <span>{{ collectionStore.importProgress ? collectionStore.importProgress : (isImporting ? t('header.importing') : t('header.importPostman')) }}</span>
         <kbd class="text-[10px] text-zinc-500 bg-zinc-800 px-1 rounded">^I</kbd>
       </button>
 
@@ -208,7 +210,7 @@ onUnmounted(() => {
         data-test="open-history-modal-btn"
         @click="uiStore.openHistoryModal()"
         class="icon-btn text-text-muted hover:text-text-primary p-2 flex items-center justify-center rounded transition-colors"
-        title="History & Changelog"
+        :title="t('header.historyAndChangelog')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
@@ -222,7 +224,7 @@ onUnmounted(() => {
         data-test="manage-env-btn"
         @click="uiStore.envModalOpen = true"
         class="icon-btn text-text-muted hover:text-text-primary p-2 flex items-center justify-center rounded transition-colors"
-        title="Manage Environments"
+        :title="t('header.manageEnvironments')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
@@ -235,7 +237,7 @@ onUnmounted(() => {
         type="button"
         @click="uiStore.settingsModalOpen = true"
         class="icon-btn text-text-muted hover:text-text-primary p-2 flex items-center justify-center rounded transition-colors"
-        title="Settings"
+        :title="t('header.settings')"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
       </button>

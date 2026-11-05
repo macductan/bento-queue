@@ -954,6 +954,11 @@ func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.
 		name = string([]rune(name)[:255])
 	}
 
+	locale := strings.TrimSpace(coll.Locale)
+	if locale != "" && locale != "en" && locale != "vi" {
+		return model.NewError(model.ErrValidation, ErrInvalidLocale)
+	}
+
 	collDir := filepath.Join(collectionsRoot, id)
 	metaPath := filepath.Join(collDir, collectionFileName)
 	if !s.fs.Exists(metaPath) {
@@ -981,6 +986,9 @@ func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.
 	existingColl.ActiveEnvID = strings.TrimSpace(coll.ActiveEnvID)
 	if strings.TrimSpace(coll.GitRemoteURL) != "" {
 		existingColl.GitRemoteURL = strings.TrimSpace(coll.GitRemoteURL)
+	}
+	if locale != "" {
+		existingColl.Locale = locale
 	}
 	existingColl.ID = id
 	existingColl.IsDefault = (id == "default")
@@ -1084,6 +1092,7 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) mode
 		Auth:        srcColl.Auth,
 		AuthEnvs:    srcColl.AuthEnvs,
 		ActiveEnvID: srcColl.ActiveEnvID,
+		Locale:      srcColl.Locale,
 		IsDefault:   false,
 		IsActive:    false,
 		CreatedAt:   now,

@@ -5,7 +5,9 @@ import { useResponseStore } from '@/stores/responseStore'
 import { useUiStore } from '@/stores/uiStore'
 import { isCurlCommand, parseCurlCommand } from '@/utils/curl'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const requestStore = useRequestStore()
 const responseStore = useResponseStore()
 const uiStore = useUiStore()
@@ -287,7 +289,7 @@ const onUrlPaste = (e: ClipboardEvent) => {
           v-model="customMethodInput"
           type="text"
           data-test="custom-method-input"
-          placeholder="Custom (VD: PURGE)"
+          :placeholder="t('urlBar.customMethodPlaceholder')"
           aria-label="Custom HTTP Method"
           class="w-full min-w-0 px-2 py-1 bg-zinc-950 border border-zinc-700/80 rounded-md font-mono text-[11px] text-zinc-100 uppercase placeholder:normal-case placeholder:text-zinc-500 focus:border-indigo-500 outline-none transition-colors"
           @keydown.enter.prevent="applyCustomMethod"
@@ -350,14 +352,14 @@ const onUrlPaste = (e: ClipboardEvent) => {
       <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
       </svg>
-      <span>Hủy</span>
+      <span>{{ t('common.abort') }}</span>
     </button>
     <button
       v-else
       type="button"
       data-test="send-request-btn"
-      title="Gửi (Ctrl+Enter)"
-      aria-label="Gửi"
+      :title="t('urlBar.sendShortcut')"
+      :aria-label="t('urlBar.send')"
       class="h-full px-4 py-2 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shrink-0 rounded-r border-l border-indigo-500 outline-none cursor-pointer transition-colors text-xs shadow-lg shadow-indigo-600/20"
       @click="responseStore.send"
     >
@@ -365,7 +367,7 @@ const onUrlPaste = (e: ClipboardEvent) => {
         <line x1="22" y1="2" x2="11" y2="13"></line>
         <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
       </svg>
-      <span>Gửi</span>
+      <span>{{ t('urlBar.send') }}</span>
       <kbd class="text-[10px] bg-indigo-700/80 text-indigo-200 px-1.5 py-0.5 rounded border border-indigo-400/30 font-mono">^Enter</kbd>
     </button>
   </div>

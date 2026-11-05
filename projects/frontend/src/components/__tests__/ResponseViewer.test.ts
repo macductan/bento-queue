@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { nextTick } from 'vue'
 import ResponseViewer from '../ResponseViewer.vue'
 import { useResponseStore } from '@/stores/responseStore'
+import { useUiStore } from '@/stores/uiStore'
 import { formatJsonHtml, highlightHtmlWithSearch, decodeHtmlEntities } from '@/utils/jsonHighlight'
 import { formatXmlHtml } from '@/utils/xmlUtils'
 import { ClipboardSetText } from '../../../wailsjs/runtime/runtime'
@@ -15,6 +16,7 @@ vi.mock('../../../wailsjs/runtime/runtime', () => ({
 describe('ResponseViewer.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     vi.clearAllMocks()
   })
 

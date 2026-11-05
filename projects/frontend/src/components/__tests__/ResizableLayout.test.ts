@@ -34,6 +34,7 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
     document.body.style.userSelect = ''
     setViewportWidth(1200)
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     vi.clearAllMocks()
   })
 
@@ -264,8 +265,8 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       await addBtn.trigger('click')
       expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(true)
-      expect(wrapper.find('[data-test="add-request-item"]').text()).toContain('New Request')
-      expect(wrapper.find('[data-test="add-folder-item"]').text()).toContain('New Folder')
+      expect(wrapper.find('[data-test="add-request-item"]').text()).toMatch(/(New Request|Request mới)/)
+      expect(wrapper.find('[data-test="add-folder-item"]').text()).toMatch(/(New Folder|Thư mục mới)/)
 
       // Clicking New Request triggers createRequest and closes dropdown
       await wrapper.find('[data-test="add-request-item"]').trigger('click')
@@ -414,7 +415,7 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       const importBtn = headerWrapper.find('[data-test="import-collection-btn"]')
       expect(importBtn.exists()).toBe(true)
       expect(importBtn.find('svg.text-amber-400').exists()).toBe(true)
-      expect(importBtn.text()).toContain('Import Postman')
+      expect(importBtn.text()).toMatch(/(Import Postman|Nhập Postman)/)
       expect(importBtn.find('kbd').text()).toBe('^I')
 
       headerWrapper.unmount()

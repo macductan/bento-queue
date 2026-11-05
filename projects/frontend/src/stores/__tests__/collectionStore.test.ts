@@ -717,6 +717,83 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
     })
   })
 
+  describe('updateActiveCollectionLocale & Locale Sync', () => {
+    it('persists locale via UpdateCollection and updates activeCollection.locale', async () => {
+      const store = useCollectionStore()
+      store.collections = [
+        { id: 'col-1', name: 'Col 1', is_active: true } as any
+      ]
+      store.activeCollectionId = 'col-1'
+
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(
+        resSuccess({ id: 'col-1', name: 'Col 1', locale: 'vi' })
+      )
+
+      const ok = await store.updateActiveCollectionLocale('vi')
+      expect(ok).toBe(true)
+      expect(UpdateCollection).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'col-1',
+        locale: 'vi'
+      }))
+      expect(store.collections[0].locale).toBe('vi')
+    })
+
+    it('returns false and does not update activeCollection.locale when UpdateCollection fails', async () => {
+      const store = useCollectionStore()
+      store.collections = [
+        { id: 'col-1', name: 'Col 1', is_active: true, locale: 'en' } as any
+      ]
+      store.activeCollectionId = 'col-1'
+
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(resError('Failed'))
+
+      const ok = await store.updateActiveCollectionLocale('vi')
+      expect(ok).toBe(false)
+      expect(store.collections[0].locale).toBe('en')
+    })
+
+    it('reverts uiStore.locale to previous locale when updateActiveCollectionLocale fails', async () => {
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      uiStore.setLocale('en', { skipCollectionSave: true })
+      store.collections = [
+        { id: 'col-1', name: 'Col 1', is_active: true, locale: 'en' } as any
+      ]
+      store.activeCollectionId = 'col-1'
+
+      vi.mocked(UpdateCollection).mockResolvedValueOnce(resError('Disk failure'))
+
+      await uiStore.setLocale('vi')
+      expect(uiStore.locale).toBe('en')
+    })
+
+    it('syncs uiStore.locale when loadCollections loads active collection with locale', async () => {
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      uiStore.setLocale('en', { skipCollectionSave: true })
+
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'col-1', name: 'Col 1', is_active: true, locale: 'vi' }
+      ]))
+
+      await store.loadCollections()
+      expect(uiStore.locale).toBe('vi')
+    })
+
+    it('falls back to uiStore.locale or en when active collection has empty locale', async () => {
+      const store = useCollectionStore()
+      const uiStore = useUiStore()
+      uiStore.setLocale('vi', { skipCollectionSave: true })
+
+      vi.mocked(ListCollections).mockResolvedValueOnce(resSuccess([
+        { id: 'col-1', name: 'Col 1', is_active: true }
+      ]))
+
+      await store.loadCollections()
+      expect(uiStore.locale).toBe('vi')
+    })
+  })
+
   describe('Active Environment Persistence (CAP-2)', () => {
     it('persists active_env_id via UpdateCollection when envStore.setActive is called with an environment ID or null', async () => {
       const store = useCollectionStore()

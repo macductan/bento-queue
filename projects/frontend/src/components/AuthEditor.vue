@@ -6,7 +6,9 @@ import { useEnvironmentStore } from '@/stores/environmentStore'
 import { resolveEffectiveAuth } from '@/utils/auth'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
 import CustomSelect, { type SelectOption } from '@/components/CustomSelect.vue'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const pinia = getActivePinia()
 const collectionStore = pinia ? useCollectionStore(pinia) : null
 const envStore = pinia ? useEnvironmentStore(pinia) : null
@@ -320,7 +322,7 @@ const apiKeyAddToOptions: SelectOption[] = [
     <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
       <div class="flex items-center gap-2">
         <label for="auth-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
-          Phạm vi môi trường:
+          {{ t('auth.envScope') }}:
         </label>
         <CustomSelect
           id="auth-env-scope-select"
@@ -332,7 +334,7 @@ const apiKeyAddToOptions: SelectOption[] = [
         />
       </div>
       <span class="text-xs text-text-muted">
-        {{ selectedEnvScope === '__global__' ? 'Áp dụng cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}
+        {{ selectedEnvScope === '__global__' ? t('auth.applyAllEnvs') : t('auth.applyCurrentEnvOnly') }}
       </span>
     </div>
 
@@ -355,31 +357,31 @@ const apiKeyAddToOptions: SelectOption[] = [
     <!-- Inherit Mode Details -->
     <div v-if="authType === 'inherit'" class="p-3 bg-surface-raised/40 border border-border-subtle rounded text-xs text-text-secondary">
       <div v-if="inheritedPreview?.fromGlobalSelf && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
-        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-text-muted">{{ t('auth.inheritedFrom') }}:</span>
         <span class="text-blue-400 font-medium">Global Auth</span>
-        <span class="text-text-muted ml-2">Type:</span>
+        <span class="text-text-muted ml-2">{{ t('auth.type') }}:</span>
         <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
       </div>
       <div v-else-if="inheritedPreview?.sourceNode && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
-        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-text-muted">{{ t('auth.inheritedFrom') }}:</span>
         <span class="text-blue-400 font-medium">{{ inheritedPreview.sourceNode.name }} (Folder {{ inheritedFolderLevel }})</span>
-        <span class="text-text-muted ml-2">Type:</span>
+        <span class="text-text-muted ml-2">{{ t('auth.type') }}:</span>
         <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
       </div>
       <div v-else-if="inheritedPreview?.sourceCollection && inheritedPreview.auth.type !== 'none'" class="flex items-center gap-2">
-        <span class="text-text-muted">Inherited from:</span>
+        <span class="text-text-muted">{{ t('auth.inheritedFrom') }}:</span>
         <span class="text-blue-400 font-medium">{{ inheritedPreview.sourceCollection.name || 'Collection' }} (Collection)</span>
-        <span class="text-text-muted ml-2">Type:</span>
+        <span class="text-text-muted ml-2">{{ t('auth.type') }}:</span>
         <span class="uppercase font-mono text-emerald-400 font-medium">{{ inheritedPreview.auth.type }}</span>
       </div>
       <div v-else class="text-text-muted italic">
-        No authentication inherited from parent.
+        {{ t('auth.noInheritedAuth') }}
       </div>
     </div>
 
     <!-- None Mode Details -->
     <div v-else-if="authType === 'none'" class="p-3 bg-surface-raised/40 border border-border-subtle rounded text-xs text-text-muted italic">
-      No authentication for this {{ isCollection ? 'collection' : isFolder ? 'folder' : 'request' }}.
+      {{ t('auth.noAuthForThis', { item: isCollection ? t('auth.collection') : isFolder ? t('auth.folder') : t('auth.request') }) }}
     </div>
 
     <!-- Bearer Token Inputs -->
@@ -410,8 +412,8 @@ const apiKeyAddToOptions: SelectOption[] = [
             type="button"
             @click="showBearerToken = !isBearerVisible"
             class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="isBearerVisible ? 'Hide token' : 'Show token'"
-            aria-label="Toggle token visibility"
+            :title="isBearerVisible ? t('auth.hideToken') : t('auth.showToken')"
+            :aria-label="t('auth.toggleTokenVisibility')"
           >
             <svg v-if="isBearerVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
@@ -449,7 +451,7 @@ const apiKeyAddToOptions: SelectOption[] = [
           </VariableHighlighter>
         </div>
         <span v-if="basicUsername.includes(':')" class="text-[11px] text-amber-400">
-          Warning (RFC 7617): Username should not contain a colon (":").
+          {{ t('auth.colonWarning') }}
         </span>
       </div>
       <div class="flex flex-col gap-1">
@@ -478,8 +480,8 @@ const apiKeyAddToOptions: SelectOption[] = [
             type="button"
             @click="showBasicPassword = !isBasicPasswordVisible"
             class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="isBasicPasswordVisible ? 'Hide password' : 'Show password'"
-            aria-label="Toggle password visibility"
+            :title="isBasicPasswordVisible ? t('auth.hidePassword') : t('auth.showPassword')"
+            :aria-label="t('auth.togglePasswordVisibility')"
           >
             <svg v-if="isBasicPasswordVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
@@ -530,8 +532,8 @@ const apiKeyAddToOptions: SelectOption[] = [
             type="button"
             @click="showApiKeyValue = !isApiKeyValueVisible"
             class="absolute right-2 z-10 text-text-muted hover:text-text-primary p-1 rounded transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
-            :title="isApiKeyValueVisible ? 'Hide value' : 'Show value'"
-            aria-label="Toggle API key value visibility"
+            :title="isApiKeyValueVisible ? t('auth.hideValue') : t('auth.showValue')"
+            :aria-label="t('auth.toggleValueVisibility')"
           >
             <svg v-if="isApiKeyValueVisible" class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor">
               <path d="M228,128a113.88,113.88,0,0,1-19.78,33.5l16.12,16.13a8,8,0,0,1-11.31,11.31l-184-184A8,8,0,0,1,40.34,3.66L61,24.32A115.06,115.06,0,0,1,128,12a114.28,114.28,0,0,1,100,116ZM92.17,55.51A100.82,100.82,0,0,0,48.16,108.6a8,8,0,0,0,0,10.8,114.73,114.73,0,0,0,55.56,47.46l15-15A44,44,0,0,1,87.65,120.8l15.82-15.82A44.08,44.08,0,0,1,92.17,55.51ZM207.84,119.4A114.73,114.73,0,0,0,152.28,71.94L167.3,56.92A113.62,113.62,0,0,1,207.84,119.4Z"/>
@@ -543,7 +545,7 @@ const apiKeyAddToOptions: SelectOption[] = [
         </div>
       </div>
       <div class="flex flex-col gap-1">
-        <label for="api-key-add-to-select" class="text-xs font-medium text-text-muted">Add to</label>
+        <label for="api-key-add-to-select" class="text-xs font-medium text-text-muted">{{ t('auth.addTo') }}</label>
         <CustomSelect
           id="api-key-add-to-select"
           v-model="apiKeyAddTo"

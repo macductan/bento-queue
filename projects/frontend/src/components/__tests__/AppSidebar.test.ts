@@ -18,6 +18,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
 describe('AppSidebar.vue - Tree Filter & Collection Navigation', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     vi.clearAllMocks()
   })
 

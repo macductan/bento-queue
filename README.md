@@ -1,93 +1,182 @@
-# Hecto Api
+# hecto-api ⚡
 
+> **Lightweight, Offline-First Desktop API Client & Standalone CLI**  
+> Giải pháp gọi và kiểm thử API siêu nhẹ, bảo mật, độc lập hoàn toàn — Thay thế hoàn hảo cho Postman và Bruno.
 
+[![Version](https://img.shields.io/badge/version-1.16.0-blue.svg)](https://github.com/macductan/hecto-api)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go)](https://golang.org)
+[![Wails v2](https://img.shields.io/badge/Desktop-Wails%20v2-DF1A29)](https://wails.io)
+[![Vue 3](https://img.shields.io/badge/Frontend-Vue%203%20%2B%20Vite-4FC08D?logo=vue.js)](https://vuejs.org)
+[![Bun](https://img.shields.io/badge/Package%20Manager-Bun-fbf0df?logo=bun)](https://bun.sh)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 🎯 Sứ mệnh & Triết lý cốt lõi (Mission & Core Philosophy)
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Trong quá trình phát triển phần mềm, các công cụ kiểm thử API hiện nay thường gặp phải nhiều vấn đề:
+- **Postman**: Nặng nề, ngốn nhiều tài nguyên RAM (thường 500MB – 1GB+), thời gian khởi động lâu, bắt buộc đăng nhập tài khoản, ép buộc đồng bộ đám mây (cloud sync). Khi làm việc qua mạng nội bộ hoặc đổi VPN, ứng dụng thường xuyên bị treo và gián đoạn.
+- **Bruno / Các công cụ khác**: Đôi khi còn giật lag, giao diện phức tạp và thiếu các công cụ dòng lệnh (CLI) mạnh mẽ phục vụ tự động hóa.
 
-## Add your files
+**hecto-api** ra đời với sứ mệnh: **Đơn giản hóa việc gọi và kiểm thử API với hiệu năng tối đa, tôn trọng quyền riêng tư và dữ liệu của nhà phát triển.**
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### 5 Nguyên tắc vàng:
+1. ⚡ **Siêu nhẹ & Tốc độ tức thì (Zero Bloat)**:
+   - Xây dựng trên nền tảng **Wails v2 (Go backend + Webview nguyên bản của hệ điều hành)**, không sử dụng Electron.
+   - Khởi động dưới **1 giây**, bộ nhớ RAM tiêu thụ siêu thấp (chỉ khoảng **50MB - 100MB**).
+2. 🔓 **Zero Login & Không Cloud (100% Privacy)**:
+   - Hoàn toàn không cần tạo tài khoản, không lưu dữ liệu trên server trung gian. Mở ứng dụng lên là sử dụng ngay.
+3. 📡 **Offline-First Tuyệt đối**:
+   - Toàn bộ giao diện và chức năng xử lý ngoại tuyến. Khi mất mạng, đổi mạng VPN hay làm việc trong mạng nội bộ (air-gapped), ứng dụng vẫn hoạt động mượt mà.
+4. 📁 **File-Based Storage & Git-Native**:
+   - Dữ liệu Collections, Requests, Environments, Flows được lưu trữ dưới dạng các file **JSON chuẩn hóa** trực tiếp trên đĩa cứng máy tính.
+   - Dễ dàng quản lý phiên bản bằng **Git**, chia sẻ qua GitHub/GitLab, hoặc sao lưu tự động mà không lo bị lock-in.
+5. 🤖 **AI-Agent First & Headless CLI (`hecto`)**:
+   - Tích hợp sẵn binary CLI độc lập `hecto` chia sẻ chung 100% công cụ thực thi TypeScript (`headless-engine.js` chạy trên máy ảo Go pure Goja).
+   - Cho phép các **AI Coding Agents** (Antigravity, Claude Code, Cursor, Cline) dễ dàng đọc, tạo, cập nhật và chạy test API thông qua dòng lệnh với output `--json`.
 
+---
+
+## 🚀 Tính năng nổi bật (Key Features)
+
+### 1. Gọi & Soạn thảo HTTP Requests toàn diện
+- Hỗ trợ đầy đủ các phương thức chuẩn: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS` và tùy biến method.
+- Trình quản lý tham số: **Query Parameters**, **Path Parameters** (`:id`), **Headers** với cơ chế bật/tắt (toggle) linh hoạt.
+- Đa dạng kiểu Body: **JSON** (tự động format & syntax highlight), **XML**, **Form-Data**, **x-www-form-urlencoded**, **Raw Text**.
+- **cURL Preview & Import**: Xem trực tiếp câu lệnh cURL đã phân giải biến thực tế; import nhanh cURL command vào request.
+
+### 2. Trình xem Response (Response Viewer) chuyên nghiệp
+- Chế độ xem: **Pretty JSON**, **Raw Text**, **Headers**, và **Preview**.
+- **In-Response Search Bar** (`Cmd+F` / `Ctrl+F`): Tìm kiếm từ khóa tức thì, hỗ trợ phân biệt hoa/thường (`Aa`), đếm số lượng kết quả, phím tắt `Enter`/`Shift+Enter` để chuyển kết quả và tự động cuộn đến vị trí (`scrollIntoView`).
+- Cột đánh số dòng (Line Numbers Gutter) chuẩn xác, hỗ trợ copy nhanh JSON path hoặc toàn bộ body.
+- Thống kê chi tiết: Mã trạng thái (HTTP Status), thời gian phản hồi (ms), dung lượng truyền tải.
+
+### 3. Cơ chế phân giải biến môi trường 4 tầng (4-Tier Variable Hierarchy)
+Biến dạng `{{variable_name}}` được tự động phân giải theo độ ưu tiên từ thấp đến cao:
+1. **Tier 1 (Thấp nhất)**: *Collection Variables* — Biến toàn cục dùng chung cho cả Collection.
+2. **Tier 2**: *Active Global Environment* — Biến của môi trường đang kích hoạt trên thanh Header (`Dev`, `Staging`, `Prod`).
+3. **Tier 3**: *Folder Global Variables* — Biến dùng chung trong thư mục.
+4. **Tier 4 (Cao nhất)**: *Folder-Environment Variables* — Biến đặc thù của thư mục gắn riêng với môi trường đang chọn.
+
+### 4. Kế thừa Auth & Headers thông minh (Inheritance)
+- Hỗ trợ các chuẩn xác thực phổ biến: **Bearer Token**, **Basic Auth**, **API Key** (gửi qua Header hoặc Query Param).
+- Cơ chế kế thừa: Request có thể kế thừa tự động cấu hình Auth và Headers từ Folder cha hoặc từ Collection. Hỗ trợ cấu hình Auth riêng biệt theo từng môi trường.
+
+### 5. API Flow Runner (Kiểm thử luồng tích hợp)
+- Trình chạy luồng API trực quan dạng flowchart có điều kiện rẽ nhánh (branching logic) dựa trên status code hoặc JSON response.
+- Lưu trữ độc lập tại `<collection>/flows/` và thực thi mượt mà trên cả giao diện Desktop lẫn dòng lệnh CLI (`hecto flow run`).
+
+### 6. Đồng bộ Git 2 chiều & Visual Conflict Resolver
+- Tích hợp sẵn Git Sync trực tiếp trong ứng dụng (kết nối remote GitHub/GitLab).
+- Trình giải quyết xung đột trực quan (Visual Conflict Resolver) khi có thay đổi đồng thời từ nhiều thành viên trong nhóm.
+- Bộ giám sát file thời gian thực (`fsnotify`) tự động reload dữ liệu (`smartReload`) khi có thay đổi từ Git hoặc công cụ ngoài, bảo vệ an toàn các tab đang soạn thảo dở.
+
+### 7. Tự động hóa với Script (`ha.*`) & Mock Server
+- **Pre-request & Post-response Scripts**: Viết mã JavaScript kiểm thử, tự động trích xuất token lưu vào biến môi trường, kiểm tra assertion kết quả với thư viện `ha.*`.
+- **Mock Server tích hợp**: Dựng nhanh mock endpoints chạy ngay trên máy local để phục vụ phát triển frontend mà không cần backend sẵn sàng.
+
+---
+
+## 📦 Cài đặt (Installation)
+
+### Cách 1: Tải bản cài đặt Desktop macOS (.dmg)
+1. Tải bản release mới nhất file `.dmg` từ mục [Releases](https://github.com/macductan/hecto-api/releases).
+2. Mở file `.dmg` và kéo ứng dụng **hecto-api.app** vào thư mục **Applications**.
+
+### Cách 2: Cài đặt CLI độc lập (`hecto`)
+Dành cho lập trình viên và các AI Agents muốn điều khiển API từ terminal:
+```bash
+./install-cli.sh
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/macductan/hecto-api.git
-git branch -M main
-git push -uf origin main
+Binary sẽ được cài đặt tự động vào `~/.local/bin/hecto`. Đảm bảo `~/.local/bin` đã có trong `$PATH`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Integrate with your tools
+---
 
-* [Set up project integrations](https://gitlab.com/macductan/hecto-api/-/settings/integrations)
+## 💻 Hướng dẫn sử dụng CLI (`hecto`)
 
-## Collaborate with your team
+CLI `hecto` cung cấp đầy đủ các thao tác tương đương 100% với giao diện Desktop:
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```bash
+# Xem phiên bản và hướng dẫn tích hợp AI Agent
+hecto --version
+hecto agent-guide
 
-## Test and Deploy
+# Quản lý Collection
+hecto collection list
+hecto collection create "My Project"
+hecto collection activate "My Project"
 
-Use the built-in continuous integration in GitLab.
+# Quản lý Environment
+hecto env list
+hecto env create "Staging"
+hecto env set "Staging" --key "BASE_URL" --val "https://staging.api.com"
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+# Quản lý & Chạy Request
+hecto req list
+hecto req get "Users/GetProfile"
+hecto run "Users/GetProfile"
 
-***
+# Chạy API Flow
+hecto flow list
+hecto flow run "CheckoutFlow"
 
-# Editing this README
+# Xuất kết quả dạng JSON chuẩn hóa (phục vụ tự động hóa / AI Agent)
+hecto req list --json
+hecto run "Users/Login" --json
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+---
 
-## Suggestions for a good README
+## 🛠️ Hướng dẫn phát triển từ mã nguồn (Development)
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Yêu cầu hệ thống:
+- **Go**: phiên bản `1.25.0` trở lên.
+- **Node.js**: phiên bản `24` (quản lý qua `.nvmrc`).
+- **Bun**: phiên bản `1.2+` (trình quản lý gói frontend).
+- **Wails CLI v2**: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`.
 
-## Name
-Choose a self-explaining name for your project.
+### Khởi chạy môi trường Dev:
+```bash
+# 1. Kích hoạt đúng phiên bản Node & cài dependencies
+source ~/.nvm/nvm.sh && nvm use
+cd projects/frontend && bun install && cd ../..
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+# 2. Sinh bindings Wails cho frontend
+cd projects && wails generate module
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+# 3. Khởi chạy dev server (Hot reload cho cả Go và Vue)
+cd projects && wails dev -tags webkit2_41
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+### Đóng gói ứng dụng:
+```bash
+# Đóng gói file .dmg cho macOS (arm64 / x86_64)
+./projects/build-dmg.sh
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+# Đóng gói file .deb cho Linux
+./projects/build-deb.sh
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+# Biên dịch binary CLI độc lập
+./projects/install-cli.sh
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+### Kiểm tra chất lượng (Verification):
+```bash
+# Chạy Unit Tests Backend
+cd projects && go test ./...
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+# Chạy Type-Check & Unit Tests Frontend
+cd projects/frontend
+bun run type-check
+bun run test
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+---
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## 📄 Bản quyền (License)
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Dự án được phân phối dưới giấy phép [MIT License](LICENSE).
+Tự do sử dụng, chỉnh sửa và đóng góp cho cộng đồng mã nguồn mở.

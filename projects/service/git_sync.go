@@ -236,6 +236,9 @@ func (s *GitSyncService) autoResolveCollectionMetaConflict(collDir, metaPath str
 	if merged.ActiveEnvID == "" && incomingColl.ActiveEnvID != "" {
 		merged.ActiveEnvID = incomingColl.ActiveEnvID
 	}
+	if merged.Locale == "" && incomingColl.Locale != "" {
+		merged.Locale = incomingColl.Locale
+	}
 	merged.ID = localColl.ID
 	merged.IsDefault = localColl.IsDefault
 	if strings.TrimSpace(remoteURL) != "" {

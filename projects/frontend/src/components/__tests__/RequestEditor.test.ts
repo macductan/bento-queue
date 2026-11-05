@@ -4,6 +4,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import RequestEditor from '../RequestEditor.vue'
 import { useRequestStore, type Request } from '@/stores/requestStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useUiStore } from '@/stores/uiStore'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetRequest: vi.fn(),
@@ -31,6 +32,7 @@ describe('RequestEditor.vue - Save State Indicator', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     vi.clearAllMocks()
   })
 

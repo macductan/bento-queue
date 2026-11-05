@@ -28,6 +28,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
 describe('TreeNodeRow.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
   })
 
   it('toggles folder only without selecting folder or clearing activeRequestId on left click (CAP-2)', async () => {

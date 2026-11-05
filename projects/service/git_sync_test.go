@@ -1,12 +1,14 @@
 package service
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"hecto-api/model"
 	"hecto-api/storage"
@@ -553,6 +555,81 @@ func TestGitSyncService_PushAutoMergesJsonFieldsAndAbortMerge(t *testing.T) {
 	abortStatus := abortRes.Data.(model.GitSyncStatus)
 	if abortStatus.HasConflicts {
 		t.Errorf("expected HasConflicts=false after AbortMerge, got %+v", abortStatus)
+	}
+}
+
+func TestGitSyncService_AutoResolveCollectionMetaConflict_PreservesLocale(t *testing.T) {
+	gitSvc, _, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	collDir := filepath.Join(collectionsRoot, collID)
+	metaPath := filepath.Join(collDir, collectionFileName)
+
+	localColl := &model.Collection{
+		ID:        collID,
+		Name:      "Local Collection",
+		Locale:    "",
+		IsDefault: false,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	if pushRes := gitSvc.Push(collectionsRoot, collID); !pushRes.Success {
+		t.Fatalf("initial Push failed: %+v", pushRes.Error)
+	}
+
+	peerDir := filepath.Join(filepath.Dir(collectionsRoot), "peer-locale")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, peerDir)
+	runTestGit(t, peerDir, "config", "user.name", "Peer Dev")
+	runTestGit(t, peerDir, "config", "user.email", "peer@hecto.local")
+
+	peerColl := model.Collection{
+		ID:        collID,
+		Name:      "Remote Collection",
+		Locale:    "vi",
+		IsDefault: false,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	peerBytes, _ := json.MarshalIndent(peerColl, "", "  ")
+	if err := os.WriteFile(filepath.Join(peerDir, "collection.json"), peerBytes, 0644); err != nil {
+		t.Fatalf("write peer collection.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "set collection locale to vi")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	localBytes, _ := json.MarshalIndent(localColl, "", "  ")
+	if err := os.WriteFile(metaPath, localBytes, 0644); err != nil {
+		t.Fatalf("write local collection.json failed: %v", err)
+	}
+
+	// Pull detects conflict on collection.json
+	pullRes := gitSvc.Pull(collectionsRoot, collID)
+	if pullRes.Success {
+		t.Fatalf("expected conflict on collection.json, got success")
+	}
+
+	// Auto-resolve metadata conflict should merge and preserve incoming locale "vi"
+	resolved := gitSvc.autoResolveCollectionMetaConflict(collDir, metaPath, localColl, bareRepoDir)
+	if !resolved {
+		t.Fatalf("expected autoResolveCollectionMetaConflict to resolve successfully and return true")
+	}
+
+	var updatedColl model.Collection
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read collection.json failed: %v", err)
+	}
+	if err := json.Unmarshal(metaBytes, &updatedColl); err != nil {
+		t.Fatalf("unmarshal collection.json failed: %v", err)
+	}
+
+	if updatedColl.Locale != "vi" {
+		t.Errorf("expected merged collection Locale to be 'vi', got %q", updatedColl.Locale)
 	}
 }
 

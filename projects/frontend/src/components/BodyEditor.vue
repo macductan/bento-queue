@@ -18,7 +18,9 @@ import {
   applyEditorEnter,
   applyEditorToggleComment
 } from '@/utils/editorShortcuts'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
 
@@ -67,7 +69,7 @@ const formatJson = () => {
   if (bodyType.value !== 'json' || !bodyContent.value.trim()) return
   const check = validateJsonWithPlaceholders(bodyContent.value)
   if (!check.valid) {
-    uiStore.showToast(check.error || 'JSON không hợp lệ, không thể format')
+    uiStore.showToast(check.error || t('bodyEditor.invalidJsonFormat'))
     return
   }
   try {
@@ -96,7 +98,7 @@ const formatXml = () => {
   if (bodyType.value !== 'xml' || !bodyContent.value.trim()) return
   const check = validateXmlWithPlaceholders(bodyContent.value)
   if (!check.valid) {
-    uiStore.showToast(check.error || 'XML không hợp lệ, không thể format')
+    uiStore.showToast(check.error || t('bodyEditor.invalidXmlFormat'))
     return
   }
   try {
@@ -195,7 +197,7 @@ const handleKeydown = (e: KeyboardEvent) => {
   <div class="flex-1 flex flex-col h-full min-h-0">
     <!-- Body content -->
     <div v-if="bodyType === 'none' || !['none', 'json', 'text', 'xml', 'urlencoded', 'formdata'].includes(bodyType)" class="flex-1 p-3 text-text-secondary ui-sm">
-      Request này không có body.
+      {{ t('bodyEditor.noBody') }}
     </div>
 
     <div v-else-if="bodyType === 'urlencoded'" data-test="body-urlencoded-editor" class="flex-1 p-3 pt-0">
@@ -213,7 +215,7 @@ const handleKeydown = (e: KeyboardEvent) => {
           <span
             v-if="jsonValidation.valid && jsonValidation.isJsonc"
             data-test="json-valid-badge"
-            title="Comments/trailing comma sẽ được xóa khi gửi"
+            :title="t('bodyEditor.jsoncHint')"
             class="inline-flex items-center gap-1 text-emerald-300/90 font-medium"
           >
             ✓ JSONC
@@ -223,7 +225,7 @@ const handleKeydown = (e: KeyboardEvent) => {
             data-test="json-valid-badge"
             class="inline-flex items-center gap-1 text-emerald-400 font-medium"
           >
-            ✓ JSON hợp lệ
+            ✓ {{ t('bodyEditor.validJson') }}
           </span>
           <span
             v-else
@@ -232,17 +234,17 @@ const handleKeydown = (e: KeyboardEvent) => {
             class="inline-flex items-center gap-1 text-amber-400/70 font-medium truncate"
             :title="jsonValidation.error"
           >
-            ⚠ {{ jsonValidation.error || `JSON lỗi cú pháp (dòng ${jsonValidation.line}, cột ${jsonValidation.column})` }}
+            ⚠ {{ jsonValidation.error || t('bodyEditor.jsonSyntaxError', { line: jsonValidation.line, column: jsonValidation.column }) }}
           </span>
         </div>
         <button
           type="button"
           data-test="prettify-json-btn"
-          title="Format / Prettify JSON"
+          :title="t('bodyEditor.formatJsonTitle')"
           class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
           @click="formatJson"
         >
-          Format JSON
+          {{ t('bodyEditor.formatJson') }}
         </button>
       </div>
 
@@ -254,7 +256,7 @@ const handleKeydown = (e: KeyboardEvent) => {
             data-test="xml-valid-badge"
             class="inline-flex items-center gap-1 text-emerald-400 font-medium"
           >
-            ✓ XML hợp lệ
+            ✓ {{ t('bodyEditor.validXml') }}
           </span>
           <span
             v-else-if="bodyContent?.trim() && !xmlValidation.valid"
@@ -263,17 +265,17 @@ const handleKeydown = (e: KeyboardEvent) => {
             class="inline-flex items-center gap-1 text-amber-400/70 font-medium truncate"
             :title="xmlValidation.error"
           >
-            ⚠ {{ xmlValidation.error || (xmlValidation.line ? `XML lỗi cú pháp (dòng ${xmlValidation.line}, cột ${xmlValidation.column})` : 'XML lỗi cú pháp') }}
+            ⚠ {{ xmlValidation.error || (xmlValidation.line ? t('bodyEditor.xmlSyntaxError', { line: xmlValidation.line, column: xmlValidation.column }) : t('bodyEditor.xmlSyntaxErrorGeneric')) }}
           </span>
         </div>
         <button
           type="button"
           data-test="prettify-xml-btn"
-          title="Format / Prettify XML"
+          :title="t('bodyEditor.formatXmlTitle')"
           class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
           @click="formatXml"
         >
-          Format XML
+          {{ t('bodyEditor.formatXml') }}
         </button>
       </div>
 

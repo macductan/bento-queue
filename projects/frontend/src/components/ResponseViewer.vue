@@ -12,6 +12,7 @@ import { tryParseJson, formatJsonText } from '@/utils/jsonHighlight'
 import { tryParseXml, formatXmlText } from '@/utils/xmlUtils'
 import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
 import { useUiStore } from '@/stores/uiStore'
+import { useI18n } from '@/i18n'
 
 export interface ResponseViewerOverrideData {
   response?: ExecuteResponse | null
@@ -29,6 +30,7 @@ const props = defineProps<{
 
 const responseStore = useResponseStore()
 const uiStore = useUiStore()
+const { t } = useI18n()
 const activeTab = ref<'body' | 'headers' | 'logs' | 'tests'>('body')
 const expandedLogIds = ref<Record<string, boolean>>({})
 
@@ -465,8 +467,8 @@ const levelBadgeClass = (level: string) => {
             type="button"
             data-test="collapse-response-btn"
             @click="uiStore.setResponsePaneCollapsed(true)"
-            title="Đóng / Thu gọn khung Response"
-            aria-label="Đóng / Thu gọn khung Response"
+            :title="t('responseViewer.collapseResponse')"
+            :aria-label="t('responseViewer.collapseResponse')"
             class="flex items-center justify-center p-1.5 rounded hover:bg-surface-raised text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -495,7 +497,7 @@ const levelBadgeClass = (level: string) => {
                 !canBePretty ? 'opacity-50 cursor-not-allowed' : ''
               ]"
               :disabled="!canBePretty"
-              :title="!canBePretty ? 'Không phải JSON hoặc XML hợp lệ' : ''"
+              :title="!canBePretty ? t('responseViewer.invalidJsonOrXml') : ''"
             >
               Pretty
             </button>
@@ -518,7 +520,7 @@ const levelBadgeClass = (level: string) => {
             type="button"
             data-test="toggle-response-search-btn"
             :aria-pressed="isSearchOpen"
-            title="Tìm kiếm trong Response (Ctrl+F)"
+            :title="t('responseViewer.searchShortcut')"
             @click="toggleSearch"
             class="flex items-center gap-1.5 ui-xs transition-colors px-2 py-1 rounded border outline-none cursor-pointer"
             :class="
@@ -531,7 +533,7 @@ const levelBadgeClass = (level: string) => {
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
-            Tìm kiếm
+            {{ t('common.search') }}
           </button>
 
           <button 
@@ -545,7 +547,7 @@ const levelBadgeClass = (level: string) => {
             <svg v-else class="w-3.5 h-3.5 text-status-2xx" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
               <path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z" />
             </svg>
-            Sao chép
+            {{ copyStatus === 'idle' ? t('common.copy') : t('common.copied') }}
           </button>
         </div>
       </div>
@@ -566,8 +568,8 @@ const levelBadgeClass = (level: string) => {
             v-model="searchQuery"
             type="text"
             data-test="response-search-input"
-            placeholder="Tìm trong Response..."
-            aria-label="Tìm trong Response"
+            :placeholder="t('responseViewer.searchPlaceholder')"
+            :aria-label="t('responseViewer.searchPlaceholder')"
             @keydown="handleSearchInputKeydown"
             class="w-full pl-8 pr-8 py-1 text-xs font-mono bg-surface-input border border-border-default rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-emerald-500/60"
           />
@@ -575,7 +577,7 @@ const levelBadgeClass = (level: string) => {
             type="button"
             data-test="response-search-case-btn"
             :aria-pressed="searchCaseSensitive"
-            title="Phân biệt hoa thường (Match Case)"
+            :title="t('responseViewer.matchCase')"
             @click="toggleCaseSensitive"
             class="absolute right-1.5 px-1 py-0.5 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer"
             :class="
@@ -600,8 +602,8 @@ const levelBadgeClass = (level: string) => {
           <button
             type="button"
             data-test="response-search-prev-btn"
-            title="Kết quả trước (Shift+Enter)"
-            aria-label="Kết quả trước"
+            :title="t('responseViewer.prevResultShortcut')"
+            :aria-label="t('responseViewer.prevResult')"
             :disabled="totalMatches === 0"
             @click="prevMatch"
             class="p-1 rounded text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
@@ -613,8 +615,8 @@ const levelBadgeClass = (level: string) => {
           <button
             type="button"
             data-test="response-search-next-btn"
-            title="Kết quả tiếp theo (Enter)"
-            aria-label="Kết quả tiếp theo"
+            :title="t('responseViewer.nextResultShortcut')"
+            :aria-label="t('responseViewer.nextResult')"
             :disabled="totalMatches === 0"
             @click="nextMatch"
             class="p-1 rounded text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
@@ -628,8 +630,8 @@ const levelBadgeClass = (level: string) => {
         <button
           type="button"
           data-test="response-search-close-btn"
-          title="Đóng tìm kiếm (Esc)"
-          aria-label="Đóng tìm kiếm"
+          :title="t('responseViewer.closeSearchShortcut')"
+          :aria-label="t('responseViewer.closeSearch')"
           @click="closeSearch"
           class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer"
         >
@@ -655,18 +657,18 @@ const levelBadgeClass = (level: string) => {
           <EmptyStateResponse v-else-if="!currentResponse" />
           <template v-else>
             <div v-if="currentResponse.truncated" class="mx-4 mt-4 mb-3 p-3 bg-warning-bg border border-warning-border rounded text-warning-text text-sm shrink-0">
-              Phản hồi quá lớn và đã bị cắt bớt (tối đa 10MB).
+              {{ t('responseViewer.truncatedWarning') }}
             </div>
             
             <div v-if="isEmptyResponse" class="flex-1 flex items-center justify-center text-text-secondary ui-sm">
-              Response không có body.
+              {{ t('responseViewer.noBody') }}
             </div>
             <div v-else-if="isBinaryResponse" class="flex-1 flex flex-col items-center justify-center text-text-secondary gap-2 p-4">
               <svg class="w-12 h-12 text-text-muted" viewBox="0 0 256 256" fill="currentColor">
                 <path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Z"/>
                 <path d="M96,128a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,128Zm0,32a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,160Zm0,32a8,8,0,0,1,8-8h24a8,8,0,0,1,0,16H104A8,8,0,0,1,96,192Z" opacity="0.2"/>
               </svg>
-              <div class="ui-sm font-medium">Response dạng nhị phân ({{ formatSize(currentResponse?.size_bytes ?? 0) }}) — không hiển thị nội dung.</div>
+              <div class="ui-sm font-medium">{{ t('responseViewer.binaryResponse', { size: formatSize(currentResponse?.size_bytes ?? 0) }) }}</div>
             </div>
             <JsonViewer
               v-else
@@ -682,7 +684,7 @@ const levelBadgeClass = (level: string) => {
         </div>
         <div v-show="activeTab === 'headers'" class="absolute inset-0" id="panel-headers" role="tabpanel" aria-labelledby="tab-headers">
           <HeadersTable v-if="currentResponse" :headers="currentResponse.headers" />
-          <div v-else class="flex items-center justify-center h-full text-text-muted text-xs">Chưa có phản hồi HTTP.</div>
+          <div v-else class="flex items-center justify-center h-full text-text-muted text-xs">{{ t('responseViewer.noHttpResponse') }}</div>
         </div>
         <div
           v-if="currentTestResults.length > 0"
@@ -695,7 +697,7 @@ const levelBadgeClass = (level: string) => {
         >
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-              Kết quả kiểm thử ha.test() ({{ testsPassedCount }}/{{ currentTestResults.length }} Passed)
+              {{ t('responseViewer.testResults', { passed: testsPassedCount, total: currentTestResults.length }) }}
             </span>
           </div>
           <div
@@ -729,7 +731,7 @@ const levelBadgeClass = (level: string) => {
         >
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-              Bảng nhật ký thực thi Request &amp; Script (Execution &amp; Console Logs)
+              {{ t('responseViewer.executionLogsTitle') }}
             </span>
             <button
               v-if="!isOverrideMode && (logsCount > 0 || currentScriptError)"
@@ -738,7 +740,7 @@ const levelBadgeClass = (level: string) => {
               class="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-surface-hover cursor-pointer"
               @click="responseStore.clearLogs()"
             >
-              Xóa log
+              {{ t('responseViewer.clearLogs') }}
             </button>
           </div>
 
@@ -753,10 +755,10 @@ const levelBadgeClass = (level: string) => {
             <table class="w-full text-left border-collapse font-mono text-xs" data-test="execution-logs-table">
               <thead>
                 <tr class="border-b border-border-default bg-surface-raised text-text-muted text-[11px]">
-                  <th class="py-2 px-3 w-28">Thời gian</th>
-                  <th class="py-2 px-3 w-28">Giai đoạn</th>
-                  <th class="py-2 px-3 w-20">Mức độ</th>
-                  <th class="py-2 px-3">Nội dung chi tiết</th>
+                  <th class="py-2 px-3 w-28">{{ t('responseViewer.logTime') }}</th>
+                  <th class="py-2 px-3 w-28">{{ t('responseViewer.logPhase') }}</th>
+                  <th class="py-2 px-3 w-20">{{ t('responseViewer.logLevel') }}</th>
+                  <th class="py-2 px-3">{{ t('responseViewer.logDetail') }}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-subtle">
@@ -791,7 +793,7 @@ const levelBadgeClass = (level: string) => {
                           class="text-[11px] text-brand-primary hover:underline shrink-0 cursor-pointer"
                           @click="toggleLogDetail(item.id)"
                         >
-                          {{ expandedLogIds[item.id] ? 'Ẩn chi tiết' : 'Chi tiết HTTP' }}
+                          {{ expandedLogIds[item.id] ? t('responseViewer.hideDetail') : t('responseViewer.httpDetail') }}
                         </button>
                       </div>
                       <div
@@ -800,7 +802,7 @@ const levelBadgeClass = (level: string) => {
                         data-test="http-log-detail-box"
                       >
                         <div>
-                          <div class="font-semibold text-sky-400 mb-1">Request gửi đi:</div>
+                          <div class="font-semibold text-sky-400 mb-1">{{ t('responseViewer.outgoingRequest') }}</div>
                           <div class="text-text-secondary">{{ item.detail.method }} {{ item.detail.url }}</div>
                           <div v-if="item.detail.requestHeaders?.length" class="mt-1 space-y-0.5">
                             <div v-for="(h, hIdx) in item.detail.requestHeaders" :key="hIdx" class="text-text-muted">
@@ -811,7 +813,7 @@ const levelBadgeClass = (level: string) => {
                         </div>
                         <div v-if="item.detail.statusCode !== undefined" class="pt-2 border-t border-border-subtle">
                           <div class="font-semibold text-emerald-400 mb-1">
-                            Response nhận về: {{ item.detail.statusCode }} {{ item.detail.statusText }} ({{ item.detail.timeMs }}ms)
+                            {{ t('responseViewer.incomingResponse') }} {{ item.detail.statusCode }} {{ item.detail.statusText }} ({{ item.detail.timeMs }}ms)
                           </div>
                           <pre v-if="item.detail.responseBodyPreview" class="mt-1 p-1.5 rounded bg-surface-base text-emerald-200 overflow-x-auto whitespace-pre-wrap">{{ item.detail.responseBodyPreview }}</pre>
                         </div>
@@ -831,7 +833,7 @@ const levelBadgeClass = (level: string) => {
           </div>
 
           <div v-else class="text-xs text-text-muted font-mono py-6 text-center">
-            Chưa có log thực thi. Hãy gửi request hoặc dùng console.log(...) trong Script để debug.
+            {{ t('responseViewer.noLogsHint') }}
           </div>
         </div>
       </div>
@@ -843,8 +845,8 @@ const levelBadgeClass = (level: string) => {
         type="button"
         data-test="collapse-response-btn"
         @click="uiStore.setResponsePaneCollapsed(true)"
-        title="Đóng / Thu gọn khung Response"
-        aria-label="Đóng / Thu gọn khung Response"
+        :title="t('responseViewer.collapseResponse')"
+        :aria-label="t('responseViewer.collapseResponse')"
         class="absolute top-2 right-2 p-1.5 rounded hover:bg-surface-raised text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
       >
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

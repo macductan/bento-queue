@@ -32,6 +32,27 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.17.0] - 2026-11-05
+
+### Added
+- **Bilingual i18n System (English & Vietnamese - Default English)**:
+  - Tích hợp hệ thống đa ngôn ngữ song ngữ Anh - Việt với ngôn ngữ mặc định khởi tạo là English (`en`) và fallback an toàn về `en`.
+  - Composable zero-dependency phản ứng nhanh `useI18n()` tại `projects/frontend/src/i18n/index.ts` (~35 dòng code), hỗ trợ cú pháp nội suy tham số động `{param}` và chuyển đổi ngôn ngữ tức thì trong toàn bộ ứng dụng mà không cần tải lại trang.
+  - Bộ từ điển hoàn chỉnh đối ứng 1:1 giữa `projects/frontend/src/i18n/locales/en.ts` và `locales/vi.ts` cho tất cả các thành phần: Header, Sidebar, Request Tabs, Editors (URL Bar, KVP, Auth, Body, Scripts, Folder), Modals, Dialogs, Toasts và Empty States.
+  - Đồng bộ cấu hình ngôn ngữ đa máy qua Git: bổ sung trường `Locale` (`"en" | "vi"`) vào struct `model.Collection` ở backend Go, tự động lưu trữ trong file `collection.json` và đồng bộ qua Git Remote khi người dùng chạy Git Sync, kết hợp lưu trữ `localStorage` tại máy trạm và cơ chế rollback an toàn khi ghi đĩa thất bại.
+  - Bổ sung tùy chọn chuyển đổi ngôn ngữ (Language: English / Tiếng Việt) kèm thông tin đồng bộ Git trong `SettingsModal.vue`.
+
+### Fixed
+- **Sidebar Tree Method Badge Spacing (`TreeNodeRow.vue`)**:
+  - Loại bỏ class độ rộng cố định `w-11` (44px) và chuẩn hóa khoảng cách thành `mr-1.5` (6px) giữa badge HTTP Method (`POST`, `GET`,...) và tên request, khắc phục hoàn toàn lỗi khoảng trống thừa lớn (~20-26px) trên cây thư mục sidebar và căn thẳng hàng tự nhiên với tên thư mục con.
+
+### Changed
+- **Build, Documentation & Skill Maintenance**:
+  - Bổ sung tài liệu `README.md` toàn diện và cô lập cấu hình test / build dmg trên macOS.
+  - Dọn dẹp các rule ignore và bỏ các skill deprecated.
+
+---
+
 ## [v1.16.0] - 2026-10-27
 
 ### Added

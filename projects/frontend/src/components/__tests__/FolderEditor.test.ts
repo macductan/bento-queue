@@ -34,6 +34,7 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     vi.clearAllMocks()
     vi.mocked(LoadFolder).mockResolvedValue({ success: true, data: JSON.parse(JSON.stringify(mockFolder)) } as any)
     vi.mocked(UpdateFolder).mockResolvedValue({ success: true, data: {} } as any)
@@ -835,5 +836,22 @@ describe('FolderEditor.vue - Auto-save & Save State Indicator', () => {
 
     expect(UpdateFolder).toHaveBeenCalledTimes(1)
     expect(uiStore.toast?.text).toBe('Đã lưu cấu hình thư mục')
+  })
+
+  it('renders in English when locale is set to en', async () => {
+    useUiStore().setLocale('en')
+    const colStore = useCollectionStore()
+    colStore.activeFolderId = 'folder-1'
+    colStore.tree = [{ ...mockTreeNode }]
+
+    const wrapper = mountEditor()
+    await nextTick()
+    await nextTick()
+
+    const indicator = wrapper.find('[data-test="folder-save-state-indicator"]')
+    expect(indicator.text()).toContain('Saved')
+
+    const saveBtn = wrapper.find('[data-test="folder-save-btn"]')
+    expect(saveBtn.text()).toContain('Save')
   })
 })

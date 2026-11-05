@@ -9,6 +9,7 @@ import { useUiStore } from '@/stores/uiStore'
 describe('BodyEditor.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
   })
 
   it('renders smart XML toolbar with valid badge when bodyType is xml and content is valid XML', async () => {
@@ -175,5 +176,30 @@ describe('BodyEditor.vue', () => {
     await nextTick()
 
     expect(reqStore.current?.body?.content).toContain('\n')
+  })
+
+  it('renders in English when locale is en', async () => {
+    useUiStore().setLocale('en')
+    const reqStore = useRequestStore()
+    reqStore.current = {
+      id: 'req-1',
+      name: 'XML Request',
+      method: 'POST',
+      url: 'https://api.example.com/soap',
+      headers: [],
+      params: [],
+      body: {
+        type: 'xml',
+        content: '<Envelope><Body><Item id="1">Widget</Item></Body></Envelope>'
+      },
+      created_at: '',
+      updated_at: ''
+    } as any
+
+    const wrapper = mount(BodyEditor)
+    await nextTick()
+
+    const validBadge = wrapper.find('[data-test="xml-valid-badge"]')
+    expect(validBadge.text()).toContain('Valid XML')
   })
 })

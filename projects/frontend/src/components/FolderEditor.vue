@@ -13,6 +13,9 @@ import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import { getInheritedHeaders, getDefaultHeaders, type DefaultHeaderItem } from '@/utils/headers'
 import { resolveEffectiveAuth, getAuthArtifacts } from '@/utils/auth'
 import { resolveVariables } from '@/utils/variables'
+import { useI18n } from '@/i18n'
+
+const { t } = useI18n()
 
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
@@ -614,7 +617,7 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
 <template>
   <div class="flex flex-col h-full bg-surface-base">
     <div v-if="loading" class="flex-1 flex items-center justify-center text-text-muted">
-      Đang tải...
+      {{ t('common.loading') }}
     </div>
     <div v-else-if="folder" class="flex flex-col h-full">
       <div class="px-4 py-3 border-b border-border-default flex items-center justify-between gap-2">
@@ -627,15 +630,15 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
               <span
                 data-test="breadcrumb-current-folder"
                 class="truncate cursor-pointer hover:text-brand-primary transition-colors"
-                title="Nháy đúp để đổi tên thư mục"
+                :title="t('requestEditor.renameFolderHint')"
                 @dblclick.stop="startRenameFolder"
               >{{ folderName }}</span>
               <button
                 type="button"
                 data-test="breadcrumb-rename-btn"
                 class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
-                title="Sửa tên Thư mục"
-                aria-label="Sửa tên Thư mục"
+                :title="t('requestEditor.renameFolder')"
+                :aria-label="t('requestEditor.renameFolder')"
                 @click.stop="startRenameFolder"
               >
                 <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -671,19 +674,19 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span class="text-text-secondary text-xs">Đang lưu...</span>
+              <span class="text-text-secondary text-xs">{{ t('requestEditor.saving') }}</span>
             </template>
 
             <!-- unsaved -->
             <template v-else-if="saveStatus === 'unsaved'">
-              <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
-              <span class="text-amber-400 text-xs">Chưa lưu</span>
+              <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" :title="t('common.unsaved')" :aria-label="t('common.unsaved')"></span>
+              <span class="text-amber-400 text-xs">{{ t('common.unsaved') }}</span>
             </template>
 
             <!-- error -->
             <template v-else-if="saveStatus === 'error'">
-              <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" title="Lỗi khi lưu" aria-label="Lỗi khi lưu"></span>
-              <span class="text-red-400 text-xs">Lỗi khi lưu</span>
+              <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" :title="t('requestEditor.saveError')" :aria-label="t('requestEditor.saveError')"></span>
+              <span class="text-red-400 text-xs">{{ t('requestEditor.saveError') }}</span>
             </template>
 
             <!-- saved -->
@@ -691,7 +694,7 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
               <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
-              <span class="text-text-muted text-xs">Đã lưu</span>
+              <span class="text-text-muted text-xs">{{ t('requestEditor.saved') }}</span>
             </template>
           </span>
           <button
@@ -699,7 +702,7 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
             data-test="folder-save-btn"
             :disabled="saving || saveStatus === 'saving'"
             class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 border border-zinc-700 text-[11px] font-medium transition-colors cursor-pointer"
-            title="Lưu thay đổi (Ctrl+S)"
+            :title="t('requestEditor.saveShortcut')"
             @click="saveFolderData(false)"
           >
             <svg class="w-3.5 h-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -707,7 +710,7 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
               <polyline points="17 21 17 13 7 13 7 21"></polyline>
               <polyline points="7 3 7 8 15 8"></polyline>
             </svg>
-            <span>Lưu</span>
+            <span>{{ t('common.save') }}</span>
             <kbd class="text-[9px] text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded border border-zinc-700 font-mono">Ctrl+S</kbd>
           </button>
         </div>
@@ -785,7 +788,7 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
           <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
             <div class="flex items-center gap-2">
               <label for="folder-env-scope-select" class="text-xs font-medium text-text-secondary whitespace-nowrap">
-                Phạm vi môi trường:
+                {{ t('auth.envScope') }}:
               </label>
               <CustomSelect
                 id="folder-env-scope-select"
@@ -796,7 +799,7 @@ const folderEnvScopeOptions = computed<SelectOption[]>(() => {
               />
             </div>
             <span class="text-xs text-text-muted">
-              {{ selectedEnvScope === '__folder_global__' ? 'Có hiệu lực cho mọi môi trường' : 'Chỉ áp dụng khi chọn môi trường này' }}
+              {{ selectedEnvScope === '__folder_global__' ? t('auth.applyAllEnvs') : t('auth.applyCurrentEnvOnly') }}
             </span>
           </div>
           <KvpEditor v-model="currentScopeVariables" />

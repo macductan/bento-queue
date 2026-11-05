@@ -4,11 +4,13 @@ import KvpEditor from '../KvpEditor.vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useRequestStore, type Request } from '@/stores/requestStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useUiStore } from '@/stores/uiStore'
 import { nextTick } from 'vue'
 
 describe('KvpEditor', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
   })
 
   const createMockRequest = (overrides: Partial<Request> = {}): Request => ({

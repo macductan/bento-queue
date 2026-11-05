@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { DEFAULT_LOCALE, LOCALE_STORAGE_KEY, setLocale as setI18nLocale, type Locale } from '@/i18n'
 
 export interface ToastMessage {
   id: number
@@ -337,7 +338,71 @@ export const useUiStore = defineStore('ui', () => {
     setResponsePaneCollapsed(!responsePaneCollapsed.value)
   }
 
+  // Locale state
+  function getSafeInitialLocale(): Locale {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(LOCALE_STORAGE_KEY)
+        if (stored === 'vi' || stored === 'en') {
+          return stored
+        }
+      } catch {
+        // Ignore storage error
+      }
+    }
+    return DEFAULT_LOCALE
+  }
+
+  const initialLocale: Locale = getSafeInitialLocale()
+
+  const locale = ref<Locale>(initialLocale)
+  setI18nLocale(initialLocale)
+
+  async function setLocale(newLocale: Locale, opts?: { skipCollectionSave?: boolean }) {
+    if (newLocale !== 'en' && newLocale !== 'vi') return
+    const prevLocale = locale.value
+    locale.value = newLocale
+    setI18nLocale(newLocale)
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(LOCALE_STORAGE_KEY, newLocale)
+      } catch {
+        // Ignore storage error
+      }
+    }
+    if (!opts?.skipCollectionSave) {
+      try {
+        const { useCollectionStore } = await import('./collectionStore')
+        const collStore = useCollectionStore()
+        const ok = await collStore.updateActiveCollectionLocale(newLocale)
+        if (ok === false) {
+          locale.value = prevLocale
+          setI18nLocale(prevLocale)
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(LOCALE_STORAGE_KEY, prevLocale)
+            } catch {
+              // Ignore storage error
+            }
+          }
+        }
+      } catch {
+        locale.value = prevLocale
+        setI18nLocale(prevLocale)
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(LOCALE_STORAGE_KEY, prevLocale)
+          } catch {
+            // Ignore storage error
+          }
+        }
+      }
+    }
+  }
+
   return {
+    locale,
+    setLocale,
     toast,
     showToast,
     clearToast,

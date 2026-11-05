@@ -162,6 +162,7 @@ type Collection struct {
 	GitRemoteURL string                 `json:"git_remote_url,omitempty"`
 	IsDefault    bool                   `json:"is_default,omitempty"`
 	IsActive     bool                   `json:"is_active,omitempty"`
+	Locale       string                 `json:"locale,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
 }

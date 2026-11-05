@@ -4,12 +4,14 @@ import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
 import { useFlowStore, type FlowTreeNode } from '@/stores/flowStore'
 import { useRequestStore } from '@/stores/requestStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useI18n } from '@/i18n'
 
 const props = defineProps<{
   node: TreeNode | FlowTreeNode
   depth: number
 }>()
 
+const { t } = useI18n()
 const store = useCollectionStore()
 const flowStore = useFlowStore()
 const requestStore = useRequestStore()
@@ -125,11 +127,11 @@ const handleDelete = async () => {
   const targetName = isFlowMode.value ? effectiveRawName.value : props.node.name
   const msg = isFlowMode.value
     ? isFolder.value
-      ? `Xóa thư mục '${targetName}'? Tất cả flow bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
-      : `Xóa flow '${targetName}'? Hành động này không thể hoàn tác.`
+      ? t('contextMenu.deleteFlowFolderConfirm', { name: targetName })
+      : t('contextMenu.deleteFlowConfirm', { name: targetName })
     : isFolder.value
-      ? `Xóa thư mục '${targetName}'? Tất cả request bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
-      : `Xóa request '${targetName}'? Hành động này không thể hoàn tác.`
+      ? t('contextMenu.deleteFolderConfirm', { name: targetName })
+      : t('contextMenu.deleteRequestConfirm', { name: targetName })
 
   const confirmed = await uiStore.requestConfirm(msg)
   if (confirmed) {
@@ -521,7 +523,7 @@ const onDrop = async (e: DragEvent) => {
       <span 
         v-if="!isFlowMode && !isFolder && effectiveMethod"
         data-test="tree-row-method-badge"
-        class="text-[10px] font-mono font-bold mr-2 w-11 shrink-0 text-left pointer-events-none"
+        class="text-[10px] font-mono font-bold mr-1.5 shrink-0 text-left pointer-events-none"
         :class="methodColorClass"
       >
         {{ effectiveMethod }}
@@ -533,9 +535,9 @@ const onDrop = async (e: DragEvent) => {
         <span
           v-if="isDirtyNode"
           data-test="tree-row-unsaved-dot"
-          aria-label="Chưa lưu"
+          :aria-label="t('common.unsaved')"
           class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0 pointer-events-none"
-          title="Chưa lưu"
+          :title="t('common.unsaved')"
         ></span>
       </span>
       <input
@@ -558,8 +560,8 @@ const onDrop = async (e: DragEvent) => {
         class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-indigo-400 hover:bg-zinc-700/80 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary cursor-pointer"
         :class="{ 'pointer-events-none': !!activeDraggingNode }"
         data-test="folder-settings-btn"
-        title="Cài đặt Thư mục (Auth, Headers, Vars, Scripts)"
-        aria-label="Cài đặt Thư mục (Auth, Headers, Vars, Scripts)"
+        :title="t('tree.folderSettingsTitle')"
+        :aria-label="t('tree.folderSettingsTitle')"
         @click.stop="handleOpenFolderSettings"
         @dblclick.stop
       >
@@ -578,13 +580,13 @@ const onDrop = async (e: DragEvent) => {
 
       <!-- Folder Sort Button -->
       <button 
-        v-if="!isEditing && isFolder"
+      v-if="!isEditing && isFolder"
         type="button"
         class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-zinc-700/80 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary cursor-pointer"
         :class="{ 'pointer-events-none': !!activeDraggingNode }"
         data-test="folder-sort-btn"
-        title="Sắp xếp thư mục theo A-Z"
-        aria-label="Sắp xếp thư mục theo A-Z"
+        :title="t('tree.sortFolderTitle')"
+        :aria-label="t('tree.sortFolderTitle')"
         @click.stop="handleSortFolder"
         @dblclick.stop
       >
@@ -604,7 +606,7 @@ const onDrop = async (e: DragEvent) => {
         data-test="tree-node-menu-btn"
         class="w-6 h-6 ml-1 flex items-center justify-center shrink-0 rounded text-text-secondary hover:text-text-primary hover:bg-zinc-700/80 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-primary"
         :class="{ 'pointer-events-none': !!activeDraggingNode }"
-        aria-label="Tùy chọn"
+        :aria-label="t('common.options')"
         @click.stop="handleMenuClick"
         @dblclick.stop
       >

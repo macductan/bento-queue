@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
+import { useI18n } from '@/i18n'
 
 const props = defineProps<{
   field?: 'params' | 'headers' | 'path_params'
@@ -14,6 +15,7 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: any[]): void
 }>()
 
+const { t } = useI18n()
 const requestStore = useRequestStore()
 
 const rows = computed(() => {
@@ -210,7 +212,7 @@ const initResize = (el: any) => {
               @click="toggleRowEnabled(index)"
               class="w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
               :class="row.enabled ? 'bg-brand-primary border-brand-primary text-white' : 'bg-surface-input border-border-default text-transparent hover:border-border-focus'"
-              aria-label="Bật/tắt dòng"
+              :aria-label="t('kvp.toggleRow')"
             >
               <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="216 72 104 184 48 128"></polyline>
@@ -282,8 +284,8 @@ const initResize = (el: any) => {
               v-if="!row._isPhantom && !row._isAuto"
               @click="removeRow(index)" 
               class="text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 hover:bg-surface-hover rounded outline-none transition-opacity cursor-pointer"
-              aria-label="Xóa dòng"
-              title="Xóa dòng"
+              :aria-label="t('common.deleteRow')"
+              :title="t('common.deleteRow')"
             >
               <svg class="w-4 h-4" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
                 <path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"></path>
@@ -303,7 +305,7 @@ const initResize = (el: any) => {
         <svg class="w-3.5 h-3.5" viewBox="0 0 256 256" fill="currentColor">
           <path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path>
         </svg>
-        <span>Thêm mới</span>
+        <span>{{ t('common.addNew') }}</span>
       </button>
     </div>
   </div>

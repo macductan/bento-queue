@@ -371,6 +371,14 @@ const useBaseCollectionStore = defineStore('collection', {
           } else if (!this.activeCollectionId || !list.some(c => c.id === this.activeCollectionId)) {
             this.activeCollectionId = 'default'
           }
+          const currentActive = list.find(c => c.id === this.activeCollectionId) || active
+          const { useUiStore } = await import('./uiStore')
+          const uiStore = useUiStore()
+          if (currentActive && (currentActive as any).locale && ((currentActive as any).locale === 'en' || (currentActive as any).locale === 'vi')) {
+            uiStore.setLocale((currentActive as any).locale as 'en' | 'vi', { skipCollectionSave: true })
+          } else {
+            uiStore.setLocale(uiStore.locale || 'en', { skipCollectionSave: true })
+          }
           if (!opts?.skipEnvSync) {
             const { useEnvironmentStore } = await import('./environmentStore')
             const envStore = useEnvironmentStore()
@@ -856,6 +864,48 @@ const useBaseCollectionStore = defineStore('collection', {
         }
       } catch (err: any) {
         coll.active_env_id = prevActiveEnvId
+        uiStore.showToast(String(err))
+        return false
+      }
+    },
+    async updateActiveCollectionLocale(locale: 'en' | 'vi'): Promise<boolean> {
+      const coll = this.activeCollection
+      if (!coll) return true
+      const prevLocale = (coll as any).locale
+      ;(coll as any).locale = locale
+
+      let updateFn: typeof UpdateCollection | undefined
+      try {
+        updateFn = UpdateCollection
+      } catch {
+        return true
+      }
+      if (typeof updateFn !== 'function') {
+        return true
+      }
+
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      try {
+        const payload: any = {
+          ...coll,
+          id: coll.id || this.activeCollectionId,
+          locale
+        }
+        const result = await updateFn(payload)
+        if (result.success) {
+          if (result.data && Object.keys(result.data).length > 0) {
+            Object.assign(coll, result.data)
+          }
+          ;(coll as any).locale = locale
+          return true
+        } else {
+          ;(coll as any).locale = prevLocale
+          uiStore.showToast(result.error?.message || (uiStore.locale === 'vi' ? 'Không thể lưu cài đặt ngôn ngữ' : 'Failed to save language setting'))
+          return false
+        }
+      } catch (err: any) {
+        ;(coll as any).locale = prevLocale
         uiStore.showToast(String(err))
         return false
       }

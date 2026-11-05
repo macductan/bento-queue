@@ -6,7 +6,9 @@ import { useUiStore } from '@/stores/uiStore'
 import { useRequestStore } from '@/stores/requestStore'
 import TreeNodeRow from './TreeNodeRow.vue'
 import { filterTree, filterFlowTree } from '@/utils/treeFilter'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const store = useCollectionStore()
 const flowStore = useFlowStore()
 const uiStore = useUiStore()
@@ -308,14 +310,14 @@ const onRootDrop = async (e: DragEvent) => {
   <nav
     class="shrink-0 bg-surface-raised border-r border-border-default flex flex-col overflow-hidden"
     :style="{ width: `${uiStore.sidebarWidth}px`, minWidth: `${uiStore.sidebarWidth}px` }"
-    :aria-label="store.activeCollection?.name ? `Bộ sưu tập: ${store.activeCollection.name}` : 'Bộ sưu tập'"
+    :aria-label="store.activeCollection?.name ? t('sidebar.collectionWithName', { name: store.activeCollection.name }) : t('sidebar.collection')"
   >
     <!-- Workspace Mode Switcher [ APIs | Flows ] -->
     <div class="px-2 pt-2 pb-1.5 border-b border-border-default shrink-0">
       <div
         class="grid grid-cols-2 p-0.5 rounded bg-surface-base border border-border-default"
         role="tablist"
-        aria-label="Chế độ không gian làm việc"
+        :aria-label="t('sidebar.workspaceMode')"
       >
         <button
           type="button"
@@ -391,8 +393,8 @@ const onRootDrop = async (e: DragEvent) => {
           @input="onFilterInput"
           type="text"
           data-test="tree-filter-input"
-          :aria-label="isFlowsMode ? 'Tìm kiếm trong danh sách flow' : 'Tìm kiếm trong bộ sưu tập'"
-          :placeholder="isFlowsMode ? 'Tìm kiếm flow...' : 'Tìm kiếm request...'"
+          :aria-label="isFlowsMode ? t('sidebar.searchAriaLabelFlow') : t('sidebar.searchAriaLabelApi')"
+          :placeholder="isFlowsMode ? t('sidebar.searchPlaceholderFlow') : t('sidebar.searchPlaceholderApi')"
           class="w-full pl-8 pr-7 py-1 text-xs rounded bg-surface-base border border-border-default hover:border-border-hover focus:border-brand-primary focus:outline-none transition-colors text-text-primary placeholder:text-text-muted"
           @keydown="handleFilterKeydown"
         />
@@ -400,7 +402,7 @@ const onRootDrop = async (e: DragEvent) => {
           v-if="filterQuery"
           type="button"
           data-test="clear-filter-btn"
-          title="Xóa bộ lọc"
+          :title="t('sidebar.clearFilter')"
           class="absolute right-1.5 p-0.5 rounded text-text-muted hover:text-text-primary cursor-pointer hover:bg-surface-hover"
           @click="clearFilter"
         >
@@ -418,8 +420,8 @@ const onRootDrop = async (e: DragEvent) => {
           <button
             type="button"
             data-test="sidebar-reload-btn"
-            :title="store.hasExternalChanges ? 'Phát hiện thay đổi từ bên ngoài — Nhấn để tải lại (Ctrl+R)' : 'Tải lại dữ liệu từ đĩa (Ctrl+R)'"
-            aria-label="Tải lại dữ liệu từ đĩa"
+            :title="store.hasExternalChanges ? t('sidebar.hasExternalChanges') : t('sidebar.reloadDisk')"
+            :aria-label="t('sidebar.reloadDisk')"
             class="relative w-7 h-7 flex items-center justify-center text-text-muted hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
             @click="handleSmartReload"
           >
@@ -450,8 +452,8 @@ const onRootDrop = async (e: DragEvent) => {
           <button
             type="button"
             data-test="tree-collapse-all-btn"
-            title="Thu gọn tất cả"
-            aria-label="Thu gọn tất cả"
+            :title="t('sidebar.collapseAll')"
+            :aria-label="t('sidebar.collapseAll')"
             class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
             @click="collapseAll"
           >
@@ -465,8 +467,8 @@ const onRootDrop = async (e: DragEvent) => {
           <button
             type="button"
             data-test="tree-sort-alphabet-btn"
-            title="Sắp xếp theo thứ tự A-Z"
-            aria-label="Sắp xếp theo thứ tự A-Z"
+            :title="t('sidebar.sortAlphabet')"
+            :aria-label="t('sidebar.sortAlphabet')"
             class="w-7 h-7 flex items-center justify-center text-text-muted hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors cursor-pointer"
             @click="sortAlphabet"
           >
@@ -485,13 +487,13 @@ const onRootDrop = async (e: DragEvent) => {
           <button
             type="button"
             data-test="sidebar-add-btn"
-            :title="isFlowsMode ? 'Thêm mới (Flow / Thư mục Flow)' : 'Thêm mới (Request / Thư mục)'"
-            aria-label="Thêm mới"
+            :title="isFlowsMode ? t('sidebar.addNewTitleFlow') : t('sidebar.addNewTitleApi')"
+            :aria-label="t('sidebar.addNewAria')"
             :aria-expanded="addDropdownOpen"
             class="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 transition-colors cursor-pointer"
             @click="toggleAddDropdown"
           >
-            <span>+ Tạo mới</span>
+            <span>{{ t('sidebar.addNew') }}</span>
             <svg class="w-3 h-3 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
@@ -508,23 +510,23 @@ const onRootDrop = async (e: DragEvent) => {
                 type="button"
                 role="menuitem"
                 data-test="add-flow-item"
-                aria-label="Flow mới"
-                title="Flow mới (Ctrl+N)"
+                :aria-label="t('sidebar.newFlow')"
+                :title="t('sidebar.newFlow') + ' (Ctrl+N)'"
                 class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
                 @click="handleCreateFlow"
               >
-                <span>🔀 New Flow</span>
+                <span>🔀 {{ t('sidebar.newFlow') }}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 data-test="add-flow-folder-item"
-                aria-label="Thư mục Flow mới"
-                title="Thư mục Flow mới (Ctrl+Shift+N)"
+                :aria-label="t('sidebar.newFlowFolder')"
+                :title="t('sidebar.newFlowFolder') + ' (Ctrl+Shift+N)'"
                 class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
                 @click="handleCreateFlowFolder"
               >
-                <span>📁 New Flow Folder</span>
+                <span>📁 {{ t('sidebar.newFlowFolder') }}</span>
               </button>
             </template>
             <template v-else>
@@ -532,23 +534,23 @@ const onRootDrop = async (e: DragEvent) => {
                 type="button"
                 role="menuitem"
                 data-test="add-request-item"
-                aria-label="Request mới"
-                title="Request mới (Ctrl+N)"
+                :aria-label="t('sidebar.newRequest')"
+                :title="t('sidebar.newRequest') + ' (Ctrl+N)'"
                 class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
                 @click="handleCreateRequest"
               >
-                <span>📄 New Request</span>
+                <span>📄 {{ t('sidebar.newRequest') }}</span>
               </button>
               <button
                 type="button"
                 role="menuitem"
                 data-test="add-folder-item"
-                aria-label="Thư mục mới"
-                title="Thư mục mới (Ctrl+Shift+N)"
+                :aria-label="t('sidebar.newFolder')"
+                :title="t('sidebar.newFolder') + ' (Ctrl+Shift+N)'"
                 class="w-full px-3 py-1.5 text-left text-xs text-text-primary hover:bg-surface-hover flex items-center gap-2 cursor-pointer"
                 @click="handleCreateFolder"
               >
-                <span>📁 New Folder</span>
+                <span>📁 {{ t('sidebar.newFolder') }}</span>
               </button>
             </template>
           </div>
@@ -568,7 +570,7 @@ const onRootDrop = async (e: DragEvent) => {
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
         </svg>
-        <span class="truncate">Phát hiện ổ đĩa thay đổi (Git/CLI)</span>
+        <span class="truncate">{{ t('sidebar.externalChangeDetected') }}</span>
       </div>
       <button
         type="button"
@@ -576,7 +578,7 @@ const onRootDrop = async (e: DragEvent) => {
         class="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-medium text-[11px] shrink-0 transition-colors cursor-pointer"
         @click.stop="handleSmartReload"
       >
-        Tải lại
+        {{ t('sidebar.reload') }}
       </button>
     </div>
 
@@ -592,28 +594,28 @@ const onRootDrop = async (e: DragEvent) => {
       @contextmenu.prevent="handleRootContextMenu"
     >
       <template v-if="isFlowsMode">
-        <div v-if="flowStore.loading && flowStore.flowTree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
+        <div v-if="flowStore.loading && flowStore.flowTree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">{{ t('common.loading') }}</div>
         <div v-else-if="flowStore.error && flowStore.flowTree.length === 0" class="px-3 py-4 ui-sm text-text-danger">{{ flowStore.error }}</div>
         <div v-else-if="flowStore.flowTree.length === 0" class="px-3 py-8 text-center flex flex-col items-center gap-2">
-          <span class="ui-sm text-text-muted">Chưa có flow nào.</span>
+          <span class="ui-sm text-text-muted">{{ t('sidebar.emptyFlow') }}</span>
           <button 
             type="button"
             data-test="create-empty-flow-btn"
             @click="flowStore.createFlow()"
             class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
           >
-            Tạo flow mới
+            {{ t('sidebar.createEmptyFlow') }}
           </button>
         </div>
         <div v-else-if="filterQuery.trim() && displayedFlowTree.length === 0" data-test="tree-filter-empty" class="px-3 py-8 text-center flex flex-col items-center gap-2">
-          <span class="ui-sm text-text-muted">Không tìm thấy kết quả phù hợp cho "{{ filterQuery }}".</span>
+          <span class="ui-sm text-text-muted">{{ t('sidebar.noFilterResults', { query: filterQuery }) }}</span>
           <button 
             type="button"
             data-test="clear-filter-empty-btn"
             @click="clearFilter"
             class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
           >
-            Xóa bộ lọc
+            {{ t('sidebar.clearFilter') }}
           </button>
         </div>
         <div v-else class="flex flex-col min-h-full">
@@ -629,26 +631,26 @@ const onRootDrop = async (e: DragEvent) => {
         </div>
       </template>
       <template v-else>
-        <div v-if="store.loading && store.tree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">Đang tải...</div>
+        <div v-if="store.loading && store.tree.length === 0" class="px-3 py-4 text-center ui-sm text-text-muted">{{ t('common.loading') }}</div>
         <div v-else-if="store.error" class="px-3 py-4 ui-sm text-text-danger">{{ store.error }}</div>
         <div v-else-if="store.tree.length === 0" class="px-3 py-8 text-center flex flex-col items-center gap-2">
-          <span class="ui-sm text-text-muted">Collection trống.</span>
+          <span class="ui-sm text-text-muted">{{ t('sidebar.emptyCollection') }}</span>
           <button 
             @click="store.createRequest()"
             class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded"
           >
-            Tạo request mới
+            {{ t('sidebar.createEmptyRequest') }}
           </button>
         </div>
         <div v-else-if="filterQuery.trim() && displayedTree.length === 0" data-test="tree-filter-empty" class="px-3 py-8 text-center flex flex-col items-center gap-2">
-          <span class="ui-sm text-text-muted">Không tìm thấy kết quả phù hợp cho "{{ filterQuery }}".</span>
+          <span class="ui-sm text-text-muted">{{ t('sidebar.noFilterResults', { query: filterQuery }) }}</span>
           <button 
             type="button"
             data-test="clear-filter-empty-btn"
             @click="clearFilter"
             class="text-brand-primary hover:text-brand-primary-hover ui-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary rounded cursor-pointer"
           >
-            Xóa bộ lọc
+            {{ t('sidebar.clearFilter') }}
           </button>
         </div>
         <div v-else class="flex flex-col min-h-full">

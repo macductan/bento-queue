@@ -12,4 +12,14 @@ test.describe('Hecto API UI Smoke Test', () => {
     // Let's just wait for a bit to make sure it loads
     await page.waitForLoadState('networkidle');
   });
+
+  test('should default to English on fresh launch without configured locale', async ({ page }) => {
+    log.step('Navigate to the application with clean state');
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    log.step('Verify English UI elements by default');
+    await expect(page.getByLabel('Add new')).toBeVisible();
+    await expect(page.getByPlaceholder('Search requests...')).toBeVisible();
+  });
 });

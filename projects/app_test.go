@@ -18,6 +18,7 @@ import (
 
 func TestApp_startup(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
 	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
 	origCacheHome := os.Getenv("XDG_CACHE_HOME")
 	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
@@ -51,6 +52,7 @@ func TestApp_startup(t *testing.T) {
 
 func TestApp_CollectionCRUD_And_Switch(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
 	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
 	origCacheHome := os.Getenv("XDG_CACHE_HOME")
 	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
@@ -145,6 +147,7 @@ func TestApp_CollectionCRUD_And_Switch(t *testing.T) {
 
 func TestApp_UpdateCollectionRoot(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
 	origConfigHome := os.Getenv("XDG_CONFIG_HOME")
 	origCacheHome := os.Getenv("XDG_CACHE_HOME")
 	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
@@ -394,6 +397,7 @@ func TestEvaluateBackendNFRMetrics(t *testing.T) {
 
 func TestApp_NFRStartupAndMemory(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpDir, "cache"))
 

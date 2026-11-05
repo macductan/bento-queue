@@ -37,6 +37,7 @@ const (
 	ErrCollectionUpdateFailed   = "Không thể cập nhật thông tin collection"
 	ErrCollectionDeleteFailed   = "Không thể xóa collection"
 	ErrCollectionDuplicateFailed = "Không thể nhân bản collection"
+	ErrInvalidLocale            = "Ngôn ngữ không hợp lệ: chỉ chấp nhận 'en' hoặc 'vi'"
 	ErrParentFolderNotFound     = "Không tìm thấy thư mục cha"
 	ErrParentFolderInvalid     = "Thư mục cha không hợp lệ"
 	ErrFolderCreateFailed      = "Không thể tạo thư mục"

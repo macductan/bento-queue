@@ -20,7 +20,9 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import { resolveVariables } from '@/utils/variables'
 import { generateCurlCommand } from '@/utils/curl'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
@@ -177,9 +179,9 @@ const copyPreviewCurl = async () => {
     }
   }
   if (copied) {
-    uiStore.showToast('Đã sao chép cURL vào clipboard')
+    uiStore.showToast(t('requestEditor.curlCopied'))
   } else {
-    uiStore.showToast('Không thể sao chép vào clipboard')
+    uiStore.showToast(t('requestEditor.curlCopyError'))
   }
 }
 
@@ -260,7 +262,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
               data-test="breadcrumb-folder"
               :data-folder-id="part.id"
               class="opacity-80 shrink-0 hover:opacity-100 hover:text-text-primary hover:underline cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded px-0.5 -mx-0.5 py-0.5 leading-normal"
-              :title="`Cấu hình thư mục '${part.name}'`"
+              :title="t('requestEditor.configureFolder', { name: part.name })"
               @click="handleFolderClick(part.id)"
             >
               {{ part.name }}
@@ -275,7 +277,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 type="button"
                 data-test="breadcrumb-request"
                 class="truncate hover:underline hover:text-brand-primary cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary rounded px-0.5 -mx-0.5 font-semibold text-text-primary leading-normal py-0.5"
-                :title="`Xem vị trí '${req.name}' trong cây thư mục`"
+                :title="t('requestEditor.revealInTree', { name: req.name })"
                 @click="handleRequestClick"
                 @dblclick.stop="startRenameRequest"
               >
@@ -285,8 +287,8 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 type="button"
                 data-test="breadcrumb-rename-btn"
                 class="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
-                title="Sửa tên Request"
-                aria-label="Sửa tên Request"
+                :title="t('requestEditor.renameRequest')"
+                :aria-label="t('requestEditor.renameRequest')"
                 @click.stop="startRenameRequest"
               >
                 <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -309,8 +311,8 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             <span
               v-if="requestStore.saveStatus === 'unsaved'"
               class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0"
-              title="Chưa lưu"
-              aria-label="Chưa lưu"
+              :title="t('common.unsaved')"
+              :aria-label="t('common.unsaved')"
             />
           </h1>
         </div>
@@ -328,19 +330,19 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span class="text-text-secondary text-xs">Đang lưu...</span>
+              <span class="text-text-secondary text-xs">{{ t('requestEditor.saving') }}</span>
             </template>
 
             <!-- unsaved -->
             <template v-else-if="requestStore.saveStatus === 'unsaved'">
-              <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
-              <span class="text-amber-400 text-xs">Chưa lưu</span>
+              <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" :title="t('common.unsaved')" :aria-label="t('common.unsaved')"></span>
+              <span class="text-amber-400 text-xs">{{ t('common.unsaved') }}</span>
             </template>
 
             <!-- error -->
             <template v-else-if="requestStore.saveStatus === 'error'">
-              <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" title="Lỗi khi lưu" aria-label="Lỗi khi lưu"></span>
-              <span class="text-red-400 text-xs">Lỗi khi lưu</span>
+              <span class="w-2 h-2 rounded-full bg-red-500 shrink-0" :title="t('requestEditor.saveError')" :aria-label="t('requestEditor.saveError')"></span>
+              <span class="text-red-400 text-xs">{{ t('requestEditor.saveError') }}</span>
             </template>
 
             <!-- saved -->
@@ -348,7 +350,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
               <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
               </svg>
-              <span class="text-text-muted text-xs">Đã lưu</span>
+              <span class="text-text-muted text-xs">{{ t('requestEditor.saved') }}</span>
             </template>
           </span>
           <button
@@ -356,7 +358,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             data-test="request-save-btn"
             :disabled="requestStore.saveStatus === 'saving'"
             class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 border border-zinc-700 text-[11px] font-medium transition-colors cursor-pointer"
-            title="Lưu thay đổi (Ctrl+S)"
+            :title="t('requestEditor.saveShortcut')"
             @click="autoSave.saveNow()"
           >
             <svg class="w-3.5 h-3.5 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -364,7 +366,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
               <polyline points="17 21 17 13 7 13 7 21"></polyline>
               <polyline points="7 3 7 8 15 8"></polyline>
             </svg>
-            <span>Lưu</span>
+            <span>{{ t('common.save') }}</span>
             <kbd class="text-[9px] text-zinc-400 bg-zinc-900 px-1 py-0.5 rounded border border-zinc-700 font-mono">Ctrl+S</kbd>
           </button>
         </div>
@@ -382,7 +384,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             <div class="space-y-2" data-test="query-params-section">
               <div class="flex items-center justify-between px-1">
                 <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                  Query Params (?key=value)
+                  {{ t('requestEditor.queryParams') }}
                 </span>
               </div>
               <KvpEditor field="params" />
@@ -395,10 +397,10 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
             >
               <div class="flex items-center justify-between px-1">
                 <span class="text-xs font-semibold uppercase tracking-wider text-sky-400">
-                  Biến Path (:param)
+                  {{ t('requestEditor.pathParams') }}
                 </span>
                 <span class="text-[11px] text-text-muted">
-                  Tự động trích xuất từ các tham số <code class="font-mono text-sky-300">:tên_biến</code> trên URL
+                  {{ t('requestEditor.pathParamsHint') }}
                 </span>
               </div>
               <KvpEditor field="path_params" :readonly-keys="true" key-prefix=":" />
@@ -432,7 +434,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
           <div v-show="uiStore.activeRequestTab === 'curl'" role="tabpanel" id="panel-curl" aria-labelledby="tab-curl" data-test="curl-preview-panel" class="space-y-2">
             <div class="flex items-center justify-between">
               <span class="text-xs text-text-muted">
-                Lệnh cURL đã phân giải đầy đủ biến môi trường, headers kế thừa và thông tin xác thực:
+                {{ t('requestEditor.curlExplanation') }}
               </span>
               <button
                 type="button"
@@ -444,7 +446,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                 </svg>
-                <span>Sao chép cURL</span>
+                <span>{{ t('requestEditor.copyCurl') }}</span>
               </button>
             </div>
             <pre

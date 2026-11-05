@@ -1560,6 +1560,20 @@ func TestUpdateCollection_ValidationAndErrors(t *testing.T) {
 	if res.Success || res.Error.Code != model.ErrNotFound {
 		t.Errorf("expected ErrNotFound for non-existent ID, got %+v", res)
 	}
+
+	// 6. Invalid Locale
+	res = svc.UpdateCollection(collectionsRoot, model.Collection{ID: collID, Name: "Valid Name", Locale: "fr"})
+	if res.Success || res.Error.Code != model.ErrValidation || res.Error.Message != service.ErrInvalidLocale {
+		t.Errorf("expected ErrValidation with ErrInvalidLocale, got %+v", res)
+	}
+
+	// 7. Valid Locales: "en", "vi", ""
+	for _, validLoc := range []string{"en", "vi", ""} {
+		res = svc.UpdateCollection(collectionsRoot, model.Collection{ID: collID, Name: "Valid Name", Locale: validLoc})
+		if !res.Success {
+			t.Errorf("expected success for valid locale %q, got error: %+v", validLoc, res.Error)
+		}
+	}
 }
 
 func TestUpdateFolder_NotFound(t *testing.T) {
@@ -1643,6 +1657,54 @@ func TestCollection_ActiveEnvID_PersistenceAndBackwardCompat(t *testing.T) {
 	}
 	if clearedDiskColl.ActiveEnvID != "" {
 		t.Errorf("expected cleared ActiveEnvID '', got %q", clearedDiskColl.ActiveEnvID)
+	}
+}
+
+func TestCollection_Locale_PersistenceAndDuplicate(t *testing.T) {
+	svc, fs, collectionsRoot := setupCollectionService(t)
+
+	collRes := svc.CreateCollection(collectionsRoot, "Locale Test")
+	if !collRes.Success {
+		t.Fatalf("CreateCollection failed: %+v", collRes)
+	}
+	coll := collRes.Data.(model.Collection)
+
+	// 1. Initially Locale is empty
+	if coll.Locale != "" {
+		t.Errorf("expected empty Locale initially, got %q", coll.Locale)
+	}
+
+	// 2. UpdateCollection sets Locale to "vi"
+	updateRes := svc.UpdateCollection(collectionsRoot, model.Collection{
+		ID:     coll.ID,
+		Name:   "Locale Test",
+		Locale: "vi",
+	})
+	if !updateRes.Success {
+		t.Fatalf("UpdateCollection failed: %+v", updateRes)
+	}
+	updated := updateRes.Data.(model.Collection)
+	if updated.Locale != "vi" {
+		t.Errorf("expected updated Locale 'vi', got %q", updated.Locale)
+	}
+
+	// Verify on disk
+	var diskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collectionsRoot, coll.ID, "collection.json"), &diskColl); err != nil {
+		t.Fatalf("ReadJSON failed: %v", err)
+	}
+	if diskColl.Locale != "vi" {
+		t.Errorf("expected disk Locale 'vi', got %q", diskColl.Locale)
+	}
+
+	// 3. DuplicateCollection preserves Locale
+	dupRes := svc.DuplicateCollection(collectionsRoot, coll.ID)
+	if !dupRes.Success {
+		t.Fatalf("DuplicateCollection failed: %+v", dupRes)
+	}
+	dupColl := dupRes.Data.(model.Collection)
+	if dupColl.Locale != "vi" {
+		t.Errorf("expected duplicated collection Locale 'vi', got %q", dupColl.Locale)
 	}
 }
 
