@@ -834,6 +834,142 @@ describe('RequestEditor.vue - Save State Indicator', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-test="tab-auth-badge"]').text()).toBe('apiKey')
   })
+
+  it('toggles Hide Auth on cURL tab to hide/restore auth in preview and clipboard copy, and updates localized label', async () => {
+    const { useCollectionStore } = await import('@/stores/collectionStore')
+    const { useUiStore } = await import('@/stores/uiStore')
+
+    const colStore = useCollectionStore()
+    const requestStore = useRequestStore()
+    const uiStore = useUiStore()
+
+    colStore.collections = [
+      {
+        id: 'col-1',
+        name: 'Auth Coll',
+        auth: { type: 'bearer', bearer: { token: 'coll-secret' } }
+      } as any
+    ]
+    colStore.activeCollectionId = 'col-1'
+    colStore.tree = [
+      {
+        id: 'f-auth',
+        name: 'Auth Folder',
+        type: 'folder',
+        path: 'auth',
+        created_at: '',
+        headers: [{ key: 'Proxy-Authorization', value: 'Basic proxy123', enabled: true }],
+        children: [
+          {
+            id: 'req-curl-auth',
+            name: 'Get Protected',
+            type: 'request',
+            path: 'auth/protected',
+            created_at: ''
+          }
+        ]
+      }
+    ]
+
+    requestStore.current = createMockRequest({
+      id: 'req-curl-auth',
+      method: 'POST',
+      url: 'https://api.example.com/v1/protected?api_key=q-secret&page=2#sec',
+      auth: { type: 'apiKey', apiKey: { key: 'api_key', value: 'q-secret', addTo: 'query' } },
+      params: [
+        { key: 'api_key', value: 'q-secret', enabled: true },
+        { key: 'page', value: '2', enabled: true }
+      ],
+      headers: [
+        { key: 'Authorization', value: 'Bearer manual-token', enabled: true },
+        { key: 'X-Trace', value: 'trace-42', enabled: true }
+      ],
+      body: { type: 'json', content: '{"hello":"world"}' }
+    })
+
+    uiStore.activeRequestTab = 'curl'
+    const writeTextMock = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextMock },
+      configurable: true
+    })
+
+    const editorWrapper = mountEditor()
+    const toggle = editorWrapper.find('[data-test="curl-hide-auth-toggle"]')
+    const label = editorWrapper.find('[data-test="curl-hide-auth-label"]')
+    const codeEl = editorWrapper.find('[data-test="curl-preview-code"]')
+    const copyBtn = editorWrapper.find('[data-test="copy-preview-curl-btn"]')
+
+    expect(toggle.exists()).toBe(true)
+    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+    expect(label.text()).toBe('Ẩn xác thực')
+
+    // Default state shows full auth
+    expect(codeEl.text()).toContain("'https://api.example.com/v1/protected?api_key=q-secret&page=2#sec'")
+    expect(codeEl.text()).toContain("-H 'Proxy-Authorization: Basic proxy123'")
+    expect(codeEl.text()).toContain("-H 'Authorization: Bearer manual-token'")
+    expect(codeEl.text()).toContain("-H 'X-Trace: trace-42'")
+
+    // Enable Hide Auth
+    await toggle.setValue(true)
+    expect((toggle.element as HTMLInputElement).checked).toBe(true)
+    expect(codeEl.text()).toContain("'https://api.example.com/v1/protected?page=2#sec'")
+    expect(codeEl.text()).not.toContain('api_key')
+    expect(codeEl.text()).not.toContain('q-secret')
+    expect(codeEl.text()).not.toContain('Authorization')
+    expect(codeEl.text()).not.toContain('Proxy-Authorization')
+    expect(codeEl.text()).toContain("-H 'Content-Type: application/json'")
+    expect(codeEl.text()).toContain("-H 'X-Trace: trace-42'")
+    expect(codeEl.text()).toContain('--data-raw \'{"hello":"world"}\'')
+
+    // Copy cURL copies the auth-hidden command
+    await copyBtn.trigger('click')
+    expect(writeTextMock).toHaveBeenCalledTimes(1)
+    const copiedText = writeTextMock.mock.calls[0][0] as string
+    expect(copiedText).not.toContain('Authorization')
+    expect(copiedText).not.toContain('Proxy-Authorization')
+    expect(copiedText).not.toContain('api_key')
+    expect(copiedText).toContain("'https://api.example.com/v1/protected?page=2#sec'")
+
+    // Disable Hide Auth restores auth without mutating stored request auth/headers/params
+    await toggle.setValue(false)
+    expect(codeEl.text()).toContain("'https://api.example.com/v1/protected?api_key=q-secret&page=2#sec'")
+    expect(codeEl.text()).toContain("-H 'Authorization: Bearer manual-token'")
+    expect(codeEl.text()).toContain("-H 'Proxy-Authorization: Basic proxy123'")
+    expect(requestStore.current.auth).toEqual({
+      type: 'apiKey',
+      apiKey: { key: 'api_key', value: 'q-secret', addTo: 'query' }
+    })
+    expect(requestStore.current.headers.some(h => h.key === 'Authorization')).toBe(true)
+    expect(requestStore.current.params.some(p => p.key === 'api_key')).toBe(true)
+
+    // Switch locale to 'en' and back to 'vi'
+    await uiStore.setLocale('en', { skipCollectionSave: true })
+    await editorWrapper.vm.$nextTick()
+    expect(label.text()).toBe('Hide Auth')
+
+    await uiStore.setLocale('vi', { skipCollectionSave: true })
+    await editorWrapper.vm.$nextTick()
+    expect(label.text()).toBe('Ẩn xác thực')
+
+    // Inherited collection auth is also hidden when toggled on and restored when toggled off
+    requestStore.current = createMockRequest({
+      id: 'req-curl-auth',
+      method: 'GET',
+      url: 'https://api.example.com/v1/protected',
+      auth: { type: 'inherit' },
+      headers: [{ key: 'X-Trace', value: 'trace-99', enabled: true }]
+    })
+    await editorWrapper.vm.$nextTick()
+    expect(codeEl.text()).toContain("-H 'Authorization: Bearer coll-secret'")
+    expect(codeEl.text()).toContain("-H 'Proxy-Authorization: Basic proxy123'")
+
+    await toggle.setValue(true)
+    expect(codeEl.text()).not.toContain('Authorization')
+    expect(codeEl.text()).not.toContain('Proxy-Authorization')
+    expect(codeEl.text()).not.toContain('coll-secret')
+    expect(codeEl.text()).toContain("-H 'X-Trace: trace-99'")
+  })
 })
 
 

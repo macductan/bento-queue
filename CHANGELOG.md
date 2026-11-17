@@ -32,6 +32,15 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.18.0] - 2026-11-17
+
+### Added
+- **cURL Hide Auth Option (`RequestEditor.vue`, `curl.ts`, `buildExecuteRequest.ts`)**:
+  - Bổ sung tùy chọn **Hide Auth** (checkbox trong tab cURL Preview và áp dụng cho cả nút **Copy cURL**) cho phép ẩn hoàn toàn thông tin xác thực nhạy cảm (Authorization headers, API key headers/query params, Basic/Bearer tokens) khi chia sẻ lệnh cURL.
+  - Hỗ trợ `hideAuth` xuyên suốt từ `generateCurlCommand()` đến `buildExecuteRequest()` và `headless-engine.js`, kèm bộ test đơn vị mới cho `RequestEditor.vue`, `curl.ts`, `buildExecuteRequest.ts` và `headless-engine.ts` cũng như bản dịch i18n (`en.ts`, `vi.ts`).
+
+---
+
 ## [v1.17.0] - 2026-11-05
 
 ### Added

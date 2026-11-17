@@ -17,6 +17,7 @@ export interface ResolveEffectiveAuthOptions {
     auth?: AuthConfig
     auth_envs?: Record<string, AuthConfig>
   } | null
+  hideAuth?: boolean
 }
 
 function pickEntityAuth(

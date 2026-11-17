@@ -96,6 +96,7 @@ export default {
     pathParams: 'Path Variables (:param)',
     pathParamsHint: 'Automatically extracted from :param_name in URL',
     curlExplanation: 'cURL command with fully resolved environment variables, inherited headers, and authentication:',
+    hideAuth: 'Hide Auth',
     copyCurl: 'Copy cURL',
     curlCopied: 'Copied cURL to clipboard',
     curlCopyError: 'Failed to copy to clipboard'

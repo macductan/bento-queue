@@ -3,7 +3,7 @@ import type { TreeNode } from '../stores/collectionStore';
 import { resolveVariables } from './variables';
 import { mergeHeaders } from './headers';
 import { resolveEffectiveAuth, getAuthArtifacts, type ResolveEffectiveAuthOptions } from './auth';
-import { parseUrl, encodeQueryComponent, splitPreservingVars, resolvePathParamsInUrl } from './urlParams';
+import { parseUrl, encodeQueryComponent, decodeQueryComponent, splitPreservingVars, resolvePathParamsInUrl } from './urlParams';
 import { stripJsoncToJson } from './jsonEditor';
 
 export interface ExecuteRequest {
@@ -21,6 +21,36 @@ const AUTO_EXEC_CONTENT_TYPES: Record<string, string> = {
   urlencoded: 'application/x-www-form-urlencoded'
 };
 
+/**
+ * Removes query parameters matching hiddenKeys from a URL while preserving
+ * raw encoding of remaining query parameters and any #hash fragment.
+ */
+function stripQueryParamsFromUrl(url: string, hiddenKeys: Set<string>): string {
+  if (!url || hiddenKeys.size === 0) return url;
+
+  const [withoutHash, hash] = splitPreservingVars(url, '#', 2);
+  const queryParts = splitPreservingVars(withoutHash, '?', 2);
+  if (queryParts.length < 2) {
+    return url;
+  }
+
+  const baseUrl = queryParts[0] ?? '';
+  const rawQuery = queryParts[1] ?? '';
+  const segments = splitPreservingVars(rawQuery, '&');
+  const filteredSegments = segments.filter(segment => {
+    if (segment.length === 0) return false;
+    const eqParts = splitPreservingVars(segment, '=', 2);
+    const decodedKey = decodeQueryComponent(eqParts[0]).trim();
+    return !hiddenKeys.has(decodedKey);
+  });
+
+  const rebuilt = filteredSegments.length > 0
+    ? `${baseUrl}?${filteredSegments.join('&')}`
+    : baseUrl;
+
+  return hash !== undefined ? `${rebuilt}#${hash}` : rebuilt;
+}
+
 export function buildExecuteRequest(
   req: Request,
   vars: Map<string, string> = new Map(),
@@ -29,16 +59,33 @@ export function buildExecuteRequest(
   authOptions?: ResolveEffectiveAuthOptions
 ): ExecuteRequest {
   const method = req.method || 'GET';
-  
+  const hideAuth = authOptions?.hideAuth === true;
+
   // 1. Resolve Auth and get auth headers and query params
   const { auth: effectiveAuth } = resolveEffectiveAuth(req.auth, pathNodes, {
     ...authOptions,
     requestAuthEnvs: authOptions?.requestAuthEnvs ?? req.auth_envs
   });
   const { headers: rawAuthHeaders, params: rawAuthParams } = getAuthArtifacts(effectiveAuth, vars);
+
+  const hiddenHeaderKeys = new Set<string>(['authorization', 'proxy-authorization']);
+  const hiddenParamKeys = new Set<string>();
+  if (hideAuth) {
+    for (const h of rawAuthHeaders) {
+      if (h && typeof h.key === 'string' && h.key.trim() !== '') {
+        hiddenHeaderKeys.add(h.key.trim().toLowerCase());
+      }
+    }
+    for (const p of rawAuthParams) {
+      if (p && typeof p.key === 'string' && p.key.trim() !== '') {
+        hiddenParamKeys.add(p.key.trim());
+      }
+    }
+  }
+
   // Mark auth artifacts as resolved to avoid double variable expansion
-  const authHeaders = rawAuthHeaders.map(h => ({ ...h, _authResolved: true }));
-  const authParams = rawAuthParams.map(p => ({ ...p, _authResolved: true }));
+  const authHeaders = hideAuth ? [] : rawAuthHeaders.map(h => ({ ...h, _authResolved: true }));
+  const authParams = hideAuth ? [] : rawAuthParams.map(p => ({ ...p, _authResolved: true }));
 
   // 2. Merge headers:
   // authHeaders override inheritedHeaders, and req.headers overrides baseHeaders
@@ -60,7 +107,11 @@ export function buildExecuteRequest(
 
   // Headers - only substitute values, not keys
   const headers = merged
-    .filter(h => h.enabled && h.key.trim() !== '')
+    .filter(h =>
+      h.enabled &&
+      h.key.trim() !== '' &&
+      (!hideAuth || !hiddenHeaderKeys.has(h.key.trim().toLowerCase()))
+    )
     .map(h => ({
       key: h.key,
       value: (h as any)._authResolved ? h.value : resolveVariables(h.value, vars),
@@ -82,9 +133,11 @@ export function buildExecuteRequest(
     }
   }
 
-  const activeAuthParams = authParams.filter(ap => 
-    !reqParamKeys.has(ap.key) && !reqDisabledParamKeys.has(ap.key.toLowerCase())
-  );
+  const activeAuthParams = hideAuth
+    ? []
+    : authParams.filter(ap =>
+        !reqParamKeys.has(ap.key) && !reqDisabledParamKeys.has(ap.key.toLowerCase())
+      );
   const rawParams = [...activeAuthParams, ...(req.params || [])];
 
   const params = rawParams
@@ -94,7 +147,7 @@ export function buildExecuteRequest(
       value: (p as any)._authResolved ? p.value : resolveVariables(p.value, vars),
       enabled: p.enabled
     }))
-    .filter(p => p.key.trim() !== '');
+    .filter(p => p.key.trim() !== '' && (!hideAuth || !hiddenParamKeys.has(p.key.trim())));
 
   // Resolve :param path variables from req.path_params and fallback to environment vars
   const resolvedPathParams: KVPair[] = [];
@@ -122,6 +175,9 @@ export function buildExecuteRequest(
 
   const urlWithPathParams = resolvePathParamsInUrl(req.url || '', resolvedPathParams);
   let url = resolveVariables(urlWithPathParams, vars);
+  if (hideAuth && hiddenParamKeys.size > 0) {
+    url = stripQueryParamsFromUrl(url, hiddenParamKeys);
+  }
   
   if (params.length > 0) {
     const { params: existingUrlParams } = parseUrl(url);

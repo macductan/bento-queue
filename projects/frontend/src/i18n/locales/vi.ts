@@ -96,6 +96,7 @@ export default {
     pathParams: 'Biến Path (:param)',
     pathParamsHint: 'Tự động trích xuất từ các tham số :tên_biến trên URL',
     curlExplanation: 'Lệnh cURL đã phân giải đầy đủ biến môi trường, headers kế thừa và thông tin xác thực:',
+    hideAuth: 'Ẩn xác thực',
     copyCurl: 'Sao chép cURL',
     curlCopied: 'Đã sao chép cURL vào clipboard',
     curlCopyError: 'Không thể sao chép vào clipboard'

@@ -610,6 +610,278 @@ describe('buildExecuteRequest', () => {
     const exec = buildExecuteRequest(req, vars)
     expect(exec.url).toBe('https://api.test.com:8080/v1/key-prod/users/42/disabled/:skip_me?filter=role:admin')
   })
+
+  describe('hideAuth option', () => {
+    it('keeps full auth headers and params when hideAuth is false or undefined', () => {
+      const bearerReq = createMockRequest({
+        auth: { type: 'bearer', bearer: { token: 'secret-token' } },
+        headers: [{ key: 'X-Trace', value: '123', enabled: true }]
+      })
+      expect(buildExecuteRequest(bearerReq, new Map(), [], [], { hideAuth: false }).headers).toEqual([
+        { key: 'Authorization', value: 'Bearer secret-token', enabled: true },
+        { key: 'X-Trace', value: '123', enabled: true }
+      ])
+      expect(buildExecuteRequest(bearerReq).headers).toEqual([
+        { key: 'Authorization', value: 'Bearer secret-token', enabled: true },
+        { key: 'X-Trace', value: '123', enabled: true }
+      ])
+
+      const apiKeyQueryReq = createMockRequest({
+        url: 'https://api.example.com/items?page=1',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: 'sec123', addTo: 'query' } }
+      })
+      expect(buildExecuteRequest(apiKeyQueryReq, new Map(), [], [], { hideAuth: false }).url).toBe(
+        'https://api.example.com/items?page=1&api_key=sec123'
+      )
+    })
+
+    it('removes Authorization header for Bearer and Basic auth when hideAuth is true while preserving non-auth headers and body', () => {
+      const bearerReq = createMockRequest({
+        method: 'POST',
+        url: 'https://api.example.com/orders',
+        auth: { type: 'bearer', bearer: { token: '{{tok}}' } },
+        headers: [
+          { key: 'Content-Type', value: 'application/json', enabled: true },
+          { key: 'X-Trace', value: 'trace-1', enabled: true }
+        ],
+        body: { type: 'json', content: '{"ok":true}' }
+      })
+      const vars = new Map([['tok', 'secret-jwt']])
+
+      const execBearer = buildExecuteRequest(bearerReq, vars, [], [], { hideAuth: true })
+      expect(execBearer.method).toBe('POST')
+      expect(execBearer.url).toBe('https://api.example.com/orders')
+      expect(execBearer.body).toBe('{"ok":true}')
+      expect(execBearer.headers).toEqual([
+        { key: 'Content-Type', value: 'application/json', enabled: true },
+        { key: 'X-Trace', value: 'trace-1', enabled: true }
+      ])
+
+      const basicReq = createMockRequest({
+        auth: { type: 'basic', basic: { username: 'alice', password: 'secret' } },
+        headers: [{ key: 'Accept', value: 'application/json', enabled: true }]
+      })
+      const execBasic = buildExecuteRequest(basicReq, new Map(), [], [], { hideAuth: true })
+      expect(execBasic.headers).toEqual([
+        { key: 'Accept', value: 'application/json', enabled: true }
+      ])
+    })
+
+    it('removes API Key header case-insensitively including duplicates in req.headers and inheritedHeaders', () => {
+      const req = createMockRequest({
+        auth: { type: 'apiKey', apiKey: { key: 'X-API-Key', value: 'auth-secret', addTo: 'header' } },
+        headers: [
+          { key: 'x-api-key', value: 'manual-secret', enabled: true },
+          { key: 'X-Custom', value: 'keep-me', enabled: true }
+        ]
+      })
+      const inherited = [
+        { key: 'X-Api-Key', value: 'folder-secret', enabled: true },
+        { key: 'X-Folder', value: 'keep-folder', enabled: true }
+      ]
+
+      const exec = buildExecuteRequest(req, new Map(), inherited, [], { hideAuth: true })
+      expect(exec.headers).toEqual([
+        { key: 'X-Folder', value: 'keep-folder', enabled: true },
+        { key: 'X-Custom', value: 'keep-me', enabled: true }
+      ])
+    })
+
+    it('removes API Key query param from params and URL query string while preserving other params, raw encoding, and hash fragment', () => {
+      const req = createMockRequest({
+        url: 'https://api.example.com/items?api_key=123&filter=id=1&q=hello+world&page=2#sec',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: '123', addTo: 'query' } },
+        params: [
+          { key: 'api_key', value: '123', enabled: true },
+          { key: 'page', value: '2', enabled: true },
+          { key: 'limit', value: '10', enabled: true }
+        ]
+      })
+
+      const exec = buildExecuteRequest(req, new Map(), [], [], { hideAuth: true })
+      expect(exec.url).toBe('https://api.example.com/items?filter=id=1&q=hello+world&page=2&limit=10#sec')
+    })
+
+    it('removes trailing ? cleanly when API Key query param is the only query param in URL', () => {
+      const reqWithHash = createMockRequest({
+        url: 'https://api.example.com/items?api_key=123#sec',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: '123', addTo: 'query' } },
+        params: [{ key: 'api_key', value: '123', enabled: true }]
+      })
+      expect(buildExecuteRequest(reqWithHash, new Map(), [], [], { hideAuth: true }).url).toBe(
+        'https://api.example.com/items#sec'
+      )
+
+      const reqWithoutHash = createMockRequest({
+        url: 'https://api.example.com/items?api_key=123',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: '123', addTo: 'query' } }
+      })
+      expect(buildExecuteRequest(reqWithoutHash, new Map(), [], [], { hideAuth: true }).url).toBe(
+        'https://api.example.com/items'
+      )
+
+      const reqEncodedKey = createMockRequest({
+        url: 'https://api.example.com/items?%20api_key=123&ok=1',
+        auth: { type: 'apiKey', apiKey: { key: '{{auth_param}}', value: '123', addTo: 'query' } }
+      })
+      const vars = new Map([['auth_param', 'api_key']])
+      expect(buildExecuteRequest(reqEncodedKey, vars, [], [], { hideAuth: true }).url).toBe(
+        'https://api.example.com/items?ok=1'
+      )
+    })
+
+    it('resolves inherited auth from folder and collection (including auth_envs) and hides corresponding auth artifacts', () => {
+      const req = createMockRequest({
+        url: 'https://api.example.com/data?col_key=secret&page=1',
+        auth: { type: 'inherit' },
+        headers: [{ key: 'X-Req', value: 'ok', enabled: true }]
+      })
+      const pathNodes: TreeNode[] = [
+        {
+          id: 'f1',
+          name: 'Folder',
+          type: 'folder',
+          path: '/f1',
+          auth: { type: 'inherit' },
+          created_at: ''
+        }
+      ]
+      const collection = {
+        id: 'c1',
+        name: 'Coll',
+        auth: { type: 'bearer' as const, bearer: { token: 'global-tok' } },
+        auth_envs: {
+          'env-prod': {
+            type: 'apiKey' as const,
+            apiKey: { key: 'col_key', value: 'secret', addTo: 'query' as const }
+          }
+        }
+      }
+
+      const execQuery = buildExecuteRequest(req, new Map(), [], pathNodes, {
+        activeEnvId: 'env-prod',
+        collection,
+        hideAuth: true
+      })
+      expect(execQuery.url).toBe('https://api.example.com/data?page=1')
+      expect(execQuery.headers).toEqual([{ key: 'X-Req', value: 'ok', enabled: true }])
+
+      const folderApiKeyNodes: TreeNode[] = [
+        {
+          id: 'f1',
+          name: 'Folder',
+          type: 'folder',
+          path: '/f1',
+          auth: { type: 'apiKey', apiKey: { key: 'X-Folder-Auth', value: 'sec', addTo: 'header' } },
+          created_at: ''
+        }
+      ]
+      const execFolder = buildExecuteRequest(
+        createMockRequest({
+          auth: { type: 'inherit' },
+          headers: [
+            { key: 'x-folder-auth', value: 'sec', enabled: true },
+            { key: 'X-Keep', value: 'yes', enabled: true }
+          ]
+        }),
+        new Map(),
+        [],
+        folderApiKeyNodes,
+        { hideAuth: true }
+      )
+      expect(execFolder.headers).toEqual([{ key: 'X-Keep', value: 'yes', enabled: true }])
+    })
+
+    it('strips manual and inherited Authorization and Proxy-Authorization headers regardless of casing even when auth.type is none', () => {
+      const req = createMockRequest({
+        auth: { type: 'none' },
+        headers: [
+          { key: 'authorization', value: 'Bearer manual-token', enabled: true },
+          { key: 'PROXY-AUTHORIZATION', value: 'Basic manual-proxy', enabled: true },
+          { key: 'X-Safe', value: 'kept', enabled: true }
+        ]
+      })
+      const inherited = [
+        { key: 'Authorization', value: 'Bearer folder-token', enabled: true },
+        { key: 'Proxy-Authorization', value: 'Basic folder-proxy', enabled: true },
+        { key: 'X-Inherited', value: 'kept', enabled: true }
+      ]
+
+      const exec = buildExecuteRequest(req, new Map(), inherited, [], { hideAuth: true })
+      expect(exec.headers).toEqual([
+        { key: 'X-Inherited', value: 'kept', enabled: true },
+        { key: 'X-Safe', value: 'kept', enabled: true }
+      ])
+    })
+
+    it('removes duplicate and valueless API Key query params and {{var}}/whitespace param keys in req.params', () => {
+      const dupUrlReq = createMockRequest({
+        url: 'https://api.example.com/items?api_key=1&page=2&api_key=2',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: '1', addTo: 'query' } }
+      })
+      expect(buildExecuteRequest(dupUrlReq, new Map(), [], [], { hideAuth: true }).url).toBe(
+        'https://api.example.com/items?page=2'
+      )
+
+      const valuelessReq = createMockRequest({
+        url: 'https://api.example.com/items?api_key&page=2',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: '', addTo: 'query' } }
+      })
+      expect(buildExecuteRequest(valuelessReq, new Map(), [], [], { hideAuth: true }).url).toBe(
+        'https://api.example.com/items?page=2'
+      )
+
+      const varParamsReq = createMockRequest({
+        url: 'https://api.example.com/items',
+        auth: { type: 'apiKey', apiKey: { key: 'api_key', value: 'secret', addTo: 'query' } },
+        params: [
+          { key: ' {{auth_param}} ', value: '123', enabled: true },
+          { key: ' api_key ', value: '456', enabled: true },
+          { key: 'keep', value: 'yes', enabled: true }
+        ]
+      })
+      const vars = new Map([['auth_param', 'api_key']])
+      expect(buildExecuteRequest(varParamsReq, vars, [], [], { hideAuth: true }).url).toBe(
+        'https://api.example.com/items?keep=yes'
+      )
+    })
+
+    it('preserves formdata and urlencoded bodies and auto headers when hideAuth is true', () => {
+      const formReq = createMockRequest({
+        method: 'POST',
+        url: 'https://api.example.com/upload',
+        auth: { type: 'bearer', bearer: { token: 'secret-token' } },
+        headers: [{ key: 'X-Trace', value: 'f-1', enabled: true }],
+        body: {
+          type: 'formdata',
+          content: '',
+          form_data: [{ key: 'file_name', value: 'report.pdf', enabled: true }]
+        }
+      })
+      const formExec = buildExecuteRequest(formReq, new Map(), [], [], { hideAuth: true })
+      expect(formExec.body_type).toBe('formdata')
+      expect(formExec.form_data).toEqual([{ key: 'file_name', value: 'report.pdf', enabled: true }])
+      expect(formExec.headers).toEqual([{ key: 'X-Trace', value: 'f-1', enabled: true }])
+
+      const urlencodedReq = createMockRequest({
+        method: 'POST',
+        url: 'https://api.example.com/token',
+        auth: { type: 'apiKey', apiKey: { key: 'X-API-Key', value: 'secret-key', addTo: 'header' } },
+        headers: [{ key: 'X-Client', value: 'cli', enabled: true }],
+        body: {
+          type: 'urlencoded',
+          content: '',
+          urlencoded: [{ key: 'grant_type', value: 'client_credentials', enabled: true }]
+        }
+      })
+      const urlencodedExec = buildExecuteRequest(urlencodedReq, new Map(), [], [], { hideAuth: true })
+      expect(urlencodedExec.body).toBe('grant_type=client_credentials')
+      expect(urlencodedExec.headers).toEqual([
+        { key: 'Content-Type', value: 'application/x-www-form-urlencoded', enabled: true },
+        { key: 'X-Client', value: 'cli', enabled: true }
+      ])
+    })
+  })
 })
 
 

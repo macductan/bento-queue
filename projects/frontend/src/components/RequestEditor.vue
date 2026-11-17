@@ -141,6 +141,8 @@ const effectiveVariables = computed(() => {
 provide('effectiveVariables', effectiveVariables)
 provide('variableHierarchyFolders', pathNodes)
 
+const hideCurlAuth = ref(false)
+
 const resolvedCurlPreview = computed(() => {
   if (!req.value) return ''
   return generateCurlCommand(req.value, {
@@ -148,7 +150,8 @@ const resolvedCurlPreview = computed(() => {
     pathNodes: pathNodes.value,
     activeEnvId: envStore.activeEnvId,
     collection: collectionStore.activeCollection as any,
-    multiline: true
+    multiline: true,
+    hideAuth: hideCurlAuth.value
   })
 })
 
@@ -432,22 +435,36 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
           </div>
 
           <div v-show="uiStore.activeRequestTab === 'curl'" role="tabpanel" id="panel-curl" aria-labelledby="tab-curl" data-test="curl-preview-panel" class="space-y-2">
-            <div class="flex items-center justify-between">
+            <div class="flex flex-wrap items-center justify-between gap-2">
               <span class="text-xs text-text-muted">
                 {{ t('requestEditor.curlExplanation') }}
               </span>
-              <button
-                type="button"
-                data-test="copy-preview-curl-btn"
-                class="px-2.5 py-1 text-xs font-medium rounded bg-surface-overlay border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center gap-1.5 cursor-pointer transition-colors"
-                @click="copyPreviewCurl"
-              >
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-                <span>{{ t('requestEditor.copyCurl') }}</span>
-              </button>
+              <div class="flex items-center gap-3 shrink-0">
+                <label
+                  data-test="curl-hide-auth-label"
+                  class="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary cursor-pointer select-none"
+                >
+                  <input
+                    v-model="hideCurlAuth"
+                    type="checkbox"
+                    data-test="curl-hide-auth-toggle"
+                    class="w-3.5 h-3.5 rounded border-border-default bg-surface-input accent-brand-primary focus:ring-brand-primary cursor-pointer"
+                  />
+                  <span>{{ t('requestEditor.hideAuth') }}</span>
+                </label>
+                <button
+                  type="button"
+                  data-test="copy-preview-curl-btn"
+                  class="px-2.5 py-1 text-xs font-medium rounded bg-surface-overlay border border-border-default text-text-secondary hover:text-text-primary hover:bg-surface-hover flex items-center gap-1.5 cursor-pointer transition-colors"
+                  @click="copyPreviewCurl"
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                  <span>{{ t('requestEditor.copyCurl') }}</span>
+                </button>
+              </div>
             </div>
             <pre
               data-test="curl-preview-code"
