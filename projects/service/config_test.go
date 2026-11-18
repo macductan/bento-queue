@@ -16,9 +16,11 @@ import (
 func setupTestConfigService(t *testing.T) (*ConfigService, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
 	fs := storage.NewFileSystem()
 	logger := slog.Default()
 	svc := NewConfigService(fs, logger)
+	svc.SetCustomConfigDir(tmpDir)
 	return svc, tmpDir
 }
 

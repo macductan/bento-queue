@@ -1,7 +1,8 @@
+# CI/CD temporarily disabled (free quota exhausted).
+# All quality gates (lint, type-check, unit test, E2E test, Go vet & test) run locally via Git hooks (.githooks/) when merging into develop.
 workflow:
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - when: never
 
 stages:
   - setup

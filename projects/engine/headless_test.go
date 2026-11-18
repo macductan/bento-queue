@@ -297,11 +297,9 @@ func TestExecuteRequestFlow_EndToEnd_Scripts_BasicAuthUnicode_JSONC_And_DiskPers
 		t.Errorf("expected coll-stg-bearer in collection.json AuthEnvs[%s], got: %+v", stgEnv.ID, diskColl.AuthEnvs)
 	}
 
-	// 4. Execution history recorded
-	histSvc := service.NewHistoryService(fs, logger)
-	histEntries := histSvc.ListExecutions(collRoot).Data.([]model.ExecutionHistoryEntry)
-	if len(histEntries) != 1 || histEntries[0].StatusCode != 200 {
-		t.Errorf("expected 1 execution history entry, got: %+v", histEntries)
+	// 4. Verify .history directory is NOT created
+	if fs.Exists(filepath.Join(collRoot, ".history")) {
+		t.Errorf("expected .history directory NOT to be created")
 	}
 }
 

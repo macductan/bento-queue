@@ -61,7 +61,6 @@ type FlowRunOptions struct {
 	RequestSvc      *service.RequestService
 	FlowSvc         *service.FlowService
 	ExecutorSvc     *service.ExecutorService
-	HistorySvc      *service.HistoryService
 	CollectionsRoot string
 	CollectionRoot  string
 	Collection      model.Collection
@@ -402,10 +401,6 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 	if execSvc == nil {
 		execSvc = service.NewExecutorService(silentLogger)
 	}
-	historySvc := opts.HistorySvc
-	if historySvc == nil {
-		historySvc = service.NewHistoryService(fs, silentLogger)
-	}
 
 	// Load Collection if needed
 	coll := opts.Collection
@@ -692,7 +687,6 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 						EnvSvc:          envSvc,
 						RequestSvc:      reqSvc,
 						ExecutorSvc:     execSvc,
-						HistorySvc:      historySvc,
 						CollectionsRoot: opts.CollectionsRoot,
 						CollectionRoot:  opts.CollectionRoot,
 						Collection:      deepCopyViaJSON(coll),
@@ -750,7 +744,6 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 							EnvSvc:          envSvc,
 							RequestSvc:      reqSvc,
 							ExecutorSvc:     execSvc,
-							HistorySvc:      historySvc,
 							CollectionsRoot: opts.CollectionsRoot,
 							CollectionRoot:  opts.CollectionRoot,
 							Collection:      gin.coll,

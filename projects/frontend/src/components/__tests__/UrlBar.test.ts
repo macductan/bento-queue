@@ -20,6 +20,7 @@ describe('UrlBar.vue', () => {
 
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     writeTextMock = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -314,6 +315,26 @@ describe('UrlBar.vue', () => {
       basic: { username: 'admin', password: 'pw123' }
     })
     expect(uiStore.toast?.text).toBe('Đã phân tích lệnh cURL')
+  })
+
+  it('renders Send button in English when locale is en', () => {
+    useUiStore().setLocale('en')
+    const requestStore = useRequestStore()
+    requestStore.current = {
+      id: 'req-1',
+      name: 'Test Request',
+      method: 'GET',
+      url: 'https://api.example.com',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      created_at: '2026-10-13',
+      updated_at: '2026-10-13'
+    }
+    const wrapper = mount(UrlBar)
+    const sendBtn = wrapper.find('[data-test="send-request-btn"]')
+    expect(sendBtn.attributes('aria-label')).toBe('Send')
+    expect(sendBtn.text()).toContain('Send')
   })
 })
 

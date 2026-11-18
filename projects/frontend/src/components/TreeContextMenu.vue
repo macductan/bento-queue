@@ -4,7 +4,9 @@ import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
 import { useFlowStore, type FlowTreeNode } from '@/stores/flowStore'
 import { useRequestStore } from '@/stores/requestStore'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
 const flowStore = useFlowStore()
@@ -201,11 +203,11 @@ const handleDelete = async () => {
 
     const msg = isFlow
       ? isFolder
-        ? `Xóa thư mục '${nodeName}'? Tất cả flow bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
-        : `Xóa flow '${nodeName}'? Hành động này không thể hoàn tác.`
+        ? t('contextMenu.deleteFlowFolderConfirm', { name: nodeName })
+        : t('contextMenu.deleteFlowConfirm', { name: nodeName })
       : isFolder
-        ? `Xóa thư mục '${nodeName}'? Tất cả request bên trong sẽ bị xóa. Hành động này không thể hoàn tác.`
-        : `Xóa request '${nodeName}'? Hành động này không thể hoàn tác.`
+        ? t('contextMenu.deleteFolderConfirm', { name: nodeName })
+        : t('contextMenu.deleteRequestConfirm', { name: nodeName })
 
     const confirmed = await uiStore.requestConfirm(msg)
     if (confirmed) {
@@ -304,13 +306,13 @@ onUnmounted(() => {
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleCreateRequest"
       >
-        {{ isFlowContext ? 'Thêm flow' : 'Thêm request' }}
+        {{ isFlowContext ? t('contextMenu.addFlow') : t('contextMenu.addRequest') }}
       </button>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleCreateFolder"
       >
-        Thêm thư mục
+        {{ t('contextMenu.addFolder') }}
       </button>
       
       <div v-if="uiStore.contextMenu.nodeId !== ''" class="h-px bg-border-default my-1"></div>
@@ -320,7 +322,7 @@ onUnmounted(() => {
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleRename"
       >
-        Đổi tên
+        {{ t('common.rename') }}
       </button>
       <button 
         v-if="!isFlowContext && uiStore.contextMenu.nodeId !== ''"
@@ -340,14 +342,14 @@ onUnmounted(() => {
           <line x1="10" y1="8" x2="14" y2="8"></line>
           <line x1="18" y1="16" x2="22" y2="16"></line>
         </svg>
-        <span>Cài đặt thư mục</span>
+        <span>{{ t('contextMenu.folderSettings') }}</span>
       </button>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         data-test="context-menu-sort-btn"
         @click="handleSortAlphabet"
       >
-        Sắp xếp A-Z
+        {{ t('contextMenu.sortAlphabet') }}
       </button>
       <div 
         v-if="uiStore.contextMenu.nodeId !== ''"
@@ -356,7 +358,7 @@ onUnmounted(() => {
         @mouseleave="isSubmenuOpen = false"
       >
         <button class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center justify-between transition-colors">
-          Di chuyển tới 
+          {{ t('contextMenu.moveTo') }} 
           <span class="text-text-muted">▸</span>
         </button>
         
@@ -370,7 +372,7 @@ onUnmounted(() => {
             class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors font-medium"
             @click="handleMove('')"
           >
-            {{ isFlowContext ? 'Gốc flows' : 'Gốc collection' }}
+            {{ isFlowContext ? t('contextMenu.rootFlows') : t('contextMenu.rootCollection') }}
           </button>
           <button 
             v-for="folder in availableTargetFolders" 
@@ -390,7 +392,7 @@ onUnmounted(() => {
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors text-text-danger"
         @click="handleDelete"
       >
-        Xóa
+        {{ t('common.delete') }}
       </button>
     </template>
     
@@ -400,20 +402,20 @@ onUnmounted(() => {
         data-test="context-menu-unsaved-indicator"
         class="px-3 py-1.5 flex items-center gap-2 text-xs text-amber-400 border-b border-border-default mb-1 select-none"
       >
-        <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" title="Chưa lưu" aria-label="Chưa lưu"></span>
-        <span>Chưa lưu</span>
+        <span class="w-2 h-2 rounded-full bg-unsaved-dot shrink-0" :title="t('common.unsaved')" :aria-label="t('common.unsaved')"></span>
+        <span>{{ t('common.unsaved') }}</span>
       </div>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleRename"
       >
-        Đổi tên
+        {{ t('common.rename') }}
       </button>
       <button 
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors"
         @click="handleDuplicate"
       >
-        Sao chép
+        {{ t('common.copy') }}
       </button>
       <div 
         class="relative"
@@ -421,7 +423,7 @@ onUnmounted(() => {
         @mouseleave="isSubmenuOpen = false"
       >
         <button class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center justify-between transition-colors">
-          Di chuyển tới 
+          {{ t('contextMenu.moveTo') }} 
           <span class="text-text-muted">▸</span>
         </button>
         
@@ -435,7 +437,7 @@ onUnmounted(() => {
             class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors font-medium"
             @click="handleMove('')"
           >
-            {{ isFlowContext ? 'Gốc flows' : 'Gốc collection' }}
+            {{ isFlowContext ? t('contextMenu.rootFlows') : t('contextMenu.rootCollection') }}
           </button>
           <button 
             v-for="folder in availableTargetFolders" 
@@ -455,7 +457,7 @@ onUnmounted(() => {
         class="w-full text-left px-3 h-8 hover:bg-surface-hover flex items-center transition-colors text-text-danger"
         @click="handleDelete"
       >
-        Xóa
+        {{ t('common.delete') }}
       </button>
     </template>
   </div>

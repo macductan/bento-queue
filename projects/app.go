@@ -30,7 +30,6 @@ type App struct {
 	execSvc          *service.ExecutorService
 	impSvc           *service.ImporterService
 	gitSyncSvc       *service.GitSyncService
-	historySvc       *service.HistoryService
 	mockServerSvc    *service.MockServerService
 	flowSvc          *service.FlowService
 	logger           *slog.Logger
@@ -55,7 +54,6 @@ func NewApp() *App {
 		execSvc:       service.NewExecutorService(logger),
 		impSvc:        service.NewImporterService(fs, logger),
 		gitSyncSvc:    service.NewGitSyncService(fs, logger),
-		historySvc:    service.NewHistoryService(fs, logger),
 		mockServerSvc: service.NewMockServerService(fs, logger),
 		flowSvc:       service.NewFlowService(fs, logger),
 		logger:        logger,
@@ -82,6 +80,26 @@ func (a *App) notifyExternalChange() {
 	a.mu.RUnlock()
 	a.emitEvent("collection:external-change", map[string]interface{}{
 		"collectionId": activeColl,
+		"timestamp":    time.Now().Format(time.RFC3339),
+	})
+}
+
+func (a *App) notifyLocalDataChanged() {
+	a.mu.RLock()
+	activeColl := a.activeCollection
+	a.mu.RUnlock()
+	a.notifyLocalDataChangedFor(activeColl)
+}
+
+func (a *App) notifyLocalDataChangedFor(collectionID string) {
+	targetColl := strings.TrimSpace(collectionID)
+	if targetColl == "" {
+		a.mu.RLock()
+		targetColl = a.activeCollection
+		a.mu.RUnlock()
+	}
+	a.emitEvent("collection:local-changed", map[string]interface{}{
+		"collectionId": targetColl,
 		"timestamp":    time.Now().Format(time.RFC3339),
 	})
 }
@@ -197,7 +215,7 @@ func (a *App) GetRequest(id string) model.Result {
 func (a *App) SaveRequest(req model.Request) model.Result {
 	res := a.reqSvc.Save(req)
 	if res.Success {
-		a.recordChangelog("request", req.ID, req.Name, "update", "Cập nhật request "+req.Name+" ("+req.Method+")")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -206,7 +224,7 @@ func (a *App) SaveRequest(req model.Request) model.Result {
 func (a *App) DeleteRequest(id string) model.Result {
 	res := a.reqSvc.Delete(id)
 	if res.Success {
-		a.recordChangelog("request", id, id, "delete", "Xóa request "+id)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -218,9 +236,7 @@ func (a *App) CreateFolder(parentFolderId string) model.Result {
 	a.mu.RUnlock()
 	res := a.collSvc.CreateFolder(root, parentFolderId)
 	if res.Success {
-		if node, ok := res.Data.(model.TreeNode); ok {
-			a.recordChangelog("folder", node.ID, node.Name, "create", "Tạo thư mục "+node.Name)
-		}
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -232,9 +248,7 @@ func (a *App) CreateRequest(parentFolderId string) model.Result {
 	a.mu.RUnlock()
 	res := a.collSvc.CreateRequest(root, parentFolderId)
 	if res.Success {
-		if node, ok := res.Data.(model.TreeNode); ok {
-			a.recordChangelog("request", node.ID, node.Name, "create", "Tạo request "+node.Name)
-		}
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -243,7 +257,7 @@ func (a *App) CreateRequest(parentFolderId string) model.Result {
 func (a *App) RenameFolder(id, newName string) model.Result {
 	res := a.collSvc.RenameFolder(id, newName)
 	if res.Success {
-		a.recordChangelog("folder", id, newName, "rename", "Đổi tên thư mục thành "+newName)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -252,7 +266,7 @@ func (a *App) RenameFolder(id, newName string) model.Result {
 func (a *App) RenameRequest(id, newName string) model.Result {
 	res := a.reqSvc.Rename(id, newName)
 	if res.Success {
-		a.recordChangelog("request", id, newName, "rename", "Đổi tên request thành "+newName)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -264,7 +278,7 @@ func (a *App) DeleteFolder(id string) model.Result {
 	a.mu.RUnlock()
 	res := a.collSvc.DeleteFolder(root, id)
 	if res.Success {
-		a.recordChangelog("folder", id, id, "delete", "Xóa thư mục "+id)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -273,7 +287,7 @@ func (a *App) DeleteFolder(id string) model.Result {
 func (a *App) DuplicateRequest(id string) model.Result {
 	res := a.reqSvc.Duplicate(id)
 	if res.Success {
-		a.recordChangelog("request", id, id, "duplicate", "Nhân bản request "+id)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -285,7 +299,7 @@ func (a *App) MoveRequest(id, targetFolderID string) model.Result {
 	a.mu.RUnlock()
 	res := a.collSvc.MoveRequest(root, id, targetFolderID)
 	if res.Success {
-		a.recordChangelog("request", id, id, "move", "Di chuyển request sang thư mục khác")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -297,7 +311,7 @@ func (a *App) MoveFolder(folderID, targetFolderID string) model.Result {
 	a.mu.RUnlock()
 	res := a.collSvc.MoveFolder(root, folderID, targetFolderID)
 	if res.Success {
-		a.recordChangelog("folder", folderID, folderID, "move", "Di chuyển thư mục sang vị trí khác")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -309,7 +323,7 @@ func (a *App) ReorderNodes(parentFolderId string, nodeIds []string) model.Result
 	a.mu.RUnlock()
 	res := a.collSvc.ReorderNodes(root, parentFolderId, nodeIds)
 	if res.Success {
-		a.recordChangelog("order", parentFolderId, parentFolderId, "reorder", "Sắp xếp lại các mục")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -339,7 +353,7 @@ func (a *App) SaveEnvironment(env model.Environment) model.Result {
 	a.mu.RUnlock()
 	res := a.envSvc.Save(root, env)
 	if res.Success {
-		a.recordChangelog("environment", env.ID, env.Name, "update", "Lưu môi trường "+env.Name)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -351,7 +365,7 @@ func (a *App) DeleteEnvironment(id string) model.Result {
 	a.mu.RUnlock()
 	res := a.envSvc.Delete(root, id)
 	if res.Success {
-		a.recordChangelog("environment", id, id, "delete", "Xóa môi trường "+id)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -389,13 +403,17 @@ func (a *App) ImportPostman(filePath string) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.impSvc.ImportPostman(root, filePath, func(count int, total int, text string) {
+	res := a.impSvc.ImportPostman(root, filePath, func(count int, total int, text string) {
 		a.emitEvent("import:progress", map[string]interface{}{
 			"count": count,
 			"total": total,
 			"text":  text,
 		})
 	})
+	if res.Success {
+		a.notifyLocalDataChanged()
+	}
+	return res
 }
 
 // SelectDirectoryDialog opens a folder dialog for selecting a storage directory.
@@ -460,7 +478,11 @@ func (a *App) RenameCollection(id, newName string) model.Result {
 	a.mu.RLock()
 	cRoot := a.collectionsRoot
 	a.mu.RUnlock()
-	return a.collSvc.RenameCollection(cRoot, id, newName)
+	res := a.collSvc.RenameCollection(cRoot, id, newName)
+	if res.Success {
+		a.notifyLocalDataChangedFor(id)
+	}
+	return res
 }
 
 // UpdateCollection updates a collection's details.
@@ -470,7 +492,7 @@ func (a *App) UpdateCollection(collection model.Collection) model.Result {
 	a.mu.RUnlock()
 	res := a.collSvc.UpdateCollection(cRoot, collection)
 	if res.Success {
-		a.recordChangelog("collection", collection.ID, collection.Name, "update", "Cập nhật cấu hình collection "+collection.Name)
+		a.notifyLocalDataChangedFor(collection.ID)
 	}
 	return res
 }
@@ -586,30 +608,9 @@ func (a *App) LoadFolder(id string) model.Result {
 func (a *App) UpdateFolder(folder model.Folder) model.Result {
 	res := a.collSvc.UpdateFolder(folder)
 	if res.Success {
-		a.recordChangelog("folder", folder.ID, folder.Name, "update", "Cập nhật cấu hình thư mục "+folder.Name)
+		a.notifyLocalDataChanged()
 	}
 	return res
-}
-
-func (a *App) recordChangelog(entityType, entityID, entityName, action, summary string) {
-	if a.historySvc == nil {
-		return
-	}
-	a.mu.RLock()
-	root := a.collRoot
-	collID := a.activeCollection
-	a.mu.RUnlock()
-	if strings.TrimSpace(root) == "" {
-		return
-	}
-	_ = a.historySvc.RecordChangelog(root, model.ChangelogEntry{
-		CollectionID: collID,
-		EntityType:   entityType,
-		EntityID:     entityID,
-		EntityName:   entityName,
-		Action:       action,
-		Summary:      summary,
-	})
 }
 
 func (a *App) resolveCollectionID(collectionID string) (string, string) {
@@ -624,6 +625,8 @@ func (a *App) resolveCollectionID(collectionID string) (string, string) {
 
 // SaveCollectionGitRemote saves the Git remote URL for a collection and configures git remote origin.
 func (a *App) SaveCollectionGitRemote(collectionID, remoteURL string) model.Result {
+	a.fs.RecordSelfWrite()
+	defer a.fs.RecordSelfWrite()
 	cRoot, id := a.resolveCollectionID(collectionID)
 	return a.gitSyncSvc.SaveRemoteURL(cRoot, id, remoteURL)
 }
@@ -760,50 +763,6 @@ func (a *App) AbortGitMerge(collectionID string) model.Result {
 	return res
 }
 
-// ListExecutionHistory returns execution history entries for the active collection.
-func (a *App) ListExecutionHistory() model.Result {
-	a.mu.RLock()
-	root := a.collRoot
-	a.mu.RUnlock()
-	return a.historySvc.ListExecutions(root)
-}
-
-// RecordExecutionHistory records a new execution history entry for the active collection.
-func (a *App) RecordExecutionHistory(entry model.ExecutionHistoryEntry) model.Result {
-	a.mu.RLock()
-	root := a.collRoot
-	collID := a.activeCollection
-	a.mu.RUnlock()
-	if strings.TrimSpace(entry.CollectionID) == "" {
-		entry.CollectionID = collID
-	}
-	return a.historySvc.RecordExecution(root, entry)
-}
-
-// ClearExecutionHistory clears all execution history entries for the active collection.
-func (a *App) ClearExecutionHistory() model.Result {
-	a.mu.RLock()
-	root := a.collRoot
-	a.mu.RUnlock()
-	return a.historySvc.ClearExecutions(root)
-}
-
-// ListChangelog returns all changelog entries for the active collection.
-func (a *App) ListChangelog() model.Result {
-	a.mu.RLock()
-	root := a.collRoot
-	a.mu.RUnlock()
-	return a.historySvc.ListChangelog(root)
-}
-
-// ClearChangelog clears all changelog entries for the active collection.
-func (a *App) ClearChangelog() model.Result {
-	a.mu.RLock()
-	root := a.collRoot
-	a.mu.RUnlock()
-	return a.historySvc.ClearChangelog(root)
-}
-
 // GetMockServerStatus returns the current status and configured routes of the local Mock HTTP Server.
 func (a *App) GetMockServerStatus() model.Result {
 	a.mu.RLock()
@@ -817,7 +776,11 @@ func (a *App) SaveMockServerConfig(cfg model.MockServerConfig) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.mockServerSvc.SaveConfig(root, cfg)
+	res := a.mockServerSvc.SaveConfig(root, cfg)
+	if res.Success {
+		a.notifyLocalDataChanged()
+	}
+	return res
 }
 
 // StartMockServer starts the local Mock HTTP Server for the active collection on the given port.
@@ -825,7 +788,11 @@ func (a *App) StartMockServer(port int) model.Result {
 	a.mu.RLock()
 	root := a.collRoot
 	a.mu.RUnlock()
-	return a.mockServerSvc.Start(root, port)
+	res := a.mockServerSvc.Start(root, port)
+	if res.Success && port > 0 {
+		a.notifyLocalDataChanged()
+	}
+	return res
 }
 
 // StopMockServer stops the running local Mock HTTP Server.
@@ -871,9 +838,7 @@ func (a *App) CreateFlow(parentFolderId string) model.Result {
 	a.mu.RUnlock()
 	res := a.flowSvc.CreateFlow(root, parentFolderId)
 	if res.Success {
-		if flow, ok := res.Data.(model.Flow); ok {
-			a.recordChangelog("flow", flow.ID, flow.Name, "create", "Tạo flow "+flow.Name)
-		}
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -883,7 +848,7 @@ func (a *App) SaveFlow(flow model.Flow) model.Result {
 	a.syncActiveCollectionFromDisk()
 	res := a.flowSvc.SaveFlow(flow)
 	if res.Success {
-		a.recordChangelog("flow", flow.ID, flow.Name, "update", "Cập nhật flow "+flow.Name)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -893,7 +858,7 @@ func (a *App) RenameFlow(id, newName string) model.Result {
 	a.syncActiveCollectionFromDisk()
 	res := a.flowSvc.RenameFlow(id, newName)
 	if res.Success {
-		a.recordChangelog("flow", id, newName, "rename", "Đổi tên flow thành "+newName)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -903,7 +868,7 @@ func (a *App) DeleteFlow(id string) model.Result {
 	a.syncActiveCollectionFromDisk()
 	res := a.flowSvc.DeleteFlow(id)
 	if res.Success {
-		a.recordChangelog("flow", id, id, "delete", "Xóa flow "+id)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -913,9 +878,7 @@ func (a *App) DuplicateFlow(id string) model.Result {
 	a.syncActiveCollectionFromDisk()
 	res := a.flowSvc.DuplicateFlow(id)
 	if res.Success {
-		if flow, ok := res.Data.(model.Flow); ok {
-			a.recordChangelog("flow", flow.ID, flow.Name, "duplicate", "Nhân bản flow "+flow.Name)
-		}
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -928,9 +891,7 @@ func (a *App) CreateFlowFolder(parentFolderId string) model.Result {
 	a.mu.RUnlock()
 	res := a.flowSvc.CreateFlowFolder(root, parentFolderId)
 	if res.Success {
-		if folder, ok := res.Data.(model.FlowFolder); ok {
-			a.recordChangelog("flow_folder", folder.ID, folder.Name, "create", "Tạo thư mục flow "+folder.Name)
-		}
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -940,7 +901,7 @@ func (a *App) RenameFlowFolder(id, newName string) model.Result {
 	a.syncActiveCollectionFromDisk()
 	res := a.flowSvc.RenameFlowFolder(id, newName)
 	if res.Success {
-		a.recordChangelog("flow_folder", id, newName, "rename", "Đổi tên thư mục flow thành "+newName)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -953,7 +914,7 @@ func (a *App) DeleteFlowFolder(id string) model.Result {
 	a.mu.RUnlock()
 	res := a.flowSvc.DeleteFlowFolder(root, id)
 	if res.Success {
-		a.recordChangelog("flow_folder", id, id, "delete", "Xóa thư mục flow "+id)
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -966,7 +927,7 @@ func (a *App) ReorderFlowNodes(parentFolderId string, orderedIds []string) model
 	a.mu.RUnlock()
 	res := a.flowSvc.ReorderNodes(root, parentFolderId, orderedIds)
 	if res.Success {
-		a.recordChangelog("flow_order", parentFolderId, parentFolderId, "reorder", "Sắp xếp lại danh sách flow")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -979,7 +940,7 @@ func (a *App) MoveFlowNode(nodeId, targetFolderId string, targetIndex int) model
 	a.mu.RUnlock()
 	res := a.flowSvc.MoveNode(root, nodeId, targetFolderId, targetIndex)
 	if res.Success {
-		a.recordChangelog("flow", nodeId, nodeId, "move", "Di chuyển mục trong cây flow")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }
@@ -992,7 +953,7 @@ func (a *App) SortFlowNodes(parentFolderId string) model.Result {
 	a.mu.RUnlock()
 	res := a.flowSvc.SortNodes(root, parentFolderId)
 	if res.Success {
-		a.recordChangelog("flow_order", parentFolderId, parentFolderId, "sort", "Sắp xếp danh sách flow theo tên")
+		a.notifyLocalDataChanged()
 	}
 	return res
 }

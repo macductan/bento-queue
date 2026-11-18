@@ -49,7 +49,6 @@ type cliContext struct {
 	reqSvc     *service.RequestService
 	flowSvc    *service.FlowService
 	execSvc    *service.ExecutorService
-	histSvc    *service.HistoryService
 	importSvc  *service.ImporterService
 	cfg        *model.AppConfig
 	jsonOutput bool
@@ -119,7 +118,6 @@ func runCLI(rawArgs []string, stdout, stderr io.Writer) int {
 		reqSvc:     service.NewRequestService(fs, silentLogger),
 		flowSvc:    service.NewFlowService(fs, silentLogger),
 		execSvc:    service.NewExecutorService(silentLogger),
-		histSvc:    service.NewHistoryService(fs, silentLogger),
 		importSvc:  service.NewImporterService(fs, silentLogger),
 		cfg:        cfg,
 		jsonOutput: globalOpts.jsonOutput,
@@ -2127,7 +2125,6 @@ func (c *cliContext) handleRun(args []string) model.Result {
 		EnvSvc:          c.envSvc,
 		RequestSvc:      c.reqSvc,
 		ExecutorSvc:     c.execSvc,
-		HistorySvc:      c.histSvc,
 		CollectionsRoot: c.cfg.CollectionsRoot,
 		CollectionRoot:  collRoot,
 		Collection:      coll,
@@ -3022,7 +3019,6 @@ func (c *cliContext) handleFlow(args []string) model.Result {
 			RequestSvc:      c.reqSvc,
 			FlowSvc:         c.flowSvc,
 			ExecutorSvc:     c.execSvc,
-			HistorySvc:      c.histSvc,
 			CollectionsRoot: c.cfg.CollectionsRoot,
 			CollectionRoot:  collRoot,
 			Collection:      coll,

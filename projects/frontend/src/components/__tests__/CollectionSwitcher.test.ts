@@ -62,6 +62,7 @@ const mockCollections: model.Collection[] = [
 describe('CollectionSwitcher.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
   })
 
   it('renders active collection name on the trigger button', () => {
@@ -430,5 +431,21 @@ describe('CollectionSwitcher.vue', () => {
     store.activeCollectionId = 'default'
     await wrapper.vm.$nextTick()
     expect(trigger.find('[data-test="collection-default-badge"]').exists()).toBe(false)
+  })
+
+  it('renders in English when locale is set to en', async () => {
+    useUiStore().setLocale('en')
+    const store = useCollectionStore()
+    store.collections = [...mockCollections]
+    store.activeCollectionId = 'default'
+
+    const wrapper = mount(CollectionSwitcher)
+    const trigger = wrapper.find('[data-test="collection-switcher-btn"]')
+    expect(trigger.attributes('aria-label')).toBe('Select collection')
+
+    await trigger.trigger('click')
+    const menu = wrapper.find('div[role="menu"]')
+    expect(menu.attributes('aria-label')).toBe('Collection Management')
+    expect(wrapper.text()).toContain('Create new collection')
   })
 })

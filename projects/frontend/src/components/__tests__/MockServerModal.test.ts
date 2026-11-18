@@ -4,13 +4,18 @@ import { setActivePinia, createPinia } from 'pinia'
 import MockServerModal from '../MockServerModal.vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useMockServerStore } from '@/stores/mockServerStore'
+import { useCollectionStore } from '@/stores/collectionStore'
 
-vi.mock('../../../wailsjs/go/main/App', () => ({
-  GetMockServerStatus: vi.fn(),
-  SaveMockServerConfig: vi.fn(),
-  StartMockServer: vi.fn(),
-  StopMockServer: vi.fn(),
-}))
+vi.mock('../../../wailsjs/go/main/App', async (importOriginal) => {
+  const actual = await importOriginal<any>()
+  return {
+    ...actual,
+    GetMockServerStatus: vi.fn(),
+    SaveMockServerConfig: vi.fn(),
+    StartMockServer: vi.fn(),
+    StopMockServer: vi.fn(),
+  }
+})
 
 import * as AppBinding from '../../../wailsjs/go/main/App'
 
@@ -23,6 +28,16 @@ describe('MockServerModal.vue', () => {
   it('loads mock server status, adds/edits routes, saves config, and toggles server start/stop', async () => {
     const uiStore = useUiStore()
     const mockStore = useMockServerStore()
+    const collectionStore = useCollectionStore()
+    collectionStore.collections = [
+      {
+        id: 'default',
+        name: 'Default',
+        git_remote_url: 'https://github.com/org/mock.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'default'
 
     vi.mocked(AppBinding.GetMockServerStatus).mockResolvedValue({
       success: true,
@@ -98,6 +113,8 @@ describe('MockServerModal.vue', () => {
     await wrapper.find('[data-test="save-mock-config-btn"]').trigger('click')
     await flushPromises()
     expect(AppBinding.SaveMockServerConfig).toHaveBeenCalled()
+    expect(collectionStore.autoPushPending).toBe(true)
+    collectionStore.cancelAutoPush()
 
     // Start server
     await wrapper.find('[data-test="mock-toggle-server-btn"]').trigger('click')

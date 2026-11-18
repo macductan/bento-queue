@@ -1,4 +1,7 @@
 <script lang="ts" setup>
+import { useI18n } from '@/i18n'
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -18,9 +21,9 @@
         fill="currentColor"
       />
     </svg>
-    <h2 class="heading-md text-text-secondary m-0">Chọn một Request để bắt đầu</h2>
+    <h2 class="heading-md text-text-secondary m-0">{{ t('emptyState.selectRequestTitle') }}</h2>
     <p class="ui-sm text-text-muted m-0">
-      Nhấn <kbd class="inline-block px-1.5 py-0.5 font-mono text-[11px] leading-[1.4] text-text-secondary bg-surface-overlay border border-border-default rounded-sm">Ctrl+N</kbd> để tạo request mới
+      {{ t('emptyState.press') }} <kbd class="inline-block px-1.5 py-0.5 font-mono text-[11px] leading-[1.4] text-text-secondary bg-surface-overlay border border-border-default rounded-sm">Ctrl+N</kbd> {{ t('emptyState.toCreateNewRequest') }}
     </p>
   </div>
 </template>

@@ -745,5 +745,21 @@ func TestDetectEntityMeta_And_MergeJSONObjects_FlowAndFlowFolder(t *testing.T) {
 	if ffConflicts[0].Label != "Thứ tự sắp xếp (Order)" {
 		t.Errorf("expected Vietnamese field label 'Thứ tự sắp xếp (Order)', got %q", ffConflicts[0].Label)
 	}
+
+	// 3. git_auto_sync auto-resolves preserving local preference without conflict & mock-server.json entityType
+	baseColl := map[string]interface{}{"id": "c1", "name": "C", "git_auto_sync": true}
+	oursColl := map[string]interface{}{"id": "c1", "name": "C", "git_auto_sync": false}
+	theirsColl := map[string]interface{}{"id": "c1", "name": "C", "git_auto_sync": true}
+	mergedColl, collConflicts := MergeJSONObjects("collection.json", baseColl, oursColl, theirsColl)
+	if len(collConflicts) != 0 {
+		t.Fatalf("expected 0 conflicts for git_auto_sync, got %+v", collConflicts)
+	}
+	if mergedColl["git_auto_sync"] != false {
+		t.Errorf("expected local git_auto_sync=false to be preserved, got %v", mergedColl["git_auto_sync"])
+	}
+	mockType, mockName := detectEntityMeta("mock-server.json", nil, nil, nil)
+	if mockType != "mock_server" || mockName != "Mock Server" {
+		t.Errorf("expected mock_server / Mock Server for mock-server.json, got %q / %q", mockType, mockName)
+	}
 }
 

@@ -1427,15 +1427,51 @@
     xml: "application/xml",
     urlencoded: "application/x-www-form-urlencoded"
   };
+  function stripQueryParamsFromUrl(url, hiddenKeys) {
+    if (!url || hiddenKeys.size === 0)
+      return url;
+    const [withoutHash, hash] = splitPreservingVars(url, "#", 2);
+    const queryParts = splitPreservingVars(withoutHash, "?", 2);
+    if (queryParts.length < 2) {
+      return url;
+    }
+    const baseUrl = queryParts[0] ?? "";
+    const rawQuery = queryParts[1] ?? "";
+    const segments = splitPreservingVars(rawQuery, "&");
+    const filteredSegments = segments.filter((segment) => {
+      if (segment.length === 0)
+        return false;
+      const eqParts = splitPreservingVars(segment, "=", 2);
+      const decodedKey = decodeQueryComponent(eqParts[0]).trim();
+      return !hiddenKeys.has(decodedKey);
+    });
+    const rebuilt = filteredSegments.length > 0 ? `${baseUrl}?${filteredSegments.join("&")}` : baseUrl;
+    return hash !== undefined ? `${rebuilt}#${hash}` : rebuilt;
+  }
   function buildExecuteRequest(req, vars = new Map, inheritedHeaders = [], pathNodes = [], authOptions) {
     const method = req.method || "GET";
+    const hideAuth = authOptions?.hideAuth === true;
     const { auth: effectiveAuth } = resolveEffectiveAuth(req.auth, pathNodes, {
       ...authOptions,
       requestAuthEnvs: authOptions?.requestAuthEnvs ?? req.auth_envs
     });
     const { headers: rawAuthHeaders, params: rawAuthParams } = getAuthArtifacts(effectiveAuth, vars);
-    const authHeaders = rawAuthHeaders.map((h) => ({ ...h, _authResolved: true }));
-    const authParams = rawAuthParams.map((p) => ({ ...p, _authResolved: true }));
+    const hiddenHeaderKeys = new Set(["authorization", "proxy-authorization"]);
+    const hiddenParamKeys = new Set;
+    if (hideAuth) {
+      for (const h of rawAuthHeaders) {
+        if (h && typeof h.key === "string" && h.key.trim() !== "") {
+          hiddenHeaderKeys.add(h.key.trim().toLowerCase());
+        }
+      }
+      for (const p of rawAuthParams) {
+        if (p && typeof p.key === "string" && p.key.trim() !== "") {
+          hiddenParamKeys.add(p.key.trim());
+        }
+      }
+    }
+    const authHeaders = hideAuth ? [] : rawAuthHeaders.map((h) => ({ ...h, _authResolved: true }));
+    const authParams = hideAuth ? [] : rawAuthParams.map((p) => ({ ...p, _authResolved: true }));
     const baseHeaders = mergeHeaders(authHeaders, inheritedHeaders);
     const merged = mergeHeaders(req.headers || [], baseHeaders);
     const hasContentType = merged.some((h) => h.key.trim().toLowerCase() === "content-type");
@@ -1448,7 +1484,7 @@
         enabled: true
       });
     }
-    const headers = merged.filter((h) => h.enabled && h.key.trim() !== "").map((h) => ({
+    const headers = merged.filter((h) => h.enabled && h.key.trim() !== "" && (!hideAuth || !hiddenHeaderKeys.has(h.key.trim().toLowerCase()))).map((h) => ({
       key: h.key,
       value: h._authResolved ? h.value : resolveVariables(h.value, vars),
       enabled: h.enabled
@@ -1465,13 +1501,13 @@
         }
       }
     }
-    const activeAuthParams = authParams.filter((ap) => !reqParamKeys.has(ap.key) && !reqDisabledParamKeys.has(ap.key.toLowerCase()));
+    const activeAuthParams = hideAuth ? [] : authParams.filter((ap) => !reqParamKeys.has(ap.key) && !reqDisabledParamKeys.has(ap.key.toLowerCase()));
     const rawParams = [...activeAuthParams, ...req.params || []];
     const params = rawParams.filter((p) => p.enabled).map((p) => ({
       key: p._authResolved ? p.key : resolveVariables(p.key, vars),
       value: p._authResolved ? p.value : resolveVariables(p.value, vars),
       enabled: p.enabled
-    })).filter((p) => p.key.trim() !== "");
+    })).filter((p) => p.key.trim() !== "" && (!hideAuth || !hiddenParamKeys.has(p.key.trim())));
     const resolvedPathParams = [];
     const seenPathKeys = new Set;
     const disabledPathKeys = new Set;
@@ -1497,6 +1533,9 @@
     }
     const urlWithPathParams = resolvePathParamsInUrl(req.url || "", resolvedPathParams);
     let url = resolveVariables(urlWithPathParams, vars);
+    if (hideAuth && hiddenParamKeys.size > 0) {
+      url = stripQueryParamsFromUrl(url, hiddenParamKeys);
+    }
     if (params.length > 0) {
       const { params: existingUrlParams } = parseUrl(url);
       const existingCounts = new Map;
@@ -3411,10 +3450,11 @@ ${code}`);
     let dataFlag = "--data-raw";
     let activeEnvId;
     let collection;
+    let hideAuth = false;
     if (envOrOptions) {
       if (envOrOptions instanceof Map) {
         vars = extractVarsFromEnv(envOrOptions);
-      } else if ("environment" in envOrOptions || "vars" in envOrOptions || "inheritedHeaders" in envOrOptions || "pathNodes" in envOrOptions || "multiline" in envOrOptions || "dataFlag" in envOrOptions || "activeEnvId" in envOrOptions || "collection" in envOrOptions) {
+      } else if ("environment" in envOrOptions || "vars" in envOrOptions || "inheritedHeaders" in envOrOptions || "pathNodes" in envOrOptions || "multiline" in envOrOptions || "dataFlag" in envOrOptions || "activeEnvId" in envOrOptions || "collection" in envOrOptions || "hideAuth" in envOrOptions && (typeof envOrOptions.hideAuth === "boolean" || envOrOptions.hideAuth === undefined)) {
         const opts = envOrOptions;
         if (opts.vars) {
           vars = new Map(opts.vars);
@@ -3434,6 +3474,8 @@ ${code}`);
           activeEnvId = opts.activeEnvId;
         if (opts.collection !== undefined)
           collection = opts.collection;
+        if (opts.hideAuth !== undefined)
+          hideAuth = opts.hideAuth === true;
       } else if ("variables" in envOrOptions && Array.isArray(envOrOptions.variables)) {
         vars = extractVarsFromEnv(envOrOptions);
       } else if (typeof envOrOptions === "object") {
@@ -3457,7 +3499,8 @@ ${code}`);
     const execReq = buildExecuteRequest(req, vars, inheritedHeaders, pathNodes, {
       activeEnvId,
       requestAuthEnvs: req.auth_envs,
-      collection
+      collection,
+      hideAuth
     });
     const parts = ["curl"];
     const method = (execReq.method || "GET").trim().toUpperCase();

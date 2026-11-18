@@ -111,7 +111,7 @@ const handleWheel = (e: WheelEvent) => {
         <span
           v-if="getTabPath(tab)"
           data-test="tab-path"
-          class="text-[9px] text-text-muted/60 truncate leading-none mb-0.5 select-none font-normal max-w-[180px]"
+          class="text-[9px] text-text-muted/60 truncate leading-normal mb-0.5 select-none font-normal max-w-[180px]"
           :title="getTabFullPath(tab)"
         >
           {{ getTabPath(tab) }}

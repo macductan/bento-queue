@@ -340,7 +340,9 @@ export const useRequestStore = defineStore('request', {
             }
             // Trigger tree reload in collectionStore
             const { useCollectionStore } = await import('./collectionStore')
-            await useCollectionStore().loadTree()
+            const collectionStore = useCollectionStore()
+            await collectionStore.loadTree()
+            collectionStore.scheduleAutoPush()
             return true
           } else {
             const errorMsg = result.error?.message || 'Không thể lưu request'

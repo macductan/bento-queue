@@ -4,6 +4,9 @@ import { Page, Locator } from '@playwright/test';
 test.describe('Epic 2 UI Smoke Test - Collection Tree', () => {
   
   test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('hecto_locale', 'vi');
+    });
     await page.goto('/');
     await page.waitForLoadState('networkidle');
   });

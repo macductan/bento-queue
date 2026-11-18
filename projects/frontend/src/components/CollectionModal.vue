@@ -1,5 +1,8 @@
 <script lang="ts" setup>
 import { ref, watch, nextTick } from 'vue'
+import { useI18n } from '@/i18n'
+
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -48,7 +51,7 @@ const handleSubmit = () => {
   if (isSubmitting.value) return
   const trimmed = name.value.trim()
   if (!trimmed) {
-    errorMessage.value = 'Tên không được để trống'
+    errorMessage.value = t('collectionModal.nameRequired')
     return
   }
   errorMessage.value = ''
@@ -87,13 +90,13 @@ const handleBackdropClick = (e: MouseEvent) => {
             :id="mode === 'create' ? 'modal-title-create' : 'modal-title-rename'"
             class="heading-sm text-text-primary"
           >
-            {{ mode === 'create' ? 'Tạo collection mới' : 'Đổi tên collection' }}
+            {{ mode === 'create' ? t('collectionModal.createTitle') : t('collectionModal.renameTitle') }}
           </h3>
           <button
             type="button"
             @click="close"
             class="text-text-muted hover:text-text-primary p-1 rounded hover:bg-surface-overlay transition-colors"
-            aria-label="Đóng"
+            :aria-label="t('common.close')"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -106,14 +109,14 @@ const handleBackdropClick = (e: MouseEvent) => {
         <form @submit.prevent="handleSubmit" class="p-4 flex flex-col gap-3">
           <div>
             <label for="collection-name-input" class="block ui-xs font-medium text-text-secondary mb-1.5">
-              Tên collection
+              {{ t('collectionModal.nameLabel') }}
             </label>
             <input
               id="collection-name-input"
               ref="inputRef"
               v-model="name"
               type="text"
-              :placeholder="mode === 'create' ? 'vd: Project E-Commerce' : 'Tên collection mới'"
+              :placeholder="mode === 'create' ? t('collectionModal.createPlaceholder') : t('collectionModal.renamePlaceholder')"
               :class="[
                 'w-full px-3 py-2 bg-surface-input border rounded ui-sm text-text-primary transition-colors focus:outline-none',
                 errorMessage
@@ -134,14 +137,14 @@ const handleBackdropClick = (e: MouseEvent) => {
               @click="close"
               class="px-3 py-1.5 rounded ui-sm bg-surface-overlay hover:bg-surface-hover text-text-primary transition-colors border border-border-default"
             >
-              Hủy
+              {{ t('common.cancel') }}
             </button>
             <button
               type="submit"
               :disabled="isSubmitting"
               class="px-4 py-1.5 rounded ui-sm bg-brand-primary hover:bg-brand-primary-hover text-white font-medium transition-colors disabled:opacity-50"
             >
-              {{ mode === 'create' ? 'Tạo' : 'Lưu' }}
+              {{ mode === 'create' ? t('common.create') : t('common.save') }}
             </button>
           </div>
         </form>

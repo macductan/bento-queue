@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 import SettingsModal from '../SettingsModal.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
@@ -38,6 +38,8 @@ const mockCollections: model.Collection[] = [
 describe('SettingsModal.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    const uiStore = useUiStore()
+    uiStore.setLocale('vi')
   })
 
   it('renders collections and disables delete on default collection', async () => {
@@ -202,5 +204,37 @@ describe('SettingsModal.vue', () => {
     expect(envModal.exists()).toBe(true)
     expect(envModal.props('modelValue')).toBe(true)
     expect(envModal.props('collectionId')).toBe('default')
+  })
+
+  it('allows user to switch language between English and Vietnamese', async () => {
+    const uiStore = useUiStore()
+    const collStore = useCollectionStore()
+    const updateLocaleSpy = vi.spyOn(collStore, 'updateActiveCollectionLocale').mockResolvedValue(true)
+
+    const wrapper = mount(SettingsModal, {
+      props: {
+        modelValue: true
+      }
+    })
+
+    const enBtn = wrapper.find('[data-test="locale-option-en"]')
+    const viBtn = wrapper.find('[data-test="locale-option-vi"]')
+
+    expect(enBtn.exists()).toBe(true)
+    expect(viBtn.exists()).toBe(true)
+
+    // Switch to English
+    await enBtn.trigger('click')
+    await flushPromises()
+    expect(uiStore.locale).toBe('en')
+    expect(updateLocaleSpy).toHaveBeenCalledWith('en')
+    expect(wrapper.text()).toContain('Collection Management')
+
+    // Switch back to Vietnamese
+    await viBtn.trigger('click')
+    await flushPromises()
+    expect(uiStore.locale).toBe('vi')
+    expect(updateLocaleSpy).toHaveBeenCalledWith('vi')
+    expect(wrapper.text()).toContain('Quản lý Collection')
   })
 })

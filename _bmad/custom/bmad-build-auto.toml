@@ -1,6 +1,5 @@
 [workflow]
 persistent_facts = [
-
   "Do NOT automatically commit code at the end of the workflow. Leave the changes uncommitted and HALT.",
   "CRITICAL MANDATORY STEP: You MUST execute the sprint_plan.py command (detailed in the on_complete section) to update the sprint status file IMMEDIATELY BEFORE you HALT. Do not end the workflow without running this command."
 ]

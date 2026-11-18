@@ -9,10 +9,13 @@ import { resolveEffectiveAuth, getAuthArtifacts } from '@/utils/auth'
 import { resolveHierarchyVariables } from '@/utils/resolveHierarchyVariables'
 import { resolveVariables } from '@/utils/variables'
 import CustomSelect from './CustomSelect.vue'
+import { useI18n } from '@/i18n'
 
 const props = defineProps<{
   defaultHeadersCount?: number
 }>()
+
+const { t } = useI18n()
 
 const uiStore = useUiStore()
 const requestStore = useRequestStore()
@@ -130,7 +133,7 @@ const onBodyTypeSelect = (val: string) => {
 
 <template>
   <div class="flex items-center justify-between border-b border-border-default">
-    <div class="flex items-center" role="tablist" aria-label="Request tabs">
+    <div class="flex items-center" role="tablist" :aria-label="t('tabs.requestTabs')">
       <button
         v-for="tab in tabs"
         :key="tab.id"

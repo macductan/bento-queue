@@ -5,7 +5,9 @@ import { useUiStore } from '@/stores/uiStore'
 import { model } from '../../wailsjs/go/models'
 import CollectionModal from './CollectionModal.vue'
 import CollectionEnvModal from './CollectionEnvModal.vue'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const collectionStore = useCollectionStore()
 const uiStore = useUiStore()
 
@@ -29,7 +31,7 @@ const openCollectionEnv = (c: model.Collection) => {
 
 const activeCollectionName = computed(() => {
   if (collectionStore.collectionsLoading && collectionStore.collections.length === 0) {
-    return 'Đang tải...'
+    return t('common.loading')
   }
   return collectionStore.activeCollection?.name || 'Default Collection'
 })
@@ -97,7 +99,7 @@ const handleDelete = async (c: model.Collection) => {
   }
   isOpen.value = false
   const confirmed = await uiStore.requestConfirm(
-    `Bạn có chắc chắn muốn xóa collection "${c.name}" không? Toàn bộ request và environment sẽ bị xóa vĩnh viễn.`
+    t('settings.deleteCollectionConfirm', { name: c.name })
   )
   if (!confirmed) return
   await collectionStore.deleteCollection(c.id || '')
@@ -154,7 +156,7 @@ onUnmounted(() => {
       :title="activeCollectionName"
       :aria-expanded="isOpen"
       aria-haspopup="true"
-      aria-label="Chọn collection"
+      :aria-label="t('sidebar.selectCollection')"
     >
       <div class="flex items-center gap-1.5 min-w-0">
         <svg class="w-4 h-4 shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -189,12 +191,12 @@ onUnmounted(() => {
       v-if="isOpen"
       class="absolute top-full left-0 mt-1 w-[240px] bg-surface-raised border border-border-default rounded-md shadow-xl py-1 z-50 flex flex-col"
       role="menu"
-      aria-label="Danh sách collections"
+      :aria-label="t('settings.collections')"
     >
       <!-- List of collections -->
       <div class="max-h-64 overflow-y-auto flex flex-col py-0.5">
         <div v-if="collectionStore.collections.length === 0" class="py-3 px-2.5 text-center ui-xs text-text-muted">
-          Không có collection nào
+          {{ t('settings.noCollections') }}
         </div>
         <div
           v-for="c in collectionStore.collections"
@@ -243,8 +245,8 @@ onUnmounted(() => {
             <button
               type="button"
               class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-              title="Biến môi trường Collection"
-              aria-label="Biến collection"
+              :title="t('settings.collectionVariables')"
+              :aria-label="t('settings.collectionVariables')"
               data-test="collection-variables-btn"
               @click="openCollectionEnv(c)"
             >
@@ -258,8 +260,8 @@ onUnmounted(() => {
             <button
               type="button"
               class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-              title="Đổi tên collection"
-              aria-label="Đổi tên collection"
+              :title="t('settings.renameCollection')"
+              :aria-label="t('settings.renameCollection')"
               @click="openRename(c)"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -272,8 +274,8 @@ onUnmounted(() => {
             <button
               type="button"
               class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-              title="Nhân bản collection"
-              aria-label="Nhân bản collection"
+              :title="t('settings.duplicateCollection')"
+              :aria-label="t('settings.duplicateCollection')"
               @click="handleDuplicate(c.id || '')"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -292,8 +294,8 @@ onUnmounted(() => {
                   ? 'opacity-30 cursor-not-allowed text-text-muted'
                   : 'text-text-muted hover:text-rose-400 hover:bg-surface-overlay'
               ]"
-              :title="(c.id === 'default' || c.is_default) ? 'Không thể xóa collection mặc định' : 'Xóa collection'"
-              aria-label="Xóa collection"
+              :title="(c.id === 'default' || c.is_default) ? t('settings.cannotDeleteDefault') : t('settings.deleteCollection')"
+              :aria-label="t('settings.deleteCollection')"
               @click="handleDelete(c)"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -316,7 +318,7 @@ onUnmounted(() => {
             <line x1="12" y1="5" x2="12" y2="19"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
           </svg>
-          <span>Tạo collection mới</span>
+          <span>{{ t('collectionModal.createTitle') }}</span>
         </button>
         <button
           type="button"
@@ -327,7 +329,7 @@ onUnmounted(() => {
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
-          <span>Quản lý collections...</span>
+          <span>{{ t('settings.manageCollections') }}</span>
         </button>
       </div>
     </div>

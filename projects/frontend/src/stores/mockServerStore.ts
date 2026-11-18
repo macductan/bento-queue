@@ -75,6 +75,12 @@ export const useMockServerStore = defineStore('mockServer', () => {
       if (res?.success && res.data) {
         applyStatus(res.data as MockServerStatus)
         uiStore.showToast('Đã lưu cấu hình Mock Server')
+        try {
+          const { useCollectionStore } = await import('./collectionStore')
+          useCollectionStore().scheduleAutoPush()
+        } catch {
+          // Ignore when collectionStore module is mocked out in isolated tests
+        }
         return true
       } else if (res?.error?.message) {
         uiStore.showToast(res.error.message)

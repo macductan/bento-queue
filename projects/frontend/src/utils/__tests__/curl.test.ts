@@ -328,6 +328,159 @@ describe('generateCurlCommand', () => {
     const cmd = generateCurlCommand(req, { pathNodes });
     expect(cmd).toContain("-H 'X-Root-Header: auto-inherited'");
   });
+
+  it('hides Bearer, Basic, API Key header/query, inherited auth, and manual auth headers when hideAuth is true', () => {
+    const bearerReq: Request = {
+      ...baseRequest,
+      method: 'POST',
+      url: 'https://api.example.com/orders?page=1#top',
+      headers: [
+        { key: 'X-Trace', value: 't-1', enabled: true },
+        { key: 'Proxy-Authorization', value: 'Basic proxy-secret', enabled: true }
+      ],
+      auth: { type: 'bearer', bearer: { token: 'super-secret' } },
+      body: { type: 'json', content: '{"a":1}' }
+    };
+
+    const hiddenBearer = generateCurlCommand(bearerReq, { hideAuth: true });
+    expect(hiddenBearer).not.toContain('Authorization');
+    expect(hiddenBearer).not.toContain('Proxy-Authorization');
+    expect(hiddenBearer).not.toContain('super-secret');
+    expect(hiddenBearer).toContain("-H 'Content-Type: application/json'");
+    expect(hiddenBearer).toContain("-H 'X-Trace: t-1'");
+    expect(hiddenBearer).toContain("--data-raw '{\"a\":1}'");
+    expect(hiddenBearer).toContain("'https://api.example.com/orders?page=1#top'");
+
+    const shownBearer = generateCurlCommand(bearerReq, { hideAuth: false });
+    expect(shownBearer).toContain("-H 'Authorization: Bearer super-secret'");
+    expect(shownBearer).toContain("-H 'Proxy-Authorization: Basic proxy-secret'");
+
+    const basicReq: Request = {
+      ...baseRequest,
+      auth: { type: 'basic', basic: { username: 'alice', password: 'secret' } },
+      headers: [{ key: 'Accept', value: 'application/json', enabled: true }]
+    };
+    const hiddenBasic = generateCurlCommand(basicReq, { hideAuth: true });
+    expect(hiddenBasic).toBe("curl -X GET 'https://api.example.com/users' -H 'Accept: application/json'");
+    const shownBasic = generateCurlCommand(basicReq, { hideAuth: false });
+    expect(shownBasic).toContain(`-H 'Authorization: Basic ${btoa('alice:secret')}'`);
+
+    const apiKeyHeaderReq: Request = {
+      ...baseRequest,
+      auth: { type: 'apiKey', apiKey: { key: 'X-API-Key', value: 'k-secret', addTo: 'header' } },
+      headers: [{ key: 'x-api-key', value: 'dup-secret', enabled: true }]
+    };
+    const hiddenApiKeyHeader = generateCurlCommand(apiKeyHeaderReq, { hideAuth: true });
+    expect(hiddenApiKeyHeader).toBe("curl -X GET 'https://api.example.com/users'");
+
+    const apiKeyQueryReq: Request = {
+      ...baseRequest,
+      url: 'https://api.example.com/users?api_key=k-secret&page=2#sec',
+      auth: { type: 'apiKey', apiKey: { key: 'api_key', value: 'k-secret', addTo: 'query' } },
+      params: [
+        { key: 'api_key', value: 'k-secret', enabled: true },
+        { key: 'page', value: '2', enabled: true }
+      ]
+    };
+    const hiddenApiKeyQuery = generateCurlCommand(apiKeyQueryReq, { hideAuth: true });
+    expect(hiddenApiKeyQuery).toBe("curl -X GET 'https://api.example.com/users?page=2#sec'");
+  });
+
+  it('hides inherited folder/collection auth and manual Authorization headers when hideAuth is true', () => {
+    const req: Request = {
+      ...baseRequest,
+      auth: { type: 'inherit' },
+      headers: [{ key: 'X-Keep', value: 'yes', enabled: true }]
+    };
+    const pathNodes: TreeNode[] = [
+      {
+        id: 'f-1',
+        name: 'Protected Folder',
+        type: 'folder',
+        path: '/Protected Folder',
+        created_at: '2026-10-13',
+        headers: [{ key: 'Authorization', value: 'Bearer inherited-manual', enabled: true }],
+        auth: {
+          type: 'apiKey',
+          apiKey: { key: 'X-Folder-Key', value: 'folder-secret', addTo: 'header' }
+        }
+      }
+    ];
+
+    const cmdHidden = generateCurlCommand(req, { pathNodes, hideAuth: true, multiline: true });
+    expect(cmdHidden).not.toContain('Authorization');
+    expect(cmdHidden).not.toContain('X-Folder-Key');
+    expect(cmdHidden).not.toContain('folder-secret');
+    expect(cmdHidden).toContain("-H 'X-Keep: yes'");
+
+    const cmdVisible = generateCurlCommand(req, { pathNodes, multiline: true });
+    expect(cmdVisible).toContain("-H 'Authorization: Bearer inherited-manual'");
+    expect(cmdVisible).toContain("-H 'X-Folder-Key: folder-secret'");
+
+    // Inherited collection auth & auth_envs
+    const collAuthReq: Request = {
+      ...baseRequest,
+      auth: { type: 'inherit' },
+      headers: [{ key: 'X-Keep', value: 'yes', enabled: true }]
+    };
+    const collection = {
+      id: 'col-1',
+      name: 'Coll',
+      auth: { type: 'bearer' as const, bearer: { token: 'coll-global-secret' } },
+      auth_envs: {
+        'env-prod': {
+          type: 'apiKey' as const,
+          apiKey: { key: 'X-Env-Key', value: 'env-secret', addTo: 'header' as const }
+        }
+      }
+    };
+    const cmdCollHidden = generateCurlCommand(collAuthReq, {
+      collection,
+      hideAuth: true
+    });
+    expect(cmdCollHidden).toBe("curl -X GET 'https://api.example.com/users' -H 'X-Keep: yes'");
+    const cmdCollShown = generateCurlCommand(collAuthReq, { collection });
+    expect(cmdCollShown).toContain("-H 'Authorization: Bearer coll-global-secret'");
+
+    const cmdEnvHidden = generateCurlCommand(collAuthReq, {
+      collection,
+      activeEnvId: 'env-prod',
+      hideAuth: true
+    });
+    expect(cmdEnvHidden).toBe("curl -X GET 'https://api.example.com/users' -H 'X-Keep: yes'");
+    const cmdEnvShown = generateCurlCommand(collAuthReq, {
+      collection,
+      activeEnvId: 'env-prod'
+    });
+    expect(cmdEnvShown).toContain("-H 'X-Env-Key: env-secret'");
+  });
+
+  it('treats Record<string, string> env maps containing a hideAuth key as environment variables and does not coerce non-boolean hideAuth', () => {
+    const req: Request = {
+      ...baseRequest,
+      url: 'https://{{host}}/items?flag={{hideAuth}}',
+      auth: { type: 'bearer', bearer: { token: 'keep-me' } }
+    };
+
+    const cmdWithRecordEnv = generateCurlCommand(req, {
+      host: 'api.example.com',
+      hideAuth: 'false'
+    });
+    expect(cmdWithRecordEnv).toBe(
+      "curl -X GET 'https://api.example.com/items?flag=false' -H 'Authorization: Bearer keep-me'"
+    );
+
+    const cmdWithStringOption = generateCurlCommand(req, {
+      vars: new Map([
+        ['host', 'api.example.com'],
+        ['hideAuth', '0']
+      ]),
+      hideAuth: 'false' as any
+    });
+    expect(cmdWithStringOption).toBe(
+      "curl -X GET 'https://api.example.com/items?flag=0' -H 'Authorization: Bearer keep-me'"
+    );
+  });
 });
 
 describe('isCurlCommand & parseCurlCommand', () => {

@@ -17,6 +17,12 @@ import {
 } from '../../src/utils/performanceMetrics'
 
 test.describe('Story 6.2 - NFR Performance Benchmarking & Evidence', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('hecto_locale', 'vi');
+    });
+  });
+
   test('should verify cold start < 2.0s, baseline & CRUD execution RAM < 100MB, and publish NFR evidence artifacts', async ({
     page
   }, testInfo) => {

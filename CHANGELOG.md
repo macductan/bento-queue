@@ -32,6 +32,72 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.19.0] - 2026-11-18
+
+### Added — Hybrid Auto Pull & Auto Push Git Sync
+- **Tự động Pull (Hybrid Auto Pull - `collectionStore.ts`, `App.vue`)**: Tự động đồng bộ dữ liệu từ Git Remote khi khởi động ứng dụng, chuyển Collection, khi cửa sổ nhận lại focus/hiển thị (throttle 60 giây) và định kỳ mỗi 3 phút (khi tab đang hiển thị và không có thay đổi chưa lưu `isDirty`/thực thi đang chạy); tự động gọi `smartReload()` và hiện toast thông báo khi có thay đổi mới từ remote, hoặc chuyển sang `fetchGitStatus()` để hiển thị đúng nhánh/xung đột nếu Auto Sync tắt.
+- **Tự động Push (15s Debounced Auto Push - `collectionStore.ts`, `app.go`)**: Tự động gom các thay đổi sau khi lưu/chỉnh sửa Request, Folder, Environment, Flow, Mock Server (`mock-server.json`) hoặc cấu hình Collection (debounce 15 giây) để đẩy lên Git Remote; phát sự kiện `collection:local-changed` theo từng collection ID, hoãn đẩy nếu đang chỉnh sửa dở (`isDirty`) hoặc đang chạy request/flow, và giữ nguyên trạng thái `Pending` hoặc mở Conflict Resolver khi phát sinh `GIT_CONFLICT`.
+- **Cấu hình theo Collection & Trạng thái UI (`collection.go`, `GitSyncModal.vue`, `AppHeader.vue`)**: Bổ sung tùy chọn `git_auto_sync` (`AutoSyncEnabled` mặc định `true` khi có `git_remote_url`), công tắc bật/tắt `[data-test="git-auto-sync-toggle"]` trong `GitSyncModal.vue` và hiển thị trạng thái đồng bộ (`Đang đồng bộ...` / `Chờ đẩy lên`) trên nút Git ở `AppHeader.vue`.
+- **An toàn đồng bộ Backend (`git_sync.go`, `git_merge.go`)**: Khóa tuần tự theo từng thư mục Collection (`lockCollection`/`lockCollectionByID`), tự dọn `.git/index.lock` bị treo quá 2 phút, thêm `GIT_OPTIONAL_LOCKS=0` cho lệnh Git chỉ đọc, ép `LC_ALL=C`/`LANG=C` trong `runGit`, và bảo toàn tùy chọn local `git_auto_sync` khi merge hoặc `ClearAndPull`.
+
+### Removed & Fixed — Loại bỏ hoàn toàn History/Changelog & Tự động dọn `.history/` khi Git Sync
+- **Xóa bỏ hoàn toàn History & Changelog**: Xóa `HistoryService` (`projects/service/history.go`), `HistoryModal.vue`, `historyStore.ts`, nút History trên `AppHeader.vue`, 5 Wails bindings (`GetExecutionHistory`, `GetChangelog`, `ClearExecutionHistory`, v.v.) và toàn bộ lời gọi ghi `.history/` ở cả Desktop UI lẫn CLI/Headless.
+- **Dọn sạch `.history/` & chống Conflict Git (`git_sync.go`, `git_merge.go`)**: Tự động đảm bảo `.gitignore` của từng Collection chứa `.history/` và `.tmp-*` (giữ nguyên các quy tắc riêng hiện có), xóa `.history/` trên đĩa và gỡ khỏi Git index (`git rm -rf --cached --ignore-unmatch .history`), đồng thời tự động giải quyết ngầm xung đột `.history/*` và `.gitignore` khi đồng bộ với các remote cũ.
+
+---
+
+## [v1.18.0] - 2026-11-17
+
+### Added
+- **cURL Hide Auth Option (`RequestEditor.vue`, `curl.ts`, `buildExecuteRequest.ts`)**:
+  - Bổ sung tùy chọn **Hide Auth** (checkbox trong tab cURL Preview và áp dụng cho cả nút **Copy cURL**) cho phép ẩn hoàn toàn thông tin xác thực nhạy cảm (Authorization headers, API key headers/query params, Basic/Bearer tokens) khi chia sẻ lệnh cURL.
+  - Hỗ trợ `hideAuth` xuyên suốt từ `generateCurlCommand()` đến `buildExecuteRequest()` và `headless-engine.js`, kèm bộ test đơn vị mới cho `RequestEditor.vue`, `curl.ts`, `buildExecuteRequest.ts` và `headless-engine.ts` cũng như bản dịch i18n (`en.ts`, `vi.ts`).
+
+---
+
+## [v1.17.0] - 2026-11-05
+
+### Added
+- **Bilingual i18n System (English & Vietnamese - Default English)**:
+  - Tích hợp hệ thống đa ngôn ngữ song ngữ Anh - Việt với ngôn ngữ mặc định khởi tạo là English (`en`) và fallback an toàn về `en`.
+  - Composable zero-dependency phản ứng nhanh `useI18n()` tại `projects/frontend/src/i18n/index.ts` (~35 dòng code), hỗ trợ cú pháp nội suy tham số động `{param}` và chuyển đổi ngôn ngữ tức thì trong toàn bộ ứng dụng mà không cần tải lại trang.
+  - Bộ từ điển hoàn chỉnh đối ứng 1:1 giữa `projects/frontend/src/i18n/locales/en.ts` và `locales/vi.ts` cho tất cả các thành phần: Header, Sidebar, Request Tabs, Editors (URL Bar, KVP, Auth, Body, Scripts, Folder), Modals, Dialogs, Toasts và Empty States.
+  - Đồng bộ cấu hình ngôn ngữ đa máy qua Git: bổ sung trường `Locale` (`"en" | "vi"`) vào struct `model.Collection` ở backend Go, tự động lưu trữ trong file `collection.json` và đồng bộ qua Git Remote khi người dùng chạy Git Sync, kết hợp lưu trữ `localStorage` tại máy trạm và cơ chế rollback an toàn khi ghi đĩa thất bại.
+  - Bổ sung tùy chọn chuyển đổi ngôn ngữ (Language: English / Tiếng Việt) kèm thông tin đồng bộ Git trong `SettingsModal.vue`.
+
+### Fixed
+- **Sidebar Tree Method Badge Spacing (`TreeNodeRow.vue`)**:
+  - Loại bỏ class độ rộng cố định `w-11` (44px) và chuẩn hóa khoảng cách thành `mr-1.5` (6px) giữa badge HTTP Method (`POST`, `GET`,...) và tên request, khắc phục hoàn toàn lỗi khoảng trống thừa lớn (~20-26px) trên cây thư mục sidebar và căn thẳng hàng tự nhiên với tên thư mục con.
+
+### Changed
+- **Build, Documentation & Skill Maintenance**:
+  - Bổ sung tài liệu `README.md` toàn diện và cô lập cấu hình test / build dmg trên macOS.
+  - Dọn dẹp các rule ignore và bỏ các skill deprecated.
+
+---
+
+## [v1.16.0] - 2026-10-27
+
+### Added
+- **Response Body Search & Keyword Highlighting (`ResponseViewer.vue`, `JsonViewer.vue`, `jsonHighlight.ts`)**:
+  - Bổ sung nút **Tìm kiếm** (icon kính lúp, có trạng thái active khi đang mở) trên thanh sub-toolbar của tab Body (cạnh nút **Sao chép**) và hỗ trợ phím tắt `Ctrl+F` / `Cmd+F` để bật nhanh thanh tìm kiếm kèm tự động focus/select ô nhập từ khóa.
+  - Thanh tìm kiếm hỗ trợ bật/tắt phân biệt hoa thường (`Aa`), bộ đếm vị trí kết quả hiện tại / tổng số kết quả khớp (`1/5`, `0/0`), điều hướng kết quả Trước (`Shift+Enter`) / Tiếp theo (`Enter`) kèm tự động cuộn (`scrollIntoView`), và đóng bằng nút đóng hoặc phím `Esc`.
+  - Bổ sung `highlightHtmlWithSearch` và `decodeHtmlEntities` để tô sáng tất cả từ khóa khớp ở cả 2 chế độ **Pretty** và **Raw** (với màu nổi bật hơn cho kết quả đang chọn, hỗ trợ cả từ khóa trải qua nhiều thẻ `<span>` hoặc chứa ký tự HTML entity / Unicode) mà không làm vỡ cú pháp HTML/JSON/XML.
+
+### Fixed
+- **JsonViewer Sticky Line-Number Gutter (`JsonViewer.vue`)**:
+  - Khắc phục lỗi cột số dòng (`sticky left-0 z-10 bg-[#090d15] border-r`) bị hụt nền và viền phải khi cuộn dọc xuống dưới kết hợp cuộn ngang bằng cách bổ sung `h-fit min-h-full` phủ kín toàn bộ `scrollHeight` của nội dung, tự co giãn độ rộng `min-w-[48px] w-fit` khi số dòng lớn và `scroll-padding-left` tránh che khuất kết quả tìm kiếm.
+- **Environment Selector & Tab Path Descender Clipping (`EnvSelector.vue`, `AppTabBar.vue`)**:
+  - Khắc phục lỗi mất phần chân chữ cái `g, y, p, q, j` trên nút chọn môi trường ở `AppHeader` và đường dẫn phụ trên `AppTabBar` bằng cách đổi `leading-none` sang `leading-normal` khi đi kèm `truncate`.
+- **Lint & E2E Selector Stability (`RequestEditor.vue`, `FolderEditor.vue`, `FlowBranchEditor.vue`, `FlowStepCard.vue`)**:
+  - Xử lý triệt để cảnh báo `vue/no-mutating-props` trong `FlowBranchEditor.vue` / `FlowStepCard.vue` và giữ selector `h1 > span` đồng nhất cho kiểm thử E2E trên `RequestEditor.vue` / `FolderEditor.vue`.
+
+### Changed
+- **Local CI Git Hooks on `develop` (`.githooks/`, `scripts/verify-local-ci.sh`, `.gitlab-ci.yml`)**:
+  - Vô hiệu hóa tạm thời GitLab CI/CD trên remote (`workflow: rules: - when: never`) và chuyển toàn bộ 6 cổng kiểm định chất lượng (`build:headless`, `lint`, `type-check`, `test`, `go vet && go test`, `test:e2e`) về chạy tự động tại local thông qua Git Hooks (`.githooks/pre-commit`, `pre-merge-commit`, `post-merge`) trực tiếp trên nhánh `develop`.
+
+---
+
 ## [v1.15.0] - 2026-10-26
 
 ### Added

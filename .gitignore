@@ -42,3 +42,4 @@ projects/build/*.deb
 
 .temp_skills
 skill-cli.sh
+.ai-config/secrets.md

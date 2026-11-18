@@ -326,6 +326,7 @@ const handleSave = async () => {
       }
 
       await collectionStore.loadTree()
+      collectionStore.scheduleAutoPush()
 
       const treeNode = collectionStore.findNode(collectionStore.tree, folderId)
       if (treeNode) {

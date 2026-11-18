@@ -6,7 +6,9 @@ import {
   resolveHeaders,
   resolveAuth,
   stripJsonComments,
-  parseCurlCommand
+  parseCurlCommand,
+  buildExecuteRequest,
+  generateCurlCommand
 } from '../headless-engine'
 import type { Request } from '../../stores/requestStore'
 import type { TreeNode } from '../../stores/collectionStore'
@@ -254,5 +256,24 @@ describe('headless-engine', () => {
     const parsed = parseCurlCommand('curl -X POST https://example.com/api -d \'{"x":1}\'')
     expect(parsed.method).toBe('POST')
     expect(parsed.url).toBe('https://example.com/api')
+
+    const authReq: Request = {
+      id: 'req-hide-smoke',
+      name: 'Hide Auth Smoke',
+      method: 'GET',
+      url: 'https://example.com/items?api_key=sec&page=1',
+      headers: [{ key: 'X-Keep', value: 'ok', enabled: true }],
+      params: [{ key: 'api_key', value: 'sec', enabled: true }],
+      auth: { type: 'apiKey', apiKey: { key: 'api_key', value: 'sec', addTo: 'query' } },
+      body: { type: 'none', content: '' },
+      created_at: '',
+      updated_at: ''
+    }
+    const execHidden = buildExecuteRequest(authReq, new Map(), [], [], { hideAuth: true })
+    expect(execHidden.url).toBe('https://example.com/items?page=1')
+    expect(execHidden.headers).toEqual([{ key: 'X-Keep', value: 'ok', enabled: true }])
+
+    const curlHidden = generateCurlCommand(authReq, { hideAuth: true })
+    expect(curlHidden).toBe("curl -X GET 'https://example.com/items?page=1' -H 'X-Keep: ok'")
   })
 })

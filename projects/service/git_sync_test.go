@@ -1,12 +1,14 @@
 package service
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"hecto-api/model"
 	"hecto-api/storage"
@@ -463,6 +465,10 @@ func TestGitSyncService_InitialPushAndPullWithUnrelatedHistoryAndCollectionMeta(
 	if !pushRes.Success {
 		t.Fatalf("expected initial Push to auto-merge README.md & collection.json and succeed, got: %+v", pushRes.Error)
 	}
+	pushStatus := pushRes.Data.(model.GitSyncStatus)
+	if strings.TrimSpace(pushStatus.Output) == "" {
+		t.Errorf("expected initial Push after remote merge to return non-empty Output")
+	}
 
 	// Verify both README.md and local-req.json exist locally and on remote
 	if _, err := os.Stat(filepath.Join(collDir, "README.md")); err != nil {
@@ -529,6 +535,10 @@ func TestGitSyncService_PushAutoMergesJsonFieldsAndAbortMerge(t *testing.T) {
 	if !pushRes.Success {
 		t.Fatalf("expected Push to auto-merge non-overlapping fields and succeed, got: %+v", pushRes.Error)
 	}
+	pushStatus := pushRes.Data.(model.GitSyncStatus)
+	if !strings.Contains(pushStatus.Output, "Auto-merging") && !strings.Contains(pushStatus.Output, "Merge made by") {
+		t.Errorf("expected Push output to reflect merged remote changes, got %q", pushStatus.Output)
+	}
 
 	// Now create a true conflict on url and verify AbortMerge cleanly aborts MERGE_HEAD
 	runTestGit(t, peerDir, "pull", "--no-rebase")
@@ -553,6 +563,276 @@ func TestGitSyncService_PushAutoMergesJsonFieldsAndAbortMerge(t *testing.T) {
 	abortStatus := abortRes.Data.(model.GitSyncStatus)
 	if abortStatus.HasConflicts {
 		t.Errorf("expected HasConflicts=false after AbortMerge, got %+v", abortStatus)
+	}
+}
+
+func TestGitSyncService_AutoResolveCollectionMetaConflict_PreservesLocale(t *testing.T) {
+	gitSvc, _, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	collDir := filepath.Join(collectionsRoot, collID)
+	metaPath := filepath.Join(collDir, collectionFileName)
+
+	localColl := &model.Collection{
+		ID:        collID,
+		Name:      "Local Collection",
+		Locale:    "",
+		IsDefault: false,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	if pushRes := gitSvc.Push(collectionsRoot, collID); !pushRes.Success {
+		t.Fatalf("initial Push failed: %+v", pushRes.Error)
+	}
+
+	peerDir := filepath.Join(filepath.Dir(collectionsRoot), "peer-locale")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, peerDir)
+	runTestGit(t, peerDir, "config", "user.name", "Peer Dev")
+	runTestGit(t, peerDir, "config", "user.email", "peer@hecto.local")
+
+	enabled := true
+	disabled := false
+	localColl.GitAutoSync = &disabled
+
+	peerColl := model.Collection{
+		ID:          collID,
+		Name:        "Remote Collection",
+		Locale:      "vi",
+		GitAutoSync: &enabled,
+		IsDefault:   false,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	peerBytes, _ := json.MarshalIndent(peerColl, "", "  ")
+	if err := os.WriteFile(filepath.Join(peerDir, "collection.json"), peerBytes, 0644); err != nil {
+		t.Fatalf("write peer collection.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "set collection locale to vi")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	localBytes, _ := json.MarshalIndent(localColl, "", "  ")
+	if err := os.WriteFile(metaPath, localBytes, 0644); err != nil {
+		t.Fatalf("write local collection.json failed: %v", err)
+	}
+
+	// Pull detects conflict on collection.json
+	pullRes := gitSvc.Pull(collectionsRoot, collID)
+	if pullRes.Success {
+		t.Fatalf("expected conflict on collection.json, got success")
+	}
+
+	// Auto-resolve metadata conflict should merge and preserve incoming locale "vi"
+	resolved := gitSvc.autoResolveCollectionMetaConflict(collDir, metaPath, localColl, bareRepoDir)
+	if !resolved {
+		t.Fatalf("expected autoResolveCollectionMetaConflict to resolve successfully and return true")
+	}
+
+	var updatedColl model.Collection
+	metaBytes, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read collection.json failed: %v", err)
+	}
+	if err := json.Unmarshal(metaBytes, &updatedColl); err != nil {
+		t.Fatalf("unmarshal collection.json failed: %v", err)
+	}
+
+	if updatedColl.Locale != "vi" {
+		t.Errorf("expected merged collection Locale to be 'vi', got %q", updatedColl.Locale)
+	}
+	if updatedColl.GitAutoSync == nil || *updatedColl.GitAutoSync {
+		t.Errorf("expected local GitAutoSync=false to be preserved after auto-resolve, got %v", updatedColl.GitAutoSync)
+	}
+}
+
+func TestGitSyncService_GitIgnoreAndPurgeHistory_AutoResolvesConflicts(t *testing.T) {
+	gitSvc, _, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+	collDir := filepath.Join(collectionsRoot, collID)
+
+	// Pre-populate .gitignore with custom rule and a legacy .history/ directory
+	if err := os.WriteFile(filepath.Join(collDir, ".gitignore"), []byte("*.local.bak\n"), 0644); err != nil {
+		t.Fatalf("write initial .gitignore failed: %v", err)
+	}
+	histDir := filepath.Join(collDir, ".history")
+	if err := os.MkdirAll(histDir, 0755); err != nil {
+		t.Fatalf("mkdir .history failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(histDir, "executions.json"), []byte(`[{"id":"local-exec"}]`), 0644); err != nil {
+		t.Fatalf("write local executions.json failed: %v", err)
+	}
+
+	// Peer initializes bare repo with legacy tracked .history/ files and a conflicting .gitignore
+	peerDir := filepath.Join(filepath.Dir(collectionsRoot), "peer-legacy-history")
+	runTestGit(t, filepath.Dir(collectionsRoot), "clone", bareRepoDir, peerDir)
+	runTestGit(t, peerDir, "config", "user.name", "Legacy Client")
+	runTestGit(t, peerDir, "config", "user.email", "legacy@hecto.local")
+	if err := os.MkdirAll(filepath.Join(peerDir, ".history"), 0755); err != nil {
+		t.Fatalf("mkdir peer .history failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, ".history", "executions.json"), []byte(`[{"id":"remote-exec-1"}]`), 0644); err != nil {
+		t.Fatalf("write peer executions.json failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, ".history", "changelog.json"), []byte(`[{"id":"remote-chg-1"}]`), 0644); err != nil {
+		t.Fatalf("write peer changelog.json failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, ".gitignore"), []byte("*.remote.tmp\n"), 0644); err != nil {
+		t.Fatalf("write peer .gitignore failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, "req-clean.json"), []byte(`{"id":"req-clean","name":"Clean","method":"GET","url":"https://example.com"}`), 0644); err != nil {
+		t.Fatalf("write peer req-clean.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "legacy commit with .history")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	// SaveRemoteURL initializes repo, updates .gitignore preserving *.local.bak, and purges .history
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+	if _, err := os.Stat(histDir); !os.IsNotExist(err) {
+		t.Fatalf("expected .history to be removed by SaveRemoteURL, got err=%v", err)
+	}
+
+	// Also test Pull when local has unrelated commit that tracked .history earlier (simulating modify/delete conflict on .history + .gitignore)
+	if err := os.MkdirAll(histDir, 0755); err != nil {
+		t.Fatalf("recreate .history failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(histDir, "executions.json"), []byte(`[{"id":"local-old-commit"}]`), 0644); err != nil {
+		t.Fatalf("write local executions.json failed: %v", err)
+	}
+	runTestGit(t, collDir, "add", "-f", ".history/executions.json", ".gitignore")
+	runTestGit(t, collDir, "commit", "-m", "local legacy commit with .history")
+
+	// Peer pushes a second commit modifying .history/executions.json and .gitignore
+	if err := os.WriteFile(filepath.Join(peerDir, ".history", "executions.json"), []byte(`[{"id":"remote-exec-2"}]`), 0644); err != nil {
+		t.Fatalf("write peer executions.json v2 failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, ".gitignore"), []byte("*.remote.tmp\n*.peer2\n"), 0644); err != nil {
+		t.Fatalf("write peer .gitignore v2 failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-A")
+	runTestGit(t, peerDir, "commit", "-m", "peer modifies .history and .gitignore")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	// Pull must auto-resolve .history and .gitignore conflicts cleanly without ErrGitConflict
+	pullRes := gitSvc.Pull(collectionsRoot, collID)
+	if !pullRes.Success {
+		t.Fatalf("expected Pull to auto-resolve .history & .gitignore conflicts, got: %+v", pullRes.Error)
+	}
+	pullStatus := pullRes.Data.(model.GitSyncStatus)
+	if pullStatus.HasConflicts {
+		t.Fatalf("expected HasConflicts=false, got %+v", pullStatus)
+	}
+
+	// Verify .history is gone on disk and untracked in git index
+	if _, err := os.Stat(histDir); !os.IsNotExist(err) {
+		t.Fatalf("expected .history to be deleted after Pull, stat err: %v", err)
+	}
+	trackedHistory := runTestGit(t, collDir, "ls-files", ".history")
+	if trackedHistory != "" {
+		t.Fatalf("expected .history to be untracked in git index, got: %q", trackedHistory)
+	}
+
+	// Verify .gitignore preserved local, remote, and required ignore patterns
+	giBytes, err := os.ReadFile(filepath.Join(collDir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore failed: %v", err)
+	}
+	giContent := string(giBytes)
+	for _, want := range []string{".history/", ".tmp-*", "*.local.bak", "*.remote.tmp", "*.peer2"} {
+		if !strings.Contains(giContent, want) {
+			t.Errorf("expected .gitignore to contain %q, got:\n%s", want, giContent)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(collDir, "req-clean.json")); err != nil {
+		t.Errorf("expected req-clean.json to be merged cleanly, got: %v", err)
+	}
+
+	// Clean-pull path: peer commits new tracked .history/ file without conflict -> purgePulledHistoryIfPresent cleans & commits
+	runTestGit(t, peerDir, "pull", "--no-rebase")
+	if err := os.MkdirAll(filepath.Join(peerDir, ".history"), 0755); err != nil {
+		t.Fatalf("mkdir peer clean .history failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, ".history", "legacy.json"), []byte(`[]`), 0644); err != nil {
+		t.Fatalf("write peer clean legacy.json failed: %v", err)
+	}
+	runTestGit(t, peerDir, "add", "-f", ".history/legacy.json")
+	runTestGit(t, peerDir, "commit", "-m", "peer adds tracked .history/legacy.json cleanly")
+	runTestGit(t, peerDir, "push", "origin", "HEAD")
+
+	cleanPullRes := gitSvc.Pull(collectionsRoot, collID)
+	if !cleanPullRes.Success {
+		t.Fatalf("expected clean Pull with remote .history to succeed, got: %+v", cleanPullRes.Error)
+	}
+	if _, err := os.Stat(histDir); !os.IsNotExist(err) {
+		t.Fatalf("expected .history to be deleted on clean Pull, stat err: %v", err)
+	}
+	if lsAfter := runTestGit(t, collDir, "ls-files", ".history"); lsAfter != "" {
+		t.Fatalf("expected .history untracked after clean Pull, got: %q", lsAfter)
+	}
+	if cleanPullRes.Data.(model.GitSyncStatus).HasChanges {
+		t.Errorf("expected clean working tree (HasChanges=false) after purgePulledHistoryIfPresent commit")
+	}
+}
+
+func TestGitSyncService_AutoSyncEnabledStatusAndStaleIndexLock(t *testing.T) {
+	gitSvc, collSvc, collectionsRoot, collID := setupGitSyncTestEnv(t)
+	bareRepoDir := filepath.Join(filepath.Dir(collectionsRoot), "remote-bare.git")
+	collDir := filepath.Join(collectionsRoot, collID)
+
+	if res := gitSvc.SaveRemoteURL(collectionsRoot, collID, bareRepoDir); !res.Success {
+		t.Fatalf("SaveRemoteURL failed: %+v", res.Error)
+	}
+
+	// 1. Default GitAutoSync (nil) -> AutoSyncEnabled: true
+	statusRes := gitSvc.GetStatus(collectionsRoot, collID)
+	if !statusRes.Success {
+		t.Fatalf("GetStatus failed: %+v", statusRes.Error)
+	}
+	if !statusRes.Data.(model.GitSyncStatus).AutoSyncEnabled {
+		t.Errorf("expected AutoSyncEnabled=true when GitAutoSync is nil")
+	}
+
+	// 2. UpdateCollection with GitAutoSync=false -> AutoSyncEnabled: false
+	disabled := false
+	updRes := collSvc.UpdateCollection(collectionsRoot, model.Collection{
+		ID:          collID,
+		Name:        "Test-Collection",
+		GitAutoSync: &disabled,
+	})
+	if !updRes.Success {
+		t.Fatalf("UpdateCollection failed: %+v", updRes.Error)
+	}
+
+	statusRes2 := gitSvc.GetStatus(collectionsRoot, collID)
+	if !statusRes2.Success {
+		t.Fatalf("GetStatus 2 failed: %+v", statusRes2.Error)
+	}
+	if statusRes2.Data.(model.GitSyncStatus).AutoSyncEnabled {
+		t.Errorf("expected AutoSyncEnabled=false when GitAutoSync is false")
+	}
+
+	// 3. Stale .git/index.lock (> 2 minutes old) is automatically removed before git command
+	lockPath := filepath.Join(collDir, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte(""), 0644); err != nil {
+		t.Fatalf("write stale index.lock failed: %v", err)
+	}
+	staleTime := time.Now().Add(-3 * time.Minute)
+	if err := os.Chtimes(lockPath, staleTime, staleTime); err != nil {
+		t.Fatalf("chtimes stale index.lock failed: %v", err)
+	}
+
+	pushRes := gitSvc.Push(collectionsRoot, collID)
+	if !pushRes.Success {
+		t.Fatalf("expected Push to succeed after removing stale index.lock, got: %+v", pushRes.Error)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Errorf("expected stale index.lock to be removed, stat err: %v", err)
 	}
 }
 

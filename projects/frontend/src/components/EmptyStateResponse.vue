@@ -1,4 +1,7 @@
 <script lang="ts" setup>
+import { useI18n } from '@/i18n'
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -18,6 +21,6 @@
         fill="currentColor"
       />
     </svg>
-    <h2 class="heading-md text-text-secondary m-0">Nhấn Gửi để xem kết quả phản hồi</h2>
+    <h2 class="heading-md text-text-secondary m-0">{{ t('emptyState.sendToSeeResponse') }}</h2>
   </div>
 </template>

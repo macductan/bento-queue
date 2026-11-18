@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, watch } from "vue"
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from "vue"
 import { useResponseStore, type ExecuteResponse, type ExecutionLogRecord } from '@/stores/responseStore'
 import EmptyStateResponse from './EmptyStateResponse.vue'
 import ResponseMetaBar from './ResponseMetaBar.vue'
@@ -12,6 +12,7 @@ import { tryParseJson, formatJsonText } from '@/utils/jsonHighlight'
 import { tryParseXml, formatXmlText } from '@/utils/xmlUtils'
 import { ClipboardSetText } from '../../wailsjs/runtime/runtime'
 import { useUiStore } from '@/stores/uiStore'
+import { useI18n } from '@/i18n'
 
 export interface ResponseViewerOverrideData {
   response?: ExecuteResponse | null
@@ -29,6 +30,7 @@ const props = defineProps<{
 
 const responseStore = useResponseStore()
 const uiStore = useUiStore()
+const { t } = useI18n()
 const activeTab = ref<'body' | 'headers' | 'logs' | 'tests'>('body')
 const expandedLogIds = ref<Record<string, boolean>>({})
 
@@ -129,7 +131,169 @@ const isBinaryResponse = computed(() => {
   return res && res.is_binary
 })
 
+const canSearchResponse = computed(() =>
+  Boolean(currentResponse.value && !isEmptyResponse.value && !isBinaryResponse.value)
+)
+
+const isSearchOpen = ref(false)
+const searchQuery = ref('')
+const searchCaseSensitive = ref(false)
+const activeMatchIndex = ref(0)
+const totalMatches = ref(0)
+const searchInputRef = ref<HTMLInputElement | null>(null)
+const jsonViewerRef = ref<InstanceType<typeof JsonViewer> | null>(null)
+const viewerRootRef = ref<HTMLElement | null>(null)
+const panelBodyRef = ref<HTMLElement | null>(null)
+
+watch([searchQuery, searchCaseSensitive], () => {
+  activeMatchIndex.value = 0
+})
+
+watch(() => currentResponse.value, () => {
+  activeMatchIndex.value = 0
+})
+
+watch(canSearchResponse, (canSearch) => {
+  if (!canSearch) {
+    isSearchOpen.value = false
+    totalMatches.value = 0
+    activeMatchIndex.value = 0
+  }
+})
+
+const openSearch = () => {
+  if (!canSearchResponse.value) return
+  if (activeTab.value !== 'body') {
+    activeTab.value = 'body'
+  }
+  isSearchOpen.value = true
+  nextTick(() => {
+    searchInputRef.value?.focus()
+    searchInputRef.value?.select()
+  })
+}
+
+const closeSearch = () => {
+  const wasInputFocused = document.activeElement === searchInputRef.value
+  isSearchOpen.value = false
+  if (wasInputFocused) {
+    nextTick(() => {
+      panelBodyRef.value?.focus()
+    })
+  }
+}
+
+const toggleSearch = () => {
+  if (isSearchOpen.value) {
+    closeSearch()
+  } else {
+    openSearch()
+  }
+}
+
+const toggleCaseSensitive = () => {
+  searchCaseSensitive.value = !searchCaseSensitive.value
+}
+
+const handleMatchCountUpdate = (count: number) => {
+  totalMatches.value = count
+  if (count === 0 || activeMatchIndex.value >= count) {
+    activeMatchIndex.value = 0
+  }
+}
+
+const nextMatch = () => {
+  if (totalMatches.value <= 0) return
+  const nextIdx = (activeMatchIndex.value + 1) % totalMatches.value
+  if (nextIdx === activeMatchIndex.value) {
+    jsonViewerRef.value?.scrollToActiveMatch()
+  } else {
+    activeMatchIndex.value = nextIdx
+  }
+}
+
+const prevMatch = () => {
+  if (totalMatches.value <= 0) return
+  const prevIdx = (activeMatchIndex.value - 1 + totalMatches.value) % totalMatches.value
+  if (prevIdx === activeMatchIndex.value) {
+    jsonViewerRef.value?.scrollToActiveMatch()
+  } else {
+    activeMatchIndex.value = prevIdx
+  }
+}
+
+const handleSearchInputKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    if (e.shiftKey) {
+      prevMatch()
+    } else {
+      nextMatch()
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    closeSearch()
+  }
+}
+
+const handleShortcutKeydown = (e: KeyboardEvent): boolean => {
+  if (e.defaultPrevented || currentLoading.value) return false
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+    if (canSearchResponse.value) {
+      e.preventDefault()
+      openSearch()
+      return true
+    }
+  } else if (e.key === 'Escape' && isSearchOpen.value && activeTab.value === 'body' && canSearchResponse.value) {
+    e.preventDefault()
+    closeSearch()
+    return true
+  }
+  return false
+}
+
+const hasActiveGlobalOverlay = () =>
+  Boolean(
+    uiStore.confirm ||
+      uiStore.unsavedPrompt ||
+      uiStore.contextMenu ||
+      uiStore.envModalOpen ||
+      uiStore.settingsModalOpen ||
+      uiStore.gitSyncModalOpen ||
+      uiStore.gitConflictModalOpen ||
+      uiStore.mockServerModalOpen ||
+      uiStore.importError
+  )
+
+const isExternalEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false
+  if (viewerRootRef.value?.contains(target)) return false
+  const tag = target.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable
+}
+
+const handleWindowKeydown = (e: KeyboardEvent) => {
+  if (e.defaultPrevented || currentLoading.value) return
+  if (!viewerRootRef.value?.isConnected) return
+  if (!isOverrideMode.value && uiStore.responsePaneCollapsed) return
+  if (hasActiveGlobalOverlay()) return
+  if (isExternalEditableTarget(e.target)) return
+  handleShortcutKeydown(e)
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleWindowKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleWindowKeydown)
+})
+
 const handleBodyKeydown = async (e: KeyboardEvent) => {
+  if (handleShortcutKeydown(e)) {
+    return
+  }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
     const selection = window.getSelection()?.toString()
     if (selection && selection.length > 0) return
@@ -185,7 +349,7 @@ const levelBadgeClass = (level: string) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col overflow-hidden">
+  <div ref="viewerRootRef" class="h-full flex flex-col overflow-hidden" @keydown="handleShortcutKeydown">
     <div v-if="currentLoading" class="flex-1 flex flex-col items-center justify-center gap-3 p-4" aria-live="polite">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-primary"></div>
       <div class="text-text-secondary text-sm">Đang tải...</div>
@@ -302,8 +466,8 @@ const levelBadgeClass = (level: string) => {
             type="button"
             data-test="collapse-response-btn"
             @click="uiStore.setResponsePaneCollapsed(true)"
-            title="Đóng / Thu gọn khung Response"
-            aria-label="Đóng / Thu gọn khung Response"
+            :title="t('responseViewer.collapseResponse')"
+            :aria-label="t('responseViewer.collapseResponse')"
             class="flex items-center justify-center p-1.5 rounded hover:bg-surface-raised text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -332,7 +496,7 @@ const levelBadgeClass = (level: string) => {
                 !canBePretty ? 'opacity-50 cursor-not-allowed' : ''
               ]"
               :disabled="!canBePretty"
-              :title="!canBePretty ? 'Không phải JSON hoặc XML hợp lệ' : ''"
+              :title="!canBePretty ? t('responseViewer.invalidJsonOrXml') : ''"
             >
               Pretty
             </button>
@@ -349,24 +513,137 @@ const levelBadgeClass = (level: string) => {
           </div>
         </div>
 
-        <!-- Right: Copy -->
-        <button 
-          data-test="copy-response-btn"
-          @click="copyBody" 
-          class="flex items-center gap-1.5 ui-xs text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-hover outline-none"
+        <!-- Right: Search & Copy -->
+        <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            data-test="toggle-response-search-btn"
+            :aria-pressed="isSearchOpen"
+            :title="t('responseViewer.searchShortcut')"
+            @click="toggleSearch"
+            class="flex items-center gap-1.5 ui-xs transition-colors px-2 py-1 rounded border outline-none cursor-pointer"
+            :class="
+              isSearchOpen
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover border-transparent'
+            "
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            {{ t('common.search') }}
+          </button>
+
+          <button 
+            data-test="copy-response-btn"
+            @click="copyBody" 
+            class="flex items-center gap-1.5 ui-xs text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-hover outline-none"
+          >
+            <svg v-if="copyStatus === 'idle'" class="w-3.5 h-3.5" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z" />
+            </svg>
+            <svg v-else class="w-3.5 h-3.5 text-status-2xx" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z" />
+            </svg>
+            {{ copyStatus === 'idle' ? t('common.copy') : t('common.copied') }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Search Bar for Body Tab -->
+      <div
+        v-if="activeTab === 'body' && isSearchOpen && canSearchResponse"
+        data-test="response-search-bar"
+        class="flex items-center gap-2 px-4 py-1.5 border-b border-border-default bg-surface-raised/80 shrink-0"
+      >
+        <div class="relative flex items-center flex-1 max-w-xs">
+          <svg class="w-3.5 h-3.5 text-text-muted absolute left-2.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            ref="searchInputRef"
+            v-model="searchQuery"
+            type="text"
+            data-test="response-search-input"
+            :placeholder="t('responseViewer.searchPlaceholder')"
+            :aria-label="t('responseViewer.searchPlaceholder')"
+            @keydown="handleSearchInputKeydown"
+            class="w-full pl-8 pr-8 py-1 text-xs font-mono bg-surface-input border border-border-default rounded text-text-primary placeholder:text-text-muted focus:outline-none focus:border-emerald-500/60"
+          />
+          <button
+            type="button"
+            data-test="response-search-case-btn"
+            :aria-pressed="searchCaseSensitive"
+            :title="t('responseViewer.matchCase')"
+            @click="toggleCaseSensitive"
+            class="absolute right-1.5 px-1 py-0.5 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer"
+            :class="
+              searchCaseSensitive
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                : 'text-text-muted hover:text-text-primary hover:bg-surface-hover border border-transparent'
+            "
+          >
+            Aa
+          </button>
+        </div>
+
+        <span
+          data-test="response-search-count"
+          class="text-xs font-mono min-w-[44px] text-center select-none"
+          :class="searchQuery && totalMatches === 0 ? 'text-rose-400' : 'text-text-secondary'"
         >
-          <svg v-if="copyStatus === 'idle'" class="w-3.5 h-3.5" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-            <path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z" />
+          {{ totalMatches > 0 ? `${activeMatchIndex + 1}/${totalMatches}` : '0/0' }}
+        </span>
+
+        <div class="flex items-center gap-0.5">
+          <button
+            type="button"
+            data-test="response-search-prev-btn"
+            :title="t('responseViewer.prevResultShortcut')"
+            :aria-label="t('responseViewer.prevResult')"
+            :disabled="totalMatches === 0"
+            @click="prevMatch"
+            class="p-1 rounded text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="18 15 12 9 6 15" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            data-test="response-search-next-btn"
+            :title="t('responseViewer.nextResultShortcut')"
+            :aria-label="t('responseViewer.nextResult')"
+            :disabled="totalMatches === 0"
+            @click="nextMatch"
+            class="p-1 rounded text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          data-test="response-search-close-btn"
+          :title="t('responseViewer.closeSearchShortcut')"
+          :aria-label="t('responseViewer.closeSearch')"
+          @click="closeSearch"
+          class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors cursor-pointer"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
-          <svg v-else class="w-3.5 h-3.5 text-status-2xx" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-            <path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z" />
-          </svg>
-          Sao chép
         </button>
       </div>
 
       <div class="flex-1 flex flex-col min-h-0 relative">
         <div 
+          ref="panelBodyRef"
           v-show="activeTab === 'body'" 
           class="absolute inset-0 flex flex-col focus:outline-none" 
           id="panel-body" 
@@ -379,25 +656,34 @@ const levelBadgeClass = (level: string) => {
           <EmptyStateResponse v-else-if="!currentResponse" />
           <template v-else>
             <div v-if="currentResponse.truncated" class="mx-4 mt-4 mb-3 p-3 bg-warning-bg border border-warning-border rounded text-warning-text text-sm shrink-0">
-              Phản hồi quá lớn và đã bị cắt bớt (tối đa 10MB).
+              {{ t('responseViewer.truncatedWarning') }}
             </div>
             
             <div v-if="isEmptyResponse" class="flex-1 flex items-center justify-center text-text-secondary ui-sm">
-              Response không có body.
+              {{ t('responseViewer.noBody') }}
             </div>
             <div v-else-if="isBinaryResponse" class="flex-1 flex flex-col items-center justify-center text-text-secondary gap-2 p-4">
               <svg class="w-12 h-12 text-text-muted" viewBox="0 0 256 256" fill="currentColor">
                 <path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Z"/>
                 <path d="M96,128a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,128Zm0,32a8,8,0,0,1,8-8h48a8,8,0,0,1,0,16H104A8,8,0,0,1,96,160Zm0,32a8,8,0,0,1,8-8h24a8,8,0,0,1,0,16H104A8,8,0,0,1,96,192Z" opacity="0.2"/>
               </svg>
-              <div class="ui-sm font-medium">Response dạng nhị phân ({{ formatSize(currentResponse?.size_bytes ?? 0) }}) — không hiển thị nội dung.</div>
+              <div class="ui-sm font-medium">{{ t('responseViewer.binaryResponse', { size: formatSize(currentResponse?.size_bytes ?? 0) }) }}</div>
             </div>
-            <JsonViewer v-else :response="currentResponse" :mode="mode" />
+            <JsonViewer
+              v-else
+              ref="jsonViewerRef"
+              :response="currentResponse"
+              :mode="mode"
+              :search-query="isSearchOpen && activeTab === 'body' ? searchQuery : ''"
+              :search-case-sensitive="searchCaseSensitive"
+              :active-match-index="activeMatchIndex"
+              @update:match-count="handleMatchCountUpdate"
+            />
           </template>
         </div>
         <div v-show="activeTab === 'headers'" class="absolute inset-0" id="panel-headers" role="tabpanel" aria-labelledby="tab-headers">
           <HeadersTable v-if="currentResponse" :headers="currentResponse.headers" />
-          <div v-else class="flex items-center justify-center h-full text-text-muted text-xs">Chưa có phản hồi HTTP.</div>
+          <div v-else class="flex items-center justify-center h-full text-text-muted text-xs">{{ t('responseViewer.noHttpResponse') }}</div>
         </div>
         <div
           v-if="currentTestResults.length > 0"
@@ -410,7 +696,7 @@ const levelBadgeClass = (level: string) => {
         >
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-              Kết quả kiểm thử ha.test() ({{ testsPassedCount }}/{{ currentTestResults.length }} Passed)
+              {{ t('responseViewer.testResults', { passed: testsPassedCount, total: currentTestResults.length }) }}
             </span>
           </div>
           <div
@@ -444,7 +730,7 @@ const levelBadgeClass = (level: string) => {
         >
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-              Bảng nhật ký thực thi Request &amp; Script (Execution &amp; Console Logs)
+              {{ t('responseViewer.executionLogsTitle') }}
             </span>
             <button
               v-if="!isOverrideMode && (logsCount > 0 || currentScriptError)"
@@ -453,7 +739,7 @@ const levelBadgeClass = (level: string) => {
               class="text-xs text-text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-surface-hover cursor-pointer"
               @click="responseStore.clearLogs()"
             >
-              Xóa log
+              {{ t('responseViewer.clearLogs') }}
             </button>
           </div>
 
@@ -468,10 +754,10 @@ const levelBadgeClass = (level: string) => {
             <table class="w-full text-left border-collapse font-mono text-xs" data-test="execution-logs-table">
               <thead>
                 <tr class="border-b border-border-default bg-surface-raised text-text-muted text-[11px]">
-                  <th class="py-2 px-3 w-28">Thời gian</th>
-                  <th class="py-2 px-3 w-28">Giai đoạn</th>
-                  <th class="py-2 px-3 w-20">Mức độ</th>
-                  <th class="py-2 px-3">Nội dung chi tiết</th>
+                  <th class="py-2 px-3 w-28">{{ t('responseViewer.logTime') }}</th>
+                  <th class="py-2 px-3 w-28">{{ t('responseViewer.logPhase') }}</th>
+                  <th class="py-2 px-3 w-20">{{ t('responseViewer.logLevel') }}</th>
+                  <th class="py-2 px-3">{{ t('responseViewer.logDetail') }}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-subtle">
@@ -506,7 +792,7 @@ const levelBadgeClass = (level: string) => {
                           class="text-[11px] text-brand-primary hover:underline shrink-0 cursor-pointer"
                           @click="toggleLogDetail(item.id)"
                         >
-                          {{ expandedLogIds[item.id] ? 'Ẩn chi tiết' : 'Chi tiết HTTP' }}
+                          {{ expandedLogIds[item.id] ? t('responseViewer.hideDetail') : t('responseViewer.httpDetail') }}
                         </button>
                       </div>
                       <div
@@ -515,7 +801,7 @@ const levelBadgeClass = (level: string) => {
                         data-test="http-log-detail-box"
                       >
                         <div>
-                          <div class="font-semibold text-sky-400 mb-1">Request gửi đi:</div>
+                          <div class="font-semibold text-sky-400 mb-1">{{ t('responseViewer.outgoingRequest') }}</div>
                           <div class="text-text-secondary">{{ item.detail.method }} {{ item.detail.url }}</div>
                           <div v-if="item.detail.requestHeaders?.length" class="mt-1 space-y-0.5">
                             <div v-for="(h, hIdx) in item.detail.requestHeaders" :key="hIdx" class="text-text-muted">
@@ -526,7 +812,7 @@ const levelBadgeClass = (level: string) => {
                         </div>
                         <div v-if="item.detail.statusCode !== undefined" class="pt-2 border-t border-border-subtle">
                           <div class="font-semibold text-emerald-400 mb-1">
-                            Response nhận về: {{ item.detail.statusCode }} {{ item.detail.statusText }} ({{ item.detail.timeMs }}ms)
+                            {{ t('responseViewer.incomingResponse') }} {{ item.detail.statusCode }} {{ item.detail.statusText }} ({{ item.detail.timeMs }}ms)
                           </div>
                           <pre v-if="item.detail.responseBodyPreview" class="mt-1 p-1.5 rounded bg-surface-base text-emerald-200 overflow-x-auto whitespace-pre-wrap">{{ item.detail.responseBodyPreview }}</pre>
                         </div>
@@ -546,7 +832,7 @@ const levelBadgeClass = (level: string) => {
           </div>
 
           <div v-else class="text-xs text-text-muted font-mono py-6 text-center">
-            Chưa có log thực thi. Hãy gửi request hoặc dùng console.log(...) trong Script để debug.
+            {{ t('responseViewer.noLogsHint') }}
           </div>
         </div>
       </div>
@@ -558,8 +844,8 @@ const levelBadgeClass = (level: string) => {
         type="button"
         data-test="collapse-response-btn"
         @click="uiStore.setResponsePaneCollapsed(true)"
-        title="Đóng / Thu gọn khung Response"
-        aria-label="Đóng / Thu gọn khung Response"
+        :title="t('responseViewer.collapseResponse')"
+        :aria-label="t('responseViewer.collapseResponse')"
         class="absolute top-2 right-2 p-1.5 rounded hover:bg-surface-raised text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
       >
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

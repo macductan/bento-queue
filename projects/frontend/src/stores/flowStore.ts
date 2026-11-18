@@ -21,6 +21,11 @@ import type { ExecuteResponse, ExecutionLogRecord } from './responseStore'
 import type { TreeNode } from './collectionStore'
 import type { Request } from './requestStore'
 
+async function notifyCollectionAutoPush(): Promise<void> {
+  const { useCollectionStore } = await import('./collectionStore')
+  useCollectionStore().scheduleAutoPush()
+}
+
 export interface FlowTreeNode {
   id: string
   name: string
@@ -447,6 +452,7 @@ export const useFlowStore = defineStore('flow', {
           }
           await this.selectFlow(created.id, { force: true })
           uiStore.triggerRename(created.id)
+          await notifyCollectionAutoPush()
           return created
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể tạo Flow')
@@ -477,6 +483,7 @@ export const useFlowStore = defineStore('flow', {
           this.savedSnapshot = JSON.stringify(this.currentFlow)
           await this.loadFlowTree()
           uiStore.showToast('Đã lưu Flow')
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể lưu Flow')
@@ -515,6 +522,7 @@ export const useFlowStore = defineStore('flow', {
               }
             }
           }
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể đổi tên Flow')
@@ -540,6 +548,7 @@ export const useFlowStore = defineStore('flow', {
             this.clearCurrentFlow()
           }
           await this.loadFlowTree()
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể xóa Flow')
@@ -575,6 +584,7 @@ export const useFlowStore = defineStore('flow', {
           } else {
             await this.selectFlow(duplicated.id)
           }
+          await notifyCollectionAutoPush()
           return duplicated
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể sao chép Flow')
@@ -609,6 +619,7 @@ export const useFlowStore = defineStore('flow', {
             if (path) path.forEach(n => this.expandedFlowFolders.add(n.id))
           }
           uiStore.triggerRename(created.id)
+          await notifyCollectionAutoPush()
           return created
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể tạo thư mục Flow')
@@ -630,6 +641,7 @@ export const useFlowStore = defineStore('flow', {
         const result = await renameFlowFolderFn(id, newName)
         if (result?.success) {
           await this.loadFlowTree()
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể đổi tên thư mục Flow')
@@ -681,6 +693,7 @@ export const useFlowStore = defineStore('flow', {
           if (this.activeFlowId && !this.findNode(this.flowTree, this.activeFlowId)) {
             this.clearCurrentFlow()
           }
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể xóa thư mục Flow')
@@ -805,6 +818,7 @@ export const useFlowStore = defineStore('flow', {
               path.forEach(node => this.expandedFlowFolders.add(node.id))
             }
           }
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể di chuyển mục Flow')
@@ -852,6 +866,7 @@ export const useFlowStore = defineStore('flow', {
               folder.children = reorderList(folder.children)
             }
           }
+          await notifyCollectionAutoPush()
           return true
         } else {
           uiStore.showToast(result?.error?.message || 'Không thể sắp xếp lại thứ tự Flow')
@@ -945,6 +960,7 @@ export const useFlowStore = defineStore('flow', {
         this.sortDirectionMap[parentId] = nextDir
         await this.loadFlowTree()
         uiStore.showToast(`Đã sắp xếp ${nextDir === 'asc' ? 'A-Z' : 'Z-A'}`)
+        await notifyCollectionAutoPush()
         return true
       } catch (err) {
         uiStore.showToast(String(err))

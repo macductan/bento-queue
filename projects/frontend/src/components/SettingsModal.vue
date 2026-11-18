@@ -8,6 +8,7 @@ import { useRequestStore } from '@/stores/requestStore'
 import { model } from '../../wailsjs/go/models'
 import CollectionModal from './CollectionModal.vue'
 import CollectionEnvModal from './CollectionEnvModal.vue'
+import { useI18n } from '@/i18n'
 
 const props = defineProps<{
   modelValue: boolean
@@ -17,6 +18,7 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
 }>()
 
+const { t } = useI18n()
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
 const envStore = useEnvironmentStore()
@@ -98,6 +100,10 @@ const changeLocation = async () => {
   }
 }
 
+const changeLocale = async (newLocale: 'en' | 'vi') => {
+  await uiStore.setLocale(newLocale)
+}
+
 const openCreateCollection = () => {
   collectionModalMode.value = 'create'
   collectionModalInitialName.value = ''
@@ -121,7 +127,7 @@ const handleDeleteCollection = async (c: model.Collection) => {
     return
   }
   const confirmed = await uiStore.requestConfirm(
-    `Bạn có chắc chắn muốn xóa collection "${c.name}" không? Toàn bộ request và environment sẽ bị xóa vĩnh viễn.`
+    t('settings.deleteCollectionConfirm', { name: c.name })
   )
   if (!confirmed) return
   await collectionStore.deleteCollection(c.id || '')
@@ -150,27 +156,65 @@ const handleCollectionModalSubmit = async (name: string) => {
     <!-- Modal -->
     <div class="relative bg-surface-raised border border-border-default rounded-lg shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
       <div class="flex items-center justify-between p-4 border-b border-border-default">
-        <h2 class="heading-sm text-text-primary">Cài đặt</h2>
-        <button @click="close" class="text-text-muted hover:text-text-primary p-1 rounded hover:bg-surface-overlay transition-colors" aria-label="Đóng">
+        <h2 class="heading-sm text-text-primary">{{ t('settings.title') }}</h2>
+        <button @click="close" class="text-text-muted hover:text-text-primary p-1 rounded hover:bg-surface-overlay transition-colors" :aria-label="t('common.close')">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
       
       <div class="p-4 flex-1 overflow-y-auto min-h-[150px]">
         <div class="flex flex-col gap-6">
-          <!-- Storage Section -->
+          <!-- Language Section -->
           <div>
-            <h3 class="ui-sm font-semibold text-text-primary mb-2">Lưu trữ</h3>
+            <h3 class="ui-sm font-semibold text-text-primary mb-2">{{ t('settings.language') }}</h3>
+            <p class="ui-xs text-text-muted mb-3">
+              {{ t('settings.languageDesc') }}
+            </p>
+            <div class="grid grid-cols-2 gap-2" role="radiogroup" :aria-label="t('settings.language')">
+              <button
+                type="button"
+                role="radio"
+                data-test="locale-option-en"
+                :aria-checked="uiStore.locale === 'en'"
+                @click="changeLocale('en')"
+                class="flex items-center justify-between px-3 py-2 rounded border text-xs font-medium cursor-pointer transition-colors"
+                :class="uiStore.locale === 'en'
+                  ? 'border-brand-primary bg-brand-primary/10 text-brand-primary ring-1 ring-brand-primary/50'
+                  : 'border-border-default bg-surface-base text-text-secondary hover:text-text-primary hover:bg-surface-hover'"
+              >
+                <span>English</span>
+                <span v-if="uiStore.locale === 'en'" class="text-xs font-bold">✓</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                data-test="locale-option-vi"
+                :aria-checked="uiStore.locale === 'vi'"
+                @click="changeLocale('vi')"
+                class="flex items-center justify-between px-3 py-2 rounded border text-xs font-medium cursor-pointer transition-colors"
+                :class="uiStore.locale === 'vi'
+                  ? 'border-brand-primary bg-brand-primary/10 text-brand-primary ring-1 ring-brand-primary/50'
+                  : 'border-border-default bg-surface-base text-text-secondary hover:text-text-primary hover:bg-surface-hover'"
+              >
+                <span>Tiếng Việt</span>
+                <span v-if="uiStore.locale === 'vi'" class="text-xs font-bold">✓</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Storage Section -->
+          <div class="border-t border-border-default pt-4">
+            <h3 class="ui-sm font-semibold text-text-primary mb-2">{{ t('settings.storage') }}</h3>
             
             <p class="ui-xs text-text-muted mb-3">
-              Thay đổi thư mục chứa dữ liệu ứng dụng (collections, environments). Dữ liệu ở thư mục cũ sẽ được giữ nguyên.
+              {{ t('settings.storageDesc') }}
             </p>
             <div class="mb-3 px-3 py-2 bg-surface-base border border-border-default rounded ui-xs text-text-secondary truncate" :title="currentPath">
-              {{ currentPath || 'Đang tải...' }}
+              {{ currentPath || t('common.loading') }}
             </div>
 
             <button @click="changeLocation" :disabled="isSaving" class="px-4 py-2 bg-surface-overlay border border-border-default text-text-primary rounded hover:bg-text-primary hover:text-text-inverse transition-colors ui-sm font-medium w-full text-left flex items-center justify-between">
-              <span>Đổi thư mục lưu trữ...</span>
+              <span>{{ t('settings.changeStorage') }}</span>
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
             </button>
           </div>
@@ -179,21 +223,21 @@ const handleCollectionModalSubmit = async (name: string) => {
           <div class="border-t border-border-default pt-4">
             <div class="flex items-center justify-between gap-4">
               <div class="flex-1">
-                <h3 class="ui-sm font-semibold text-text-primary">Tự động lưu (Auto-save)</h3>
+                <h3 class="ui-sm font-semibold text-text-primary">{{ t('settings.autoSave') }}</h3>
                 <p class="ui-xs text-text-muted mt-0.5">
-                  Tự động lưu ngầm các thay đổi sau 800ms cho cả Request và Folder. Khi tắt, bạn có thể lưu thủ công bằng Ctrl+S.
+                  {{ t('settings.autoSaveDesc') }}
                 </p>
               </div>
               <button
                 type="button"
                 role="switch"
-                aria-label="Tự động lưu"
+                :aria-label="t('settings.autoSave')"
                 :aria-checked="uiStore.autoSaveEnabled"
                 data-test="toggle-auto-save"
                 @click="uiStore.setAutoSaveEnabled(!uiStore.autoSaveEnabled)"
                 class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
                 :class="uiStore.autoSaveEnabled ? 'bg-brand-primary' : 'bg-surface-overlay'"
-                title="Bật/Tắt tự động lưu"
+                :title="t('settings.autoSave')"
               >
                 <span
                   aria-hidden="true"
@@ -207,7 +251,7 @@ const handleCollectionModalSubmit = async (name: string) => {
           <!-- Collection Management Section -->
           <div class="border-t border-border-default pt-4">
             <div class="flex items-center justify-between mb-2">
-              <h3 class="ui-sm font-semibold text-text-primary">Quản lý Collection</h3>
+              <h3 class="ui-sm font-semibold text-text-primary">{{ t('settings.collections') }}</h3>
               <button
                 type="button"
                 @click="openCreateCollection"
@@ -217,19 +261,19 @@ const handleCollectionModalSubmit = async (name: string) => {
                   <line x1="12" y1="5" x2="12" y2="19"></line>
                   <line x1="5" y1="12" x2="19" y2="12"></line>
                 </svg>
-                <span>Tạo mới</span>
+                <span>{{ t('settings.createCollection') }}</span>
               </button>
             </div>
             
             <p class="ui-xs text-text-muted mb-3">
-              Danh sách các collection hiện có trong ứng dụng.
+              {{ t('settings.collectionsDesc') }}
             </p>
 
             <div v-if="collectionStore.collectionsLoading && collectionStore.collections.length === 0" class="py-4 text-center ui-xs text-text-muted">
-              Đang tải collections...
+              {{ t('settings.loadingCollections') }}
             </div>
             <div v-else-if="collectionStore.collections.length === 0" class="py-4 text-center ui-xs text-text-muted">
-              Không có collection nào.
+              {{ t('settings.noCollections') }}
             </div>
             <div v-else class="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-1">
               <div
@@ -273,8 +317,8 @@ const handleCollectionModalSubmit = async (name: string) => {
                   <button
                     type="button"
                     class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-                    title="Đổi tên collection"
-                    aria-label="Đổi tên collection"
+                    :title="t('settings.renameCollection')"
+                    :aria-label="t('settings.renameCollection')"
                     @click="openRenameCollection(c)"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -287,8 +331,8 @@ const handleCollectionModalSubmit = async (name: string) => {
                   <button
                     type="button"
                     class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
-                    title="Nhân bản collection"
-                    aria-label="Nhân bản collection"
+                    :title="t('settings.duplicateCollection')"
+                    :aria-label="t('settings.duplicateCollection')"
                     @click="handleDuplicateCollection(c.id || '')"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -307,8 +351,8 @@ const handleCollectionModalSubmit = async (name: string) => {
                         ? 'opacity-30 cursor-not-allowed text-text-muted'
                         : 'text-text-muted hover:text-rose-400 hover:bg-surface-hover'
                     ]"
-                    :title="(c.id === 'default' || c.is_default) ? 'Không thể xóa collection mặc định' : 'Xóa collection'"
-                    aria-label="Xóa collection"
+                    :title="(c.id === 'default' || c.is_default) ? t('settings.cannotDeleteDefault') : t('settings.deleteCollection')"
+                    :aria-label="t('settings.deleteCollection')"
                     @click="handleDeleteCollection(c)"
                   >
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

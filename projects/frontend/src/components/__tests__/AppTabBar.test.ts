@@ -507,7 +507,6 @@ describe('AppTabBar.vue, ContentArea.vue & App.vue Ctrl+W (CAP-1)', () => {
           EnvModal: true,
           GitSyncModal: true,
           GitConflictResolverModal: true,
-          HistoryModal: true,
           MockServerModal: true
         }
       }

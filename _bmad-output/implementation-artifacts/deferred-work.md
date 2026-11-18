@@ -95,3 +95,11 @@
 - source_spec: `_bmad-output/specs/spec-request-productivity/stories/1-dong-bo-hai-chieu-url-bar-va-query-params.md`
   summary: Stale DOM and component references in KvpEditor.vue template ref arrays after row deletion.
   evidence: Pre-existing array refs (keyInputs, valueInputs, highlighterRefs) use index-based assignment and are not cleaned up when rows are deleted via splice.
+
+- source_spec: `/home/dev/mdt/hecto-api/_bmad-output/implementation-artifacts/spec-git-auto-sync-and-remove-history.md`
+  summary: Tự động flush hoặc đồng bộ nền pending debounced Auto Push khi chuyển Collection hoặc khi ứng dụng đóng (`OnBeforeClose` / `switchCollection`).
+  evidence: Việc chặn chuyển Collection hoặc đóng ứng dụng bằng lệnh mạng `git push` sẽ làm chậm hoặc treo thao tác UI khi offline; dữ liệu vẫn đã được lưu trên đĩa và cần cơ chế hàng đợi nền ở mức `app.go` lifecycle nếu muốn triển khai về sau (`maybe-false`, `medium`).
+
+- source_spec: `/home/dev/mdt/hecto-api/_bmad-output/implementation-artifacts/spec-git-auto-sync-and-remove-history.md`
+  summary: Phối hợp khóa theo Collection giữa các CRUD service (`RequestService`, `CollectionService`, `EnvironmentService`, `FlowService`) với `GitSyncService`, thu hẹp `IndexRebuild` theo từng collection và mở rộng cơ chế `RecordSelfWrite` cho các lệnh Git kéo dài quá `DefaultSelfWriteWindow` (400ms).
+  evidence: Kiến trúc `FileSystem.RecordSelfWrite()` và khóa service rời rạc đã tồn tại từ trước trong `projects/storage/watcher.go` và `projects/app.go`; việc tái cấu trúc đồng bộ hóa đa service vượt phạm vi vá cục bộ của thay đổi Auto Sync.

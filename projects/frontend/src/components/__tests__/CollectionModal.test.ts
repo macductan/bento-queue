@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, config } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
+import { useUiStore } from '@/stores/uiStore'
 import CollectionModal from '../CollectionModal.vue'
 
 config.global.stubs = {
@@ -7,6 +9,10 @@ config.global.stubs = {
 }
 
 describe('CollectionModal.vue', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
+  })
   it('does not render content when modelValue is false', () => {
     const wrapper = mount(CollectionModal, {
       props: {
@@ -161,5 +167,18 @@ describe('CollectionModal.vue', () => {
 
     expect(wrapper.emitted('close')).toBeTruthy()
     expect(wrapper.emitted('update:modelValue')![0]).toEqual([false])
+  })
+
+  it('renders in English when locale is en', () => {
+    useUiStore().setLocale('en')
+    const wrapper = mount(CollectionModal, {
+      props: {
+        modelValue: true,
+        mode: 'create'
+      }
+    })
+    expect(wrapper.find('h3').text()).toBe('Create new collection')
+    expect(wrapper.find('button[type="submit"]').text()).toBe('Create')
+    expect(wrapper.find('button[aria-label="Close"]').exists()).toBe(true)
   })
 })

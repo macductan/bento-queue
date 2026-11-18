@@ -9,7 +9,6 @@ import { buildExecuteRequest, type ExecuteRequest } from '../utils/buildExecuteR
 import { getInheritedHeaders } from '../utils/headers'
 import { resolveHierarchyVariables } from '../utils/resolveHierarchyVariables'
 import { executeScript } from '../utils/scriptRunner'
-import { useHistoryStore } from './historyStore'
 
 export interface ExecuteResponse {
   status_code: number
@@ -286,20 +285,6 @@ export const useResponseStore = defineStore('response', {
               useUiStore().showToast(`Lỗi Post-response Script: ${this.scriptError}`)
             }
           }
-          void useHistoryStore().recordExecution({
-            collection_id: collectionStore.activeCollection?.id || 'default',
-            request_id: req.id,
-            request_name: req.name || execReq.url,
-            method: execReq.method,
-            url: execReq.url,
-            status_code: nextResponse.status_code,
-            status_text: nextResponse.status_text,
-            time_ms: nextResponse.time_ms,
-            size_bytes: nextResponse.size_bytes,
-            timestamp: nextResponse.timestamp || new Date().toISOString(),
-            request: execReq,
-            response: nextResponse
-          })
         } else {
           useUiStore().setResponsePaneCollapsed(false)
           const code = result.error?.code || 'UNKNOWN'

@@ -34,6 +34,7 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
     document.body.style.userSelect = ''
     setViewportWidth(1200)
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
     vi.clearAllMocks()
   })
 
@@ -158,7 +159,11 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       const uiStore = useUiStore()
       const envStore = useEnvironmentStore()
+      const collectionStore = useCollectionStore()
       const syncSpy = vi.spyOn(envStore, 'syncActiveEnvFromCollection')
+      const startSchedulerSpy = vi.spyOn(collectionStore, 'startAutoSyncScheduler')
+      const autoPullSpy = vi.spyOn(collectionStore, 'autoPull').mockResolvedValue(false)
+      const stopSchedulerSpy = vi.spyOn(collectionStore, 'stopAutoSyncScheduler')
 
       expect(uiStore.sidebarWidth).toBe(500)
 
@@ -167,8 +172,11 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       expect(uiStore.sidebarWidth).toBe(400)
       expect(syncSpy).toHaveBeenCalled()
+      expect(startSchedulerSpy).toHaveBeenCalledTimes(1)
+      expect(autoPullSpy).toHaveBeenCalledWith({ reason: 'startup' })
 
       wrapper.unmount()
+      expect(stopSchedulerSpy).toHaveBeenCalledTimes(1)
     })
 
     it('resets sidebarWidth to 260 on double-click', async () => {
@@ -264,8 +272,8 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       await addBtn.trigger('click')
       expect(wrapper.find('[data-test="sidebar-add-dropdown"]').exists()).toBe(true)
-      expect(wrapper.find('[data-test="add-request-item"]').text()).toContain('New Request')
-      expect(wrapper.find('[data-test="add-folder-item"]').text()).toContain('New Folder')
+      expect(wrapper.find('[data-test="add-request-item"]').text()).toMatch(/(New Request|Request mới)/)
+      expect(wrapper.find('[data-test="add-folder-item"]').text()).toMatch(/(New Folder|Thư mục mới)/)
 
       // Clicking New Request triggers createRequest and closes dropdown
       await wrapper.find('[data-test="add-request-item"]').trigger('click')
@@ -349,6 +357,21 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       await nextTick()
       expect(gitBtn.text()).toContain('Git: develop')
 
+      // Git Sync Pill: background autoSyncInFlight & autoPushPending states
+      collectionStore.autoSyncInFlight = true
+      await nextTick()
+      expect(gitBtn.text()).toContain('Đang đồng bộ...')
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').classes()).toContain('bg-sky-400')
+
+      collectionStore.autoSyncInFlight = false
+      collectionStore.autoPushPending = true
+      await nextTick()
+      expect(gitBtn.text()).toContain('Chờ đẩy lên')
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').classes()).toContain('bg-amber-300')
+
+      collectionStore.autoPushPending = false
+      await nextTick()
+
       // Git Sync Pill: conflict state with 2 files
       collectionStore.gitConflictError = { message: 'Conflict', files: ['a.json', 'b.json'] }
       await nextTick()
@@ -414,7 +437,7 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       const importBtn = headerWrapper.find('[data-test="import-collection-btn"]')
       expect(importBtn.exists()).toBe(true)
       expect(importBtn.find('svg.text-amber-400').exists()).toBe(true)
-      expect(importBtn.text()).toContain('Import Postman')
+      expect(importBtn.text()).toMatch(/(Import Postman|Nhập Postman)/)
       expect(importBtn.find('kbd').text()).toBe('^I')
 
       headerWrapper.unmount()

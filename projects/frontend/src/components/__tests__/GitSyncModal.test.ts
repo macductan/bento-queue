@@ -21,6 +21,7 @@ const resolveGitConflictMock = vi.fn()
 const abortGitMergeMock = vi.fn()
 const listCollectionsMock = vi.fn()
 const getTreeMock = vi.fn()
+const updateCollectionMock = vi.fn()
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   SaveCollectionGitRemote: (...args: any[]) => saveRemoteMock(...args),
@@ -55,7 +56,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SwitchCollection: vi.fn(),
   CreateCollection: vi.fn(),
   RenameCollection: vi.fn(),
-  UpdateCollection: vi.fn(),
+  UpdateCollection: (...args: any[]) => updateCollectionMock(...args),
   DeleteCollection: vi.fn(),
   DuplicateCollection: vi.fn()
 }))
@@ -802,6 +803,62 @@ describe('GitSyncModal.vue & collectionStore Git Sync', () => {
     await new Promise(r => setTimeout(r, 10))
 
     expect(gitCheckoutBranchMock).toHaveBeenCalledWith('Test-Collection', 'feature/auth')
+  })
+
+  it('defaults Auto Sync ON and persists toggle changes while cancelling pending auto-push when disabled', async () => {
+    const collectionStore = useCollectionStore()
+    const uiStore = useUiStore()
+
+    collectionStore.collections = [
+      {
+        id: 'Test-Collection',
+        name: 'Test-Collection',
+        git_remote_url: 'https://github.com/org/test-collection.git',
+        is_active: true
+      } as any
+    ]
+    collectionStore.activeCollectionId = 'Test-Collection'
+    collectionStore.autoPushPending = true
+
+    updateCollectionMock.mockResolvedValue({ success: true, data: {} })
+    gitPullMock.mockResolvedValue({
+      success: true,
+      data: {
+        has_git_repo: true,
+        remote_url: 'https://github.com/org/test-collection.git',
+        branch: 'main',
+        output: 'Already up to date.'
+      }
+    })
+
+    uiStore.gitSyncModalOpen = true
+    const wrapper = mount(GitSyncModal)
+    await new Promise(r => setTimeout(r, 10))
+
+    const toggle = wrapper.find('[data-test="git-auto-sync-toggle"]')
+    expect(toggle.exists()).toBe(true)
+    expect((toggle.element as HTMLInputElement).checked).toBe(true)
+
+    // Toggle OFF
+    await toggle.setValue(false)
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(updateCollectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'Test-Collection', git_auto_sync: false })
+    )
+    expect(collectionStore.isGitAutoSyncEnabled).toBe(false)
+    expect(collectionStore.autoPushPending).toBe(false)
+    expect(gitPullMock).not.toHaveBeenCalled()
+
+    // Toggle ON triggers an immediate autoPull
+    await toggle.setValue(true)
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(updateCollectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'Test-Collection', git_auto_sync: true })
+    )
+    expect(collectionStore.isGitAutoSyncEnabled).toBe(true)
+    expect(gitPullMock).toHaveBeenCalledWith('Test-Collection')
   })
 })
 

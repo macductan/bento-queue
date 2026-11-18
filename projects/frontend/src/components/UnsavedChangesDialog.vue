@@ -1,7 +1,9 @@
 <script lang="ts" setup>
 import { useUiStore } from '@/stores/uiStore'
+import { useI18n } from '@/i18n'
 import { onMounted, onUnmounted } from 'vue'
 
+const { t } = useI18n()
 const store = useUiStore()
 
 const handleResolve = (action: 'save' | 'discard' | 'cancel') => {
@@ -32,11 +34,11 @@ onUnmounted(() => {
   >
     <div class="bg-surface-raised border border-border-default rounded-lg shadow-xl w-full max-w-md overflow-hidden">
       <div class="px-6 py-4 border-b border-border-default">
-        <h3 class="text-lg font-medium text-text-primary">Thay đổi chưa lưu</h3>
+        <h3 class="text-lg font-medium text-text-primary">{{ t('unsavedDialog.title') }}</h3>
       </div>
       
       <div class="px-6 py-4 text-text-secondary">
-        {{ store.unsavedPrompt?.message || 'Request hiện tại có thay đổi chưa được lưu. Bạn có muốn lưu lại trước khi chuyển sang request khác?' }}
+        {{ store.unsavedPrompt?.message || t('unsavedDialog.defaultMessage') }}
       </div>
       
       <div class="px-6 py-4 bg-surface-base border-t border-border-default flex justify-end gap-3">
@@ -44,19 +46,19 @@ onUnmounted(() => {
           @click="handleResolve('cancel')"
           class="px-4 h-9 rounded bg-surface-hover hover:bg-surface-hover/80 text-text-primary transition-colors"
         >
-          Hủy
+          {{ t('common.cancel') }}
         </button>
         <button 
           @click="handleResolve('discard')"
           class="px-4 h-9 rounded bg-surface-hover hover:bg-surface-hover/80 text-text-danger transition-colors"
         >
-          Không lưu
+          {{ t('unsavedDialog.discard') }}
         </button>
         <button 
           @click="handleResolve('save')"
           class="px-4 h-9 rounded bg-brand-primary hover:bg-brand-secondary text-white font-medium transition-colors"
         >
-          Lưu
+          {{ t('common.save') }}
         </button>
       </div>
     </div>

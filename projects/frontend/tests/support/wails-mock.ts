@@ -215,8 +215,54 @@ export function setupWailsMock() {
           SwitchCollection: async (_id: string) => ({ success: true, data: null }),
           CreateCollection: async (name: string) => ({ success: true, data: { id: 'new-uuid', name } }),
           RenameCollection: async (_id: string, _name: string) => ({ success: true, data: null }),
+          UpdateCollection: async (coll: any) => ({ success: true, data: clone(coll) }),
           DeleteCollection: async (_id: string) => ({ success: true, data: null }),
-          DuplicateCollection: async (_id: string) => ({ success: true, data: null })
+          DuplicateCollection: async (_id: string) => ({ success: true, data: null }),
+          SaveCollectionGitRemote: async (_collectionId: string, remoteUrl: string) => ({
+            success: true,
+            data: { has_git_repo: Boolean(remoteUrl), remote_url: remoteUrl, branch: 'main', auto_sync_enabled: true }
+          }),
+          GetCollectionGitStatus: async () => ({
+            success: true,
+            data: { has_git_repo: false, remote_url: '', branch: 'main', auto_sync_enabled: true }
+          }),
+          GitPullCollection: async () => ({
+            success: true,
+            data: { has_git_repo: true, branch: 'main', output: 'Already up to date.', auto_sync_enabled: true }
+          }),
+          GitPullCollectionFromBranch: async (_id: string, branch: string) => ({
+            success: true,
+            data: { has_git_repo: true, branch: branch || 'main', output: 'Already up to date.', auto_sync_enabled: true }
+          }),
+          GitPushCollection: async () => ({
+            success: true,
+            data: { has_git_repo: true, branch: 'main', output: 'pushed', auto_sync_enabled: true }
+          }),
+          GitPushCollectionToBranch: async (_id: string, branch: string) => ({
+            success: true,
+            data: { has_git_repo: true, branch: branch || 'main', output: 'pushed', auto_sync_enabled: true }
+          }),
+          GitClearAndPullCollection: async () => ({
+            success: true,
+            data: { has_git_repo: true, branch: 'main', output: '', auto_sync_enabled: true }
+          }),
+          GitStashAndPullCollection: async () => ({
+            success: true,
+            data: { has_git_repo: true, branch: 'main', output: '', auto_sync_enabled: true }
+          }),
+          GitListLocalBranches: async () => ({ success: true, data: ['main'] }),
+          GitCheckoutBranch: async (_id: string, branch: string) => ({
+            success: true,
+            data: { has_git_repo: true, branch: branch || 'main', auto_sync_enabled: true }
+          }),
+          ResolveGitConflict: async () => ({
+            success: true,
+            data: { has_git_repo: true, branch: 'main', has_conflicts: false, auto_sync_enabled: true }
+          }),
+          AbortGitMerge: async () => ({
+            success: true,
+            data: { has_git_repo: true, branch: 'main', has_conflicts: false, auto_sync_enabled: true }
+          })
         }
       }
     };

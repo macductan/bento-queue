@@ -126,7 +126,7 @@ onUnmounted(() => {
       </svg>
 
       <!-- Current Environment Name -->
-      <span class="truncate max-w-[140px] font-medium leading-none">
+      <span class="truncate max-w-[140px] font-medium leading-normal">
         {{ activeEnvName }}
       </span>
 

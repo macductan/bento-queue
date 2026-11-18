@@ -552,6 +552,7 @@ export interface GenerateCurlOptions {
   dataFlag?: '--data-raw' | '--data' | '-d';
   activeEnvId?: string | null;
   collection?: any;
+  hideAuth?: boolean;
 }
 
 function extractVarsFromEnv(env: EnvInput | null | undefined): Map<string, string> {
@@ -597,6 +598,7 @@ export function generateCurlCommand(
   let dataFlag: '--data-raw' | '--data' | '-d' = '--data-raw';
   let activeEnvId: string | null | undefined;
   let collection: any;
+  let hideAuth = false;
 
   if (envOrOptions) {
     if (envOrOptions instanceof Map) {
@@ -609,7 +611,9 @@ export function generateCurlCommand(
       'multiline' in envOrOptions ||
       'dataFlag' in envOrOptions ||
       'activeEnvId' in envOrOptions ||
-      'collection' in envOrOptions
+      'collection' in envOrOptions ||
+      ('hideAuth' in envOrOptions &&
+        (typeof (envOrOptions as any).hideAuth === 'boolean' || (envOrOptions as any).hideAuth === undefined))
     ) {
       const opts = envOrOptions as GenerateCurlOptions;
       if (opts.vars) {
@@ -624,6 +628,7 @@ export function generateCurlCommand(
       if (opts.dataFlag !== undefined) dataFlag = opts.dataFlag;
       if (opts.activeEnvId !== undefined) activeEnvId = opts.activeEnvId;
       if (opts.collection !== undefined) collection = opts.collection;
+      if (opts.hideAuth !== undefined) hideAuth = opts.hideAuth === true;
     } else if ('variables' in envOrOptions && Array.isArray((envOrOptions as any).variables)) {
       vars = extractVarsFromEnv(envOrOptions as any);
     } else if (typeof envOrOptions === 'object') {
@@ -652,7 +657,8 @@ export function generateCurlCommand(
   const execReq = buildExecuteRequest(req, vars, inheritedHeaders, pathNodes, {
     activeEnvId,
     requestAuthEnvs: req.auth_envs,
-    collection
+    collection,
+    hideAuth
   });
 
   const parts: string[] = ['curl'];
