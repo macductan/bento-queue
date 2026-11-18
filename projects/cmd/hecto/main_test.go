@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"hecto-api/model"
 	"hecto-api/service"
@@ -1727,4 +1728,737 @@ func TestMockCLI_RelativeDataDir_RecycledPID_NonJSONBanner_And_HandshakeError(t 
 	}
 }
 
+func TestAgentGuide_TOC_And_SectionExtraction(t *testing.T) {
+	tmpDir := t.TempDir()
 
+	// 1. Default without flags and `skill` alias return full SKILL.md
+	code, fullOut, _ := execCLI(t, tmpDir, "agent-guide")
+	if code != 0 || fullOut != skillMD {
+		t.Fatalf("expected full skillMD for `agent-guide`, got code=%d len=%d want=%d", code, len(fullOut), len(skillMD))
+	}
+	code, skillAliasOut, _ := execCLI(t, tmpDir, "skill")
+	if code != 0 || skillAliasOut != skillMD {
+		t.Fatalf("expected full skillMD for `skill` alias, got code=%d", code)
+	}
+	code, fullJSONRes, _ := execCLIJSON(t, tmpDir, "agent-guide")
+	if code != 0 || !fullJSONRes.Success || fullJSONRes.Data.(map[string]interface{})["content"] != skillMD {
+		t.Fatalf("expected full skillMD in JSON mode, got code=%d res=%+v", code, fullJSONRes)
+	}
+
+	// 2. --toc and --list (text and --json)
+	code, tocOut, _ := execCLI(t, tmpDir, "agent-guide", "--toc")
+	if code != 0 {
+		t.Fatalf("agent-guide --toc failed with code %d", code)
+	}
+	if len(tocOut) >= len(skillMD)/4 {
+		t.Fatalf("expected --toc to be concise (<25%% of full guide), got %d vs %d", len(tocOut), len(skillMD))
+	}
+	for _, mustContain := range []string{"[1]", "[3.4]", "[6]", "[7]", "flow", "mock", "core -> 1, 2, 3"} {
+		if !strings.Contains(tocOut, mustContain) {
+			t.Errorf("expected TOC output to contain %q, got:\n%s", mustContain, tocOut)
+		}
+	}
+
+	code, listOut, _ := execCLI(t, tmpDir, "agent-guide", "--list")
+	if code != 0 || listOut != tocOut {
+		t.Fatalf("expected --list to match --toc, got code=%d", code)
+	}
+
+	code, listJSONRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--list")
+	if code != 0 || !listJSONRes.Success {
+		t.Fatalf("agent-guide --list --json failed: %+v", listJSONRes)
+	}
+
+	code, tocJSONRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--toc")
+	if code != 0 || !tocJSONRes.Success {
+		t.Fatalf("agent-guide --toc --json failed: %+v", tocJSONRes)
+	}
+	tocMap := tocJSONRes.Data.(map[string]interface{})
+	tocItems := tocMap["sections"].([]interface{})
+	if len(tocItems) < 15 {
+		t.Fatalf("expected at least 15 numbered sections/subsections in TOC, got %d", len(tocItems))
+	}
+	firstTOC := tocItems[0].(map[string]interface{})
+	if firstTOC["id"] != "1" || firstTOC["title"] == "" || len(firstTOC["aliases"].([]interface{})) == 0 {
+		t.Fatalf("unexpected TOC entry schema: %+v", firstTOC)
+	}
+	compAliases := tocMap["composite_aliases"].(map[string]interface{})
+	coreIDs := compAliases["core"].([]interface{})
+	if len(coreIDs) != 3 || coreIDs[0] != "1" || coreIDs[1] != "2" || coreIDs[2] != "3" {
+		t.Fatalf("expected composite_aliases.core = [1, 2, 3], got %+v", compAliases)
+	}
+
+	// Verify new aliases resolve cleanly (`agent-guide`, `compact`, `flow-commands`, `mock-schemas`)
+	for alias, expectedSub := range map[string]string{
+		"agent-guide":   "### 3.5.",
+		"compact":       "## 4. Scripting",
+		"flow-commands": "### 6.1.",
+		"mock-schemas":  "### 7.2.",
+	} {
+		code, aliasOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", alias)
+		if code != 0 || !strings.Contains(aliasOut, expectedSub) {
+			t.Fatalf("expected --section %q to include %q, got code=%d out:\n%s", alias, expectedSub, code, aliasOut)
+		}
+	}
+
+	// 3. --section single alias (`flow`), comma-separated (`3.4,6`), repeated flags, and `core`
+	code, flowSecRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--section", "flow")
+	if code != 0 || !flowSecRes.Success {
+		t.Fatalf("agent-guide --section flow --json failed: %+v", flowSecRes)
+	}
+	flowSecMap := flowSecRes.Data.(map[string]interface{})
+	flowContent := flowSecMap["content"].(string)
+	if len(flowContent) >= len(skillMD)/3 {
+		t.Fatalf("expected --section flow to be compact, got %d bytes vs full %d", len(flowContent), len(skillMD))
+	}
+	if !strings.Contains(flowContent, "## 6. API Flow Orchestration") || strings.Contains(flowContent, "## 7. Local Mock") || strings.Contains(flowContent, "## 1. Golden Rules") {
+		t.Fatalf("unexpected content bounds for --section flow:\n%s", flowContent)
+	}
+
+	code, multiOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", "3.4,6")
+	if code != 0 {
+		t.Fatalf("agent-guide --section 3.4,6 failed: %d", code)
+	}
+	if !strings.Contains(multiOut, "### 3.4. `req`") || !strings.Contains(multiOut, "## 6. API Flow Orchestration") || strings.Contains(multiOut, "### 3.1.") {
+		t.Fatalf("unexpected --section 3.4,6 content:\n%s", multiOut)
+	}
+
+	code, repOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", "req", "--section", "mock")
+	if code != 0 {
+		t.Fatalf("repeated --section failed: %d", code)
+	}
+	if !strings.Contains(repOut, "### 3.4. `req`") || !strings.Contains(repOut, "## 7. Local Mock HTTP Server") {
+		t.Fatalf("unexpected repeated --section content:\n%s", repOut)
+	}
+
+	code, coreOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", "CORE")
+	if code != 0 {
+		t.Fatalf("agent-guide --section CORE failed: %d", code)
+	}
+	if !strings.Contains(coreOut, "## 1.") || !strings.Contains(coreOut, "## 2.") || !strings.Contains(coreOut, "## 3.") || strings.Contains(coreOut, "## 4.") {
+		t.Fatalf("unexpected --section CORE content:\n%s", coreOut)
+	}
+
+	// 4. Parent-child deduplication (`3,req`, `req,3`, and `core,3.4`)
+	for _, sel := range []string{"3,req", "req,3"} {
+		code, dedupRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--section", sel)
+		if code != 0 || !dedupRes.Success {
+			t.Fatalf("--section %s failed: %+v", sel, dedupRes)
+		}
+		secList := dedupRes.Data.(map[string]interface{})["sections"].([]interface{})
+		if len(secList) != 1 || secList[0] != "3" {
+			t.Fatalf("expected parent section '3' only for %q, got %+v", sel, secList)
+		}
+		content := dedupRes.Data.(map[string]interface{})["content"].(string)
+		if strings.Count(content, "### 3.4. `req`") != 1 {
+			t.Fatalf("expected subsection 3.4 exactly once for %q, got count=%d", sel, strings.Count(content, "### 3.4. `req`"))
+		}
+	}
+	code, coreDedupRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--section", "core,3.4")
+	if code != 0 || !coreDedupRes.Success {
+		t.Fatalf("--section core,3.4 failed: %+v", coreDedupRes)
+	}
+	coreDedupList := coreDedupRes.Data.(map[string]interface{})["sections"].([]interface{})
+	if len(coreDedupList) != 3 || coreDedupList[0] != "1" || coreDedupList[1] != "2" || coreDedupList[2] != "3" {
+		t.Fatalf("expected core,3.4 to deduplicate to [1, 2, 3], got %+v", coreDedupList)
+	}
+
+	// 5. Validation errors: empty, unknown, conflict (--toc + --section), unexpected positional
+	errCases := [][]string{
+		{"agent-guide", "--section", ""},
+		{"agent-guide", "--section", "req,"},
+		{"agent-guide", "--section", "nonexistent-section"},
+		{"agent-guide", "--toc", "--section", "flow"},
+		{"agent-guide", "extra-positional"},
+	}
+	for _, args := range errCases {
+		code, errRes, _ := execCLIJSON(t, tmpDir, args...)
+		if code != 1 || errRes.Success || errRes.Error == nil || errRes.Error.Code != model.ErrValidation {
+			t.Fatalf("expected VALIDATION error (exit 1) for args %v, got code=%d res=%+v", args, code, errRes)
+		}
+	}
+}
+
+func TestRun_Compact_Redact_And_MaxBodyUTF8(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Multi-byte Vietnamese text (>700 bytes) to exercise UTF-8 rune boundary truncation and default 500B compact cap.
+	longUTF8Payload := strings.Repeat("Dữ liệu tiếng Việt thử nghiệm cắt chuỗi đa byte ", 16)
+	longBodyJSON := fmt.Sprintf(`{"token":"real-jwt-abc123","message":%q}`, longUTF8Payload)
+
+	var followUpAuthHeader string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/followup" {
+			followUpAuthHeader = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/script-err" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":false}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Set-Cookie", "sid=topsecret-cookie; HttpOnly")
+		w.Header().Set("X-Custom-Info", "ok")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(longBodyJSON))
+	}))
+	defer ts.Close()
+
+	_, _, _ = execCLIJSON(t, dataDir, "env", "create", "--name", "Stage", "--var", "base_url="+ts.URL, "--activate")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "AuthFlow")
+
+	postScript := `
+		const d = ha.response.json();
+		ha.folderVariables.set("token", d.token);
+		ha.folderVariables.set("public_note", "hello-world");
+		ha.variables.set("api_secret", "env-sec-999");
+		ha.env("Stage").set("stage_token", "stg-tok-111");
+		ha.folderEnv.set("folder_env_secret", "fe-sec-222");
+		ha.collectionVariables.set("coll_password", "pw-coll");
+		ha.folderAuth.setBearer("bearer-folder-777");
+		ha.folderAuthEnv.setBearer("fe-bearer-333");
+		ha.collectionAuth.setBasic("colluser", "coll-basic-pw");
+		ha.collectionAuth.setApiKey("X-Coll-Key", "coll-apikey-val", "header", "Stage");
+		ha.test("Body exists", () => { if (!d.token) throw new Error("missing token"); });
+		console.log("login completed");
+	`
+	_, rLogin, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "Login",
+		"--method", "POST",
+		"--url", "{{base_url}}/login",
+		"--header", "Authorization: Bearer initial-req-secret",
+		"--header", "X-Api-Key: secret-api-key-123",
+		"--header", "X-Custom-Auth: custom-auth-secret",
+		"--header", "Cookie: session=raw-cookie-val",
+		"--header", "X-Public-Trace: trace-123",
+		"--post-script", postScript,
+	)
+	if !rLogin.Success {
+		t.Fatalf("req create Login failed: %+v", rLogin)
+	}
+
+	_, rFollow, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "FollowUp",
+		"--method", "GET",
+		"--url", "{{base_url}}/followup",
+		"--header", "Authorization: Bearer {{token}}",
+	)
+	if !rFollow.Success {
+		t.Fatalf("req create FollowUp failed: %+v", rFollow)
+	}
+
+	_, rScriptErr, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "ScriptErr",
+		"--method", "GET",
+		"--url", "{{base_url}}/script-err",
+		"--post-script", `throw new Error("boom-script-err");`,
+	)
+	if !rScriptErr.Success {
+		t.Fatalf("req create ScriptErr failed: %+v", rScriptErr)
+	}
+
+	_, rQueryAPIKey, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "QueryAndBodySecrets",
+		"--method", "POST",
+		"--url", "{{base_url}}/followup?public=1",
+		"--auth-type", "apiKey",
+		"--auth-key", "X-Partner-ID",
+		"--auth-val", "partner-query-secret",
+		"--auth-in", "query",
+		"--urlencoded", "client_secret=form-sec-val",
+		"--urlencoded", "grant_type=client_credentials",
+	)
+	if !rQueryAPIKey.Success {
+		t.Fatalf("req create QueryAndBodySecrets failed: %+v", rQueryAPIKey)
+	}
+
+	_, rFormData, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "FormSecret",
+		"--method", "POST",
+		"--url", "{{base_url}}/followup",
+		"--form", "password=multipart-pw-val",
+		"--form", "username=alice",
+	)
+	if !rFormData.Success {
+		t.Fatalf("req create FormSecret failed: %+v", rFormData)
+	}
+
+	// 1. Default `hecto run --json` keeps backward-compatible fields and omits removed `response` field
+	code, defRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login")
+	if code != 0 || !defRes.Success {
+		t.Fatalf("default run failed: %+v", defRes)
+	}
+	defData := defRes.Data.(map[string]interface{})
+	if _, hasResp := defData["response"]; hasResp {
+		t.Fatalf("expected duplicate `response` field to be removed from RunOutput, got keys in %+v", defData)
+	}
+	for _, expectedKey := range []string{"request", "resolved_request", "headers", "console_logs", "scoped_auth_updates"} {
+		if _, ok := defData[expectedKey]; !ok {
+			t.Fatalf("expected default RunOutput to keep %q", expectedKey)
+		}
+	}
+
+	// 2. `--redact` (placed right before `--json`) masks headers, env_updates, scoped_env_updates, scoped_auth_updates, query/urlencoded/FormData secrets on stdout while keeping real secrets on disk
+	code, redRes, rawRedStdout := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--redact")
+	if code != 0 || !redRes.Success {
+		t.Fatalf("run --redact failed: %+v", redRes)
+	}
+	for _, leaked := range []string{
+		"initial-req-secret", "secret-api-key-123", "custom-auth-secret", "raw-cookie-val",
+		"topsecret-cookie", "env-sec-999", "stg-tok-111", "fe-sec-222", "pw-coll",
+		"bearer-folder-777", "fe-bearer-333", "coll-basic-pw", "coll-apikey-val",
+	} {
+		if strings.Contains(rawRedStdout, leaked) {
+			t.Fatalf("expected secret %q to be redacted from stdout, got:\n%s", leaked, rawRedStdout)
+		}
+	}
+	redData := redRes.Data.(map[string]interface{})
+	respHeaders := redData["headers"].(map[string]interface{})
+	if respHeaders["Set-Cookie"].([]interface{})[0] != redactedSecretPlaceholder {
+		t.Errorf("expected Set-Cookie redacted, got %+v", respHeaders["Set-Cookie"])
+	}
+	if respHeaders["X-Custom-Info"].([]interface{})[0] != "ok" {
+		t.Errorf("expected non-sensitive response header preserved, got %+v", respHeaders["X-Custom-Info"])
+	}
+	resolvedHeaders := redData["resolved_request"].(map[string]interface{})["headers"].([]interface{})
+	seenPublicTrace := false
+	for _, h := range resolvedHeaders {
+		hm := h.(map[string]interface{})
+		switch hm["key"] {
+		case "Authorization", "X-Api-Key", "X-Custom-Auth", "Cookie":
+			if hm["value"] != redactedSecretPlaceholder {
+				t.Errorf("expected %s redacted, got %v", hm["key"], hm["value"])
+			}
+		case "X-Public-Trace":
+			seenPublicTrace = true
+			if hm["value"] != "trace-123" {
+				t.Errorf("expected X-Public-Trace preserved, got %v", hm["value"])
+			}
+		}
+	}
+	if !seenPublicTrace {
+		t.Errorf("missing X-Public-Trace in resolved_request.headers")
+	}
+	if redData["env_updates"].(map[string]interface{})["api_secret"] != redactedSecretPlaceholder {
+		t.Errorf("expected env_updates.api_secret redacted, got %+v", redData["env_updates"])
+	}
+	scopedEnv := redData["scoped_env_updates"].(map[string]interface{})
+	if scopedEnv["collection"].(map[string]interface{})["coll_password"] != redactedSecretPlaceholder {
+		t.Errorf("expected collection coll_password redacted, got %+v", scopedEnv)
+	}
+	globalEnvs := scopedEnv["globalEnvs"].(map[string]interface{})
+	for _, m := range globalEnvs {
+		if m.(map[string]interface{})["stage_token"] != redactedSecretPlaceholder {
+			t.Errorf("expected GlobalEnvs stage_token redacted, got %+v", globalEnvs)
+		}
+	}
+	fgNearest := scopedEnv["folderGlobals"].(map[string]interface{})["__nearest__"].(map[string]interface{})
+	if fgNearest["token"] != redactedSecretPlaceholder || fgNearest["public_note"] != "hello-world" {
+		t.Errorf("unexpected folderGlobals redaction: %+v", fgNearest)
+	}
+	folderEnvs := scopedEnv["folderEnvs"].([]interface{})
+	if folderEnvs[0].(map[string]interface{})["value"] != redactedSecretPlaceholder {
+		t.Errorf("expected FolderEnvs folder_env_secret redacted, got %+v", folderEnvs)
+	}
+	scopedAuth := redData["scoped_auth_updates"].(map[string]interface{})
+	fgAuth := scopedAuth["folderGlobals"].(map[string]interface{})["__nearest__"].(map[string]interface{})
+	if fgAuth["bearer"].(map[string]interface{})["token"] != redactedSecretPlaceholder {
+		t.Errorf("expected scoped_auth_updates bearer.token redacted, got %+v", fgAuth)
+	}
+	if scopedAuth["collectionGlobal"].(map[string]interface{})["basic"].(map[string]interface{})["password"] != redactedSecretPlaceholder {
+		t.Errorf("expected collectionGlobal basic.password redacted, got %+v", scopedAuth["collectionGlobal"])
+	}
+	collEnvsAuth := scopedAuth["collectionEnvs"].([]interface{})
+	if collEnvsAuth[0].(map[string]interface{})["auth"].(map[string]interface{})["apiKey"].(map[string]interface{})["value"] != redactedSecretPlaceholder {
+		t.Errorf("expected collectionEnvs apiKey.value redacted, got %+v", collEnvsAuth)
+	}
+	feAuth := scopedAuth["folderEnvs"].([]interface{})
+	if feAuth[0].(map[string]interface{})["auth"].(map[string]interface{})["bearer"].(map[string]interface{})["token"] != redactedSecretPlaceholder {
+		t.Errorf("expected folderEnvs bearer.token redacted, got %+v", feAuth)
+	}
+
+	// Verify query API key + urlencoded + FormData redaction
+	code, qRes, rawQStdout := execCLIJSON(t, dataDir, "run", "AuthFlow/QueryAndBodySecrets", "--redact")
+	if code != 0 || !qRes.Success {
+		t.Fatalf("QueryAndBodySecrets --redact failed: %+v", qRes)
+	}
+	if strings.Contains(rawQStdout, "partner-query-secret") || strings.Contains(rawQStdout, "form-sec-val") {
+		t.Fatalf("expected query apiKey and urlencoded secret redacted, got:\n%s", rawQStdout)
+	}
+	if !strings.Contains(rawQStdout, "public=1") || !strings.Contains(rawQStdout, "grant_type=client_credentials") {
+		t.Fatalf("expected non-sensitive query/urlencoded params preserved, got:\n%s", rawQStdout)
+	}
+
+	code, fdRes, rawFDStdout := execCLIJSON(t, dataDir, "run", "AuthFlow/FormSecret", "--redact")
+	if code != 0 || !fdRes.Success {
+		t.Fatalf("FormSecret --redact failed: %+v", fdRes)
+	}
+	if strings.Contains(rawFDStdout, "multipart-pw-val") || !strings.Contains(rawFDStdout, "alice") {
+		t.Fatalf("expected FormData password redacted and username preserved, got:\n%s", rawFDStdout)
+	}
+
+	// Verify real token persisted on disk and works in follow-up request
+	_, folderAfter, _ := execCLIJSON(t, dataDir, "folder", "get", "AuthFlow")
+	diskVars := folderAfter.Data.(map[string]interface{})["variables"].([]interface{})
+	foundRealToken := false
+	for _, item := range diskVars {
+		m := item.(map[string]interface{})
+		if m["key"] == "token" && m["value"] == "real-jwt-abc123" {
+			foundRealToken = true
+		}
+	}
+	if !foundRealToken {
+		t.Fatalf("expected real token persisted on disk after --redact, got %+v", diskVars)
+	}
+	code, followRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/FollowUp", "--compact")
+	if code != 0 || !followRes.Success {
+		t.Fatalf("follow-up run failed: %+v", followRes)
+	}
+	if followUpAuthHeader != "Bearer real-jwt-abc123" {
+		t.Fatalf("expected follow-up request to send real token from disk, got %q", followUpAuthHeader)
+	}
+
+	// 3. `--max-body` UTF-8 rune-safe truncation & negative validation
+	code, truncRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--max-body", "100")
+	if code != 0 || !truncRes.Success {
+		t.Fatalf("run --max-body 100 failed: %+v", truncRes)
+	}
+	truncData := truncRes.Data.(map[string]interface{})
+	truncBody := truncData["body"].(string)
+	if truncData["body_truncated"] != true {
+		t.Fatalf("expected body_truncated=true, got %v", truncData["body_truncated"])
+	}
+	if !utf8.ValidString(truncBody) {
+		t.Fatalf("truncated body is not valid UTF-8: %q", truncBody)
+	}
+	wantSuffix := fmt.Sprintf("... [truncated, total %d bytes]", len(longBodyJSON))
+	if !strings.HasSuffix(truncBody, wantSuffix) {
+		t.Fatalf("expected suffix %q, got %q", wantSuffix, truncBody)
+	}
+	prefix := strings.TrimSuffix(truncBody, wantSuffix)
+	if len(prefix) > 100 || len(prefix) == 0 {
+		t.Fatalf("expected prefix byte length in 1..100, got %d", len(prefix))
+	}
+
+	code, negErrRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--max-body", "-1")
+	if code != 1 || negErrRes.Success || negErrRes.Error == nil || negErrRes.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION for --max-body -1, got code=%d res=%+v", code, negErrRes)
+	}
+
+	// 4. `--compact` omits duplicate/auth fields, auto-redacts, defaults 500B truncation, and supports --max-body 0 / 2000 overrides
+	code, cmpRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--compact")
+	if code != 0 || !cmpRes.Success {
+		t.Fatalf("run --compact failed: %+v", cmpRes)
+	}
+	cmpData := cmpRes.Data.(map[string]interface{})
+	for _, omitted := range []string{"request", "resolved_request", "headers", "console_logs", "scoped_auth_updates"} {
+		if _, exists := cmpData[omitted]; exists {
+			t.Fatalf("expected %q to be omitted in --compact output, got %+v", omitted, cmpData)
+		}
+	}
+	for _, kept := range []string{"status_code", "status_text", "time_ms", "size_bytes", "body", "body_truncated", "script_tests", "script_logs", "env_updates", "scoped_env_updates"} {
+		if _, exists := cmpData[kept]; !exists {
+			t.Fatalf("expected %q to be kept in --compact output, got %+v", kept, cmpData)
+		}
+	}
+	cmpBody := cmpData["body"].(string)
+	if !utf8.ValidString(cmpBody) || !strings.HasSuffix(cmpBody, wantSuffix) {
+		t.Fatalf("unexpected --compact body truncation: %q", cmpBody)
+	}
+	if len(strings.TrimSuffix(cmpBody, wantSuffix)) > defaultCompactMaxBody {
+		t.Fatalf("expected --compact prefix <= %d bytes", defaultCompactMaxBody)
+	}
+	if cmpData["env_updates"].(map[string]interface{})["api_secret"] != redactedSecretPlaceholder {
+		t.Fatalf("expected --compact to auto-redact env_updates, got %+v", cmpData["env_updates"])
+	}
+
+	// Override --max-body 0 with --compact (flags before positional)
+	code, zeroRes, _ := execCLIJSON(t, dataDir, "run", "--compact", "--max-body", "0", "AuthFlow/Login")
+	if code != 0 || !zeroRes.Success {
+		t.Fatalf("run --compact --max-body 0 failed: %+v", zeroRes)
+	}
+	zeroData := zeroRes.Data.(map[string]interface{})
+	if zeroData["body_truncated"] != true || zeroData["body"] != wantSuffix {
+		t.Fatalf("expected 0-byte body prefix with suffix %q, got %+v", wantSuffix, zeroData)
+	}
+
+	// Override --max-body 2000 with --compact (no truncation)
+	code, fullCapRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--compact", "--max-body", "2000")
+	if code != 0 || !fullCapRes.Success {
+		t.Fatalf("run --compact --max-body 2000 failed: %+v", fullCapRes)
+	}
+	fullCapData := fullCapRes.Data.(map[string]interface{})
+	if _, hasTrunc := fullCapData["body_truncated"]; hasTrunc {
+		t.Fatalf("expected body_truncated omitted when body <= max-body, got %+v", fullCapData)
+	}
+	if fullCapData["body"] != longBodyJSON {
+		t.Fatalf("expected full body when --max-body 2000")
+	}
+
+	// Script error preserved in --compact mode
+	code, scriptErrRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/ScriptErr", "--compact")
+	if code != 0 || !scriptErrRes.Success {
+		t.Fatalf("run ScriptErr --compact failed: %+v", scriptErrRes)
+	}
+	if !strings.Contains(scriptErrRes.Data.(map[string]interface{})["script_error"].(string), "boom-script-err") {
+		t.Fatalf("expected script_error preserved in --compact, got %+v", scriptErrRes.Data)
+	}
+
+	// Network error returns exit code 1 even with --compact, and redacts sensitive URL query/userinfo from error message
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create", "--folder", "AuthFlow", "--name", "NetErr", "--method", "GET", "--url", "http://user:urlpass@127.0.0.1:1/unreachable?api_key=leak-in-err&keep=1")
+	code, netErrRes, rawNetErr := execCLIJSON(t, dataDir, "run", "AuthFlow/NetErr", "--compact")
+	if code != 1 || netErrRes.Success || netErrRes.Error == nil {
+		t.Fatalf("expected exit 1 and error on network failure in --compact, got code=%d res=%+v", code, netErrRes)
+	}
+	if strings.Contains(rawNetErr, "urlpass") || strings.Contains(rawNetErr, "leak-in-err") {
+		t.Fatalf("expected sensitive URL secrets redacted in error message, got:\n%s", rawNetErr)
+	}
+
+	// Non-JSON compact run + empty script_tests/script_logs omitted + extra positional rejected
+	code, nonJSONCompact, _ := execCLI(t, dataDir, "run", "AuthFlow/FollowUp", "--compact")
+	if code != 0 || strings.Contains(nonJSONCompact, `"script_tests"`) || strings.Contains(nonJSONCompact, `"script_logs"`) {
+		t.Fatalf("expected exit 0 and empty script_tests/script_logs omitted in non-JSON compact, got code=%d out:\n%s", code, nonJSONCompact)
+	}
+	code, extraPosRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/FollowUp", "extra-arg")
+	if code != 1 || extraPosRes.Success || extraPosRes.Error == nil || extraPosRes.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION for extra positional arg on `hecto run`, got code=%d res=%+v", code, extraPosRes)
+	}
+}
+
+func TestFlowRun_Compact_Redact_And_MaxBody(t *testing.T) {
+	dataDir := t.TempDir()
+
+	longPassPad := strings.Repeat("ok-utf8-đoạn-dài-", 45)
+	longFailPad := strings.Repeat("lỗi-utf8-đoạn-dài-", 45)
+	var seenProfileAuth string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"token":"flow-secret-tok","pad":%q}`, longPassPad)))
+		case "/profile":
+			seenProfileAuth = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"user":"alice","pad":%q}`, longPassPad)))
+		case "/fail":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"broken","detail":%q}`, longFailPad)))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	_, _, _ = execCLIJSON(t, dataDir, "env", "create", "--name", "FlowEnv", "--var", "base_url="+ts.URL, "--activate")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "API")
+
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "Login", "--method", "POST", "--url", "{{base_url}}/login",
+		"--header", "X-Client-Secret: flow-client-secret",
+		"--post-script", `const b = ha.response.json(); ha.variables.set("jwt_token", b.token); ha.variables.set("public_step", "step1-ok");`,
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "Profile", "--method", "GET", "--url", "{{base_url}}/profile",
+		"--header", "Authorization: Bearer {{jwt_token}}",
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "FailStep", "--method", "GET", "--url", "{{base_url}}/fail",
+		"--post-script", `ha.test("Must be 200", () => { if (ha.response.code !== 200) throw new Error("expected 200"); });`,
+	)
+
+	_, _, _ = execCLIJSON(t, dataDir, "flow", "create", "--name", "PassFlow", "--steps", "API/Login,API/Profile")
+	_, _, _ = execCLIJSON(t, dataDir, "flow", "create", "--name", "FailFlow", "--steps", "API/Login,API/FailStep")
+
+	// 1. PassFlow --compact --json: omits top-level step_results, hides body on passed steps, redacts stdout secrets, preserves real token for Profile and disk
+	code, passRes, rawPassStdout := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--compact")
+	if code != 0 || !passRes.Success {
+		t.Fatalf("flow run PassFlow --compact failed: %+v", passRes)
+	}
+	if strings.Contains(rawPassStdout, "flow-secret-tok") || strings.Contains(rawPassStdout, "flow-client-secret") {
+		t.Fatalf("expected flow secrets redacted from stdout, got:\n%s", rawPassStdout)
+	}
+	if seenProfileAuth != "Bearer flow-secret-tok" {
+		t.Fatalf("expected Profile step to receive real token before redaction, got %q", seenProfileAuth)
+	}
+	passData := passRes.Data.(map[string]interface{})
+	if _, hasTopSteps := passData["step_results"]; hasTopSteps {
+		t.Fatalf("expected top-level step_results omitted in compact flow output")
+	}
+	nodeResults := passData["node_results"].([]interface{})
+	step1 := nodeResults[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
+	step1Run := step1["run_output"].(map[string]interface{})
+	if _, hasBody := step1Run["body"]; hasBody {
+		t.Fatalf("expected passed step to omit body in flow --compact by default, got %+v", step1Run)
+	}
+	for _, omitted := range []string{"request", "resolved_request", "headers", "console_logs", "scoped_auth_updates"} {
+		if _, exists := step1Run[omitted]; exists {
+			t.Fatalf("expected %q omitted in compact step run_output", omitted)
+		}
+	}
+	envUpd := step1Run["env_updates"].(map[string]interface{})
+	if envUpd["jwt_token"] != redactedSecretPlaceholder || envUpd["public_step"] != "step1-ok" {
+		t.Fatalf("unexpected redacted env_updates on step1: %+v", envUpd)
+	}
+
+	// Verify real token was saved to FlowEnv on disk
+	_, envAfter, _ := execCLIJSON(t, dataDir, "env", "get", "FlowEnv")
+	foundJWT := false
+	for _, item := range envAfter.Data.(map[string]interface{})["variables"].([]interface{}) {
+		m := item.(map[string]interface{})
+		if m["key"] == "jwt_token" && m["value"] == "flow-secret-tok" {
+			foundJWT = true
+		}
+	}
+	if !foundJWT {
+		t.Fatalf("expected real jwt_token persisted on disk after flow run --compact")
+	}
+
+	// 2. PassFlow --compact --max-body 80 explicitly shows truncated body on passed steps
+	code, passBodyRes, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--compact", "--max-body", "80")
+	if code != 0 || !passBodyRes.Success {
+		t.Fatalf("flow run PassFlow --compact --max-body 80 failed: %+v", passBodyRes)
+	}
+	passBodyStep := passBodyRes.Data.(map[string]interface{})["node_results"].([]interface{})[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	pb, ok := passBodyStep["body"].(string)
+	if !ok || passBodyStep["body_truncated"] != true || !utf8.ValidString(pb) {
+		t.Fatalf("expected truncated valid UTF-8 body when --max-body 80 is passed, got %+v", passBodyStep)
+	}
+
+	// 3. FailFlow --compact --json: passed step hides body, failed step keeps truncated body + failure details, exit code 0 in --json
+	code, failRes, _ := execCLIJSON(t, dataDir, "flow", "run", "FailFlow", "--compact")
+	if code != 0 || !failRes.Success {
+		t.Fatalf("flow run FailFlow --compact --json failed: code=%d res=%+v", code, failRes)
+	}
+	failData := failRes.Data.(map[string]interface{})
+	if failData["status"] != "failed" {
+		t.Fatalf("expected flow status=failed, got %v", failData["status"])
+	}
+	failNodes := failData["node_results"].([]interface{})
+	s1Run := failNodes[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if _, hasBody := s1Run["body"]; hasBody {
+		t.Fatalf("expected passed step 1 in FailFlow to omit body, got %+v", s1Run)
+	}
+	s2 := failNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
+	if s2["status"] != "failed" || s2["failure_category"] == "" || s2["failure_reason"] == "" {
+		t.Fatalf("expected failed step metadata on step 2, got %+v", s2)
+	}
+	s2Run := s2["run_output"].(map[string]interface{})
+	s2Body, ok := s2Run["body"].(string)
+	if !ok || s2Run["body_truncated"] != true || !utf8.ValidString(s2Body) {
+		t.Fatalf("expected failed step 2 to retain truncated UTF-8 body, got %+v", s2Run)
+	}
+
+	// 4. Non-JSON FailFlow --compact exits with code 1
+	codeNonJSON, nonJSONOut, _ := execCLI(t, dataDir, "flow", "run", "FailFlow", "--compact")
+	if codeNonJSON != 1 || !strings.Contains(nonJSONOut, `"status": "failed"`) {
+		t.Fatalf("expected exit 1 in non-JSON mode for failed compact flow, got code=%d out:\n%s", codeNonJSON, nonJSONOut)
+	}
+
+	// 5. Validation error for negative --max-body and extra positional argument
+	code, badBodyRes, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--max-body", "-1")
+	if code != 1 || badBodyRes.Success || badBodyRes.Error == nil || badBodyRes.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION error for flow run --max-body -1, got code=%d res=%+v", code, badBodyRes)
+	}
+	code, flowExtraPos, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "extra-pos")
+	if code != 1 || flowExtraPos.Success || flowExtraPos.Error == nil || flowExtraPos.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION error for extra positional arg on `hecto flow run`, got code=%d res=%+v", code, flowExtraPos)
+	}
+
+	// 6. FailFlow --compact --max-body 0: passed step still omits body while failed step keeps 0-byte truncated body
+	code, failZeroRes, _ := execCLIJSON(t, dataDir, "flow", "run", "FailFlow", "--compact", "--max-body", "0")
+	if code != 0 || !failZeroRes.Success {
+		t.Fatalf("flow run FailFlow --compact --max-body 0 failed: %+v", failZeroRes)
+	}
+	fzNodes := failZeroRes.Data.(map[string]interface{})["node_results"].([]interface{})
+	fzStep1Run := fzNodes[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if _, hasBody := fzStep1Run["body"]; hasBody {
+		t.Fatalf("expected passed step to omit body under --compact --max-body 0, got %+v", fzStep1Run)
+	}
+	fzStep2Run := fzNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if fzStep2Run["body_truncated"] != true || !strings.HasPrefix(fzStep2Run["body"].(string), "... [truncated, total ") {
+		t.Fatalf("expected failed step to truncate at 0-byte prefix under --compact --max-body 0, got %+v", fzStep2Run)
+	}
+
+	// 7. Non-compact flow run --redact and --max-body (verifies walkUniqueFlowRunOutputs single truncation across node_results & step_results)
+	code, nonCmpRed, rawNonCmpRed := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--redact")
+	if code != 0 || !nonCmpRed.Success {
+		t.Fatalf("non-compact flow run --redact failed: %+v", nonCmpRed)
+	}
+	if strings.Contains(rawNonCmpRed, "flow-client-secret") {
+		t.Fatalf("expected non-compact flow run --redact to mask X-Client-Secret header, got:\n%s", rawNonCmpRed)
+	}
+	nonCmpData := nonCmpRed.Data.(map[string]interface{})
+	topSteps, hasTopSteps := nonCmpData["step_results"].([]interface{})
+	if !hasTopSteps || len(topSteps) != 2 {
+		t.Fatalf("expected non-compact flow run --redact to retain 2 top-level step_results, got %+v", nonCmpData["step_results"])
+	}
+	topStep1Run := topSteps[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if topStep1Run["env_updates"].(map[string]interface{})["jwt_token"] != redactedSecretPlaceholder {
+		t.Fatalf("expected top-level step_results[0] env_updates.jwt_token redacted, got %+v", topStep1Run["env_updates"])
+	}
+	topStep2Headers := topSteps[1].(map[string]interface{})["run_output"].(map[string]interface{})["resolved_request"].(map[string]interface{})["headers"].([]interface{})
+	if topStep2Headers[0].(map[string]interface{})["value"] != redactedSecretPlaceholder {
+		t.Fatalf("expected top-level step_results[1] Authorization redacted, got %+v", topStep2Headers)
+	}
+
+	code, nonCmpTrunc, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--max-body", "60")
+	if code != 0 || !nonCmpTrunc.Success {
+		t.Fatalf("non-compact flow run --max-body 60 failed: %+v", nonCmpTrunc)
+	}
+	ncData := nonCmpTrunc.Data.(map[string]interface{})
+	ncNodeStepBody := ncData["node_results"].([]interface{})[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})["body"].(string)
+	ncTopStepBody := ncData["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})["body"].(string)
+	if ncNodeStepBody != ncTopStepBody || strings.Count(ncTopStepBody, "... [truncated, total ") != 1 || !utf8.ValidString(ncTopStepBody) {
+		t.Fatalf("expected single UTF-8 truncation shared between node_results and step_results, got node=%q top=%q", ncNodeStepBody, ncTopStepBody)
+	}
+
+	// 8. Parallel row, skipped/disabled step, missing request (`RunOutput == nil`), and error URL redaction in flow compact mode
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "NetErrStep", "--method", "GET", "--url", "http://127.0.0.1:1/fail?api_key=flow-url-secret",
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "ToDelete", "--method", "GET", "--url", "{{base_url}}/profile",
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "flow", "create",
+		"--name", "EdgeFlow",
+		"--nodes-json", `[
+			{"steps":[{"request_id":"API/Login","enabled":true},{"request_id":"API/Profile","enabled":false}]},
+			{"steps":[{"request_id":"API/ToDelete","enabled":true},{"request_id":"API/NetErrStep","enabled":true}]}
+		]`,
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "delete", "API/ToDelete")
+
+	code, edgeRes, rawEdgeOut := execCLIJSON(t, dataDir, "flow", "run", "EdgeFlow", "--compact")
+	if code != 0 || !edgeRes.Success {
+		t.Fatalf("flow run EdgeFlow --compact failed: %+v", edgeRes)
+	}
+	if strings.Contains(rawEdgeOut, "flow-url-secret") {
+		t.Fatalf("expected flow error URL secret redacted from stdout, got:\n%s", rawEdgeOut)
+	}
+	edgeData := edgeRes.Data.(map[string]interface{})
+	if edgeData["status"] != "failed" || int(edgeData["steps_skipped"].(float64)) != 1 {
+		t.Fatalf("expected failed status and 1 skipped disabled step, got %+v", edgeData)
+	}
+	edgeNodes := edgeData["node_results"].([]interface{})
+	missingStep := edgeNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
+	if _, hasRunOut := missingStep["run_output"]; hasRunOut {
+		t.Fatalf("expected deleted request step to have nil/omitted run_output, got %+v", missingStep)
+	}
+}

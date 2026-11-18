@@ -120,23 +120,23 @@ type ScriptExecutionResult struct {
 
 // RunOutput is the canonical execution output returned by ExecuteRequestFlow and `hecto run`.
 type RunOutput struct {
-	StatusCode        int                    `json:"status_code"`
-	StatusText        string                 `json:"status_text"`
-	TimeMs            int64                  `json:"time_ms"`
-	SizeBytes         int64                  `json:"size_bytes"`
-	Headers           map[string][]string    `json:"headers"`
-	Body              string                 `json:"body"`
-	Request           model.ExecuteRequest   `json:"request"`
-	ResolvedRequest   model.ExecuteRequest   `json:"resolved_request"`
-	Response          *model.ExecuteResponse `json:"response,omitempty"`
-	ScriptTests       []ScriptTestResult     `json:"script_tests"`
-	ScriptLogs        []string               `json:"script_logs"`
-	ConsoleLogs       []string               `json:"console_logs"`
-	EnvUpdates        map[string]string      `json:"env_updates,omitempty"`
-	ScopedEnvUpdates  *ScopedEnvUpdates      `json:"scoped_env_updates,omitempty"`
-	ScopedAuthUpdates *ScopedAuthUpdates     `json:"scoped_auth_updates,omitempty"`
-	ScriptError       string                 `json:"script_error,omitempty"`
-	NetworkError      string                 `json:"network_error,omitempty"`
+	StatusCode        int                  `json:"status_code"`
+	StatusText        string               `json:"status_text"`
+	TimeMs            int64                `json:"time_ms"`
+	SizeBytes         int64                `json:"size_bytes"`
+	Headers           map[string][]string  `json:"headers"`
+	Body              string               `json:"body"`
+	BodyTruncated     bool                 `json:"body_truncated,omitempty"`
+	Request           model.ExecuteRequest `json:"request"`
+	ResolvedRequest   model.ExecuteRequest `json:"resolved_request"`
+	ScriptTests       []ScriptTestResult   `json:"script_tests"`
+	ScriptLogs        []string             `json:"script_logs"`
+	ConsoleLogs       []string             `json:"console_logs"`
+	EnvUpdates        map[string]string    `json:"env_updates,omitempty"`
+	ScopedEnvUpdates  *ScopedEnvUpdates    `json:"scoped_env_updates,omitempty"`
+	ScopedAuthUpdates *ScopedAuthUpdates   `json:"scoped_auth_updates,omitempty"`
+	ScriptError       string               `json:"script_error,omitempty"`
+	NetworkError      string               `json:"network_error,omitempty"`
 }
 
 // RunOptions configures a single ExecuteRequestFlow invocation.
@@ -1118,9 +1118,9 @@ func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 		SizeBytes:         int64(resp.SizeBytes),
 		Headers:           resp.Headers,
 		Body:              resp.Body,
+		BodyTruncated:     resp.Truncated,
 		Request:           preOut.ExecuteRequest,
 		ResolvedRequest:   preOut.ExecuteRequest,
-		Response:          &resp,
 		ScriptTests:       allTests,
 		ScriptLogs:        allLogs,
 		ConsoleLogs:       allLogs,

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -445,3 +446,25 @@ func TestExecuteRequestFlow_NoSaveEnv_ScopedAuth_NetworkFailure_And_Errors(t *te
 	}
 }
 
+func TestExecuteRequestFlow_PropagatesExecutorTruncatedFlag(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("A"), service.MaxResponseBodySize+64))
+	}))
+	defer ts.Close()
+
+	out, err := ExecuteRequestFlow(RunOptions{
+		Request: model.Request{
+			ID:     "req-10mb",
+			Method: "GET",
+			URL:    ts.URL + "/large",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRequestFlow failed: %v", err)
+	}
+	if !out.BodyTruncated {
+		t.Fatalf("expected BodyTruncated=true when ExecutorService truncates >10MB response")
+	}
+}

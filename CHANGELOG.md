@@ -23,12 +23,25 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 - **Nguồn duy nhất cho Version (Single Source of Truth)**:
   - Trường `"version"` trong `projects/frontend/package.json`.
 - **AI Agent CLI (`hecto`) & Shared TypeScript Engine (`goja` - từ `v1.14.0`)**:
-  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow`, `mock` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`/`start`/`stop`), `hecto run`, `hecto flow run` và `hecto import`.
+  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`, hỗ trợ `--toc`/`--list` và `--section <id|alias[,...]>` từ `v1.21.0`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow`, `mock` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`/`start`/`stop`), `hecto run` / `hecto flow run` (hỗ trợ `--compact`, `--redact`, `--max-body <bytes>` từ `v1.21.0`) và `hecto import`.
   - Shared TypeScript Execution Engine (`projects/frontend/src/utils/headless-engine.ts` $\rightarrow$ `projects/engine/headless-engine.js`) nhúng qua `//go:embed` trên pure-Go `github.com/dop251/goja` đảm bảo đồng nhất 100% logic giải biến 4 tầng, kế thừa Auth/Header, `btoa`/`atob` Latin-1 (hỗ trợ tiếng Việt/Unicode), thực thi `ha.*` Pre-request/Post-response scripts và đánh giá luồng đa nhánh `flowRunner.ts` giữa Desktop UI và CLI.
   - Đồng bộ file 3 lớp (`projects/storage/watcher.go` dùng `fsnotify` + lọc self-write 400ms + debounce 300ms + `collectionStore.smartReload()`): tự động phát hiện thay đổi từ CLI/Git/Editor ngoài, giữ nguyên trạng thái mở cây thư mục (`expandedFolders`) và bảo vệ các tab đang chỉnh sửa dở (`isDirty`).
 - **API Flow (Structured Flowchart Runner - từ `v1.15.0`)**:
   - Lưu trữ độc lập tại `<collection>/flows/` với `FlowFolder` (`_folder.json`) và `Flow` (`<flow-uuid>.json`).
   - Bước thực thi kiểu Con trỏ mỏng (`Thin Pointer` trỏ tới `request_id` gốc), tái sử dụng 100% biến 4 tầng, kế thừa Auth/Header và Script của Request gốc; hỗ trợ chạy Tuần tự, Hàng Song song (`Promise.all` / goroutines kèm gom tuần tự thay đổi biến sau hàng), và Rẽ nhánh 3 chế độ (`success`, `error`, `custom` 3 ô).
+
+---
+
+## [v1.21.0] - 2026-11-18
+
+### Added — Tối ưu `hecto` CLI cho AI Agent: JIT `agent-guide` & Nén/Che Secret Output
+- **Trích xuất tài liệu JIT (`hecto agent-guide --toc | --list | --section <id|alias[,...]>` - `projects/cmd/hecto/main.go`, `projects/cmd/hecto/SKILL.md`)**:
+  - Phân tích động cấu trúc heading `## N.` / `### N.M.` (bỏ qua code fence) trực tiếp từ `SKILL.md` nhúng (`//go:embed SKILL.md`), hỗ trợ mục lục `--toc`/`--list` (text và JSON kèm `composite_aliases.core`), chọn một hoặc nhiều mục theo số hoặc alias (`core`=`1,2,3`, `req`, `flow`, `mock`, `agent-guide`, `compact`, `flow-commands`, `mock-schemas`, v.v.), khử trùng lặp cha–con bất kể thứ tự truyền, và báo lỗi `VALIDATION` rõ ràng khi sai/xung đột cờ hoặc thừa positional.
+- **Nén Output & Che Secret trên `stdout` (`--compact`, `--redact`, `--max-body <bytes>` - `projects/cmd/hecto/main.go`, `projects/engine/headless.go`)**:
+  - Loại bỏ trường `Response` dư thừa trong `engine.RunOutput` đồng thời truyền tín hiệu cắt giới hạn 10 MB của executor (`resp.Truncated`) sang `body_truncated`.
+  - Hỗ trợ `--max-body <bytes>` cắt `body` an toàn tại ranh giới UTF-8 rune kèm hậu tố `"... [truncated, total <N> bytes]"` và `body_truncated: true`.
+  - Hỗ trợ `--redact` che `"***REDACTED***"` chỉ trên `stdout` (sau khi ghi đĩa và đánh giá nhánh rẽ flow đã chạy xong với giá trị thật) cho headers nhạy cảm (bao gồm `"auth"`, `private-key`, `access-key` và tên header/query `apiKey` cấu hình), URL query/userinfo, trường nhạy cảm trong `FormData`/`application/x-www-form-urlencoded`, URL trong chuỗi lỗi (`network_error`, `failure_reason`, `halted_error`, `handleRun`), `env_updates`/`scoped_env_updates`, và `scoped_auth_updates`.
+  - Hỗ trợ `--compact` (tự bật `--redact`, mặc định `--max-body 500`): loại bỏ `request`, `resolved_request`, `headers`, `console_logs`, `scoped_auth_updates` ở `hecto run`; loại bỏ mảng phẳng `step_results` ở `hecto flow run`, ẩn `body` ở các step `passed` (trừ khi truyền `--max-body > 0`), và giữ `body` cắt gọn kèm chi tiết lỗi ở các step `failed` (bảo toàn exit code `1` non-JSON / `0` JSON khi flow thất bại), kèm bộ unit & CLI integration tests toàn diện.
 
 ---
 

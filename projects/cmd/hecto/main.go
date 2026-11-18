@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
@@ -34,7 +36,7 @@ var skillMD string
 
 var cliVersion = "dev"
 
-const agentGuideBanner = "🤖 AI AGENT / LLM GUIDE: Run `hecto agent-guide` to print the complete SKILL.md manual (command matrix, 4-tier variables, auth inheritance, scripting, and JSON schemas) to stdout."
+const agentGuideBanner = "🤖 AI AGENT / LLM GUIDE: Run `hecto agent-guide --toc` or `hecto agent-guide --section <id|alias>` (or `hecto agent-guide` for the full SKILL.md manual)."
 
 type multiStringFlag []string
 
@@ -104,8 +106,7 @@ func runCLI(rawArgs []string, stdout, stderr io.Writer) int {
 	}
 
 	if topCmd == "agent-guide" || topCmd == "skill" {
-		_, _ = fmt.Fprint(stdout, skillMD)
-		return 0
+		return handleAgentGuide(cmdArgs, stdout, stderr, globalOpts.jsonOutput)
 	}
 
 	fs := storage.NewFileSystem()
@@ -195,6 +196,10 @@ var knownBooleanFlags = map[string]bool{
 	"daemon":      true,
 	"enabled":     true,
 	"disabled":    true,
+	"toc":         true,
+	"list":        true,
+	"compact":     true,
+	"redact":      true,
 }
 
 func extractGlobalFlags(args []string) (globalFlags, []string) {
@@ -316,10 +321,10 @@ func printMainUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Usage:")
 	_, _ = fmt.Fprintln(w, "  hecto <entity> <verb> [arguments] [flags]")
-	_, _ = fmt.Fprintln(w, "  hecto run <id|path> [flags]")
-	_, _ = fmt.Fprintln(w, "  hecto flow run <id|path> [flags]")
+	_, _ = fmt.Fprintln(w, "  hecto run <id|path> [--compact] [--redact] [--max-body <bytes>] [flags]")
+	_, _ = fmt.Fprintln(w, "  hecto flow run <id|path> [--compact] [--redact] [--max-body <bytes>] [flags]")
 	_, _ = fmt.Fprintln(w, "  hecto import <file-or-curl> [flags]")
-	_, _ = fmt.Fprintln(w, "  hecto agent-guide")
+	_, _ = fmt.Fprintln(w, "  hecto agent-guide [--toc | --list | --section <id|alias[,...]>] [--json]")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Entities & Verbs:")
 	_, _ = fmt.Fprintln(w, "  collection  list | get | create | update | delete | switch")
@@ -330,9 +335,9 @@ func printMainUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  mock        status | config | start (serve) | stop | route <list|get|create|update|delete>")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Top-Level Commands:")
-	_, _ = fmt.Fprintln(w, "  run         Execute a request through the shared TypeScript/goja engine")
+	_, _ = fmt.Fprintln(w, "  run         Execute a request through the shared TypeScript/goja engine (--compact, --redact, --max-body)")
 	_, _ = fmt.Fprintln(w, "  import      Import a Postman v2.1 JSON file or a raw cURL command/file")
-	_, _ = fmt.Fprintln(w, "  agent-guide Print the complete SKILL.md manual for AI Coding Agents")
+	_, _ = fmt.Fprintln(w, "  agent-guide Print SKILL.md (--toc for index, --section <id|alias> for JIT slice)")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Global Flags:")
 	_, _ = fmt.Fprintln(w, "  -c, --collection <id|name>  Target collection (defaults to active_collection)")
@@ -366,11 +371,23 @@ func emitResult(stdout, stderr io.Writer, jsonMode bool, res model.Result) int {
 		if err == nil {
 			_, _ = fmt.Fprintln(stdout, string(raw))
 		}
-		if flowOut, ok := res.Data.(*engine.FlowRunOutput); ok && flowOut != nil && flowOut.Status == "failed" {
-			return 1
-		}
-		if flowOutVal, ok := res.Data.(engine.FlowRunOutput); ok && flowOutVal.Status == "failed" {
-			return 1
+		switch v := res.Data.(type) {
+		case *engine.FlowRunOutput:
+			if v != nil && v.Status == "failed" {
+				return 1
+			}
+		case engine.FlowRunOutput:
+			if v.Status == "failed" {
+				return 1
+			}
+		case *compactFlowRunOutput:
+			if v != nil && v.Status == "failed" {
+				return 1
+			}
+		case compactFlowRunOutput:
+			if v.Status == "failed" {
+				return 1
+			}
 		}
 	} else {
 		_, _ = fmt.Fprintln(stdout, "OK")
@@ -397,6 +414,300 @@ func resultFromError(err error) model.Result {
 		}
 	}
 	return model.NewError(model.ErrValidation, msg)
+}
+
+type agentGuideSection struct {
+	ID      string
+	Level   int
+	Title   string
+	Content string
+	Aliases []string
+}
+
+type agentGuideTOCEntry struct {
+	ID      string   `json:"id"`
+	Level   int      `json:"level"`
+	Title   string   `json:"title"`
+	Aliases []string `json:"aliases,omitempty"`
+}
+
+var sectionAliasesByID = map[string][]string{
+	"1":   {"rules", "golden-rules"},
+	"2":   {"model", "variables", "auth"},
+	"3":   {"commands", "matrix"},
+	"3.1": {"collection", "coll"},
+	"3.2": {"env", "environment"},
+	"3.3": {"folder", "dir"},
+	"3.4": {"req", "request"},
+	"3.5": {"run", "exec", "import", "agent-guide", "guide", "skill"},
+	"4":   {"script", "scripting", "ha", "pm", "runoutput", "compact", "redact"},
+	"5":   {"recipe", "examples"},
+	"6":   {"flow", "flows"},
+	"6.1": {"flow-commands"},
+	"6.2": {"steps", "nodes-json"},
+	"6.3": {"flow-output"},
+	"7":   {"mock", "mocks"},
+	"7.1": {"mock-commands"},
+	"7.2": {"mock-schemas"},
+	"7.3": {"mock-recipe"},
+}
+
+func isAllASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func trimSectionBlock(lines []string) string {
+	end := len(lines)
+	for end > 0 {
+		trimmed := strings.TrimSpace(lines[end-1])
+		if trimmed == "" || trimmed == "---" {
+			end--
+			continue
+		}
+		break
+	}
+	return strings.Join(lines[:end], "\n")
+}
+
+func parseSkillSections(md string) []agentGuideSection {
+	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
+	type headingLine struct {
+		level int
+		line  int
+	}
+	var allHeadings []headingLine
+	var numbered []agentGuideSection
+
+	inFence := false
+	for i, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if strings.HasPrefix(raw, "# ") && !strings.HasPrefix(raw, "## ") {
+			allHeadings = append(allHeadings, headingLine{level: 1, line: i})
+			continue
+		}
+		if strings.HasPrefix(raw, "## ") && !strings.HasPrefix(raw, "### ") {
+			allHeadings = append(allHeadings, headingLine{level: 2, line: i})
+			rest := strings.TrimSpace(raw[3:])
+			if dot := strings.IndexByte(rest, '.'); dot > 0 && isAllASCIIDigits(rest[:dot]) {
+				id := rest[:dot]
+				numbered = append(numbered, agentGuideSection{
+					ID:      id,
+					Level:   2,
+					Title:   strings.TrimSpace(rest[dot+1:]),
+					Aliases: sectionAliasesByID[id],
+				})
+				numbered[len(numbered)-1].Content = fmt.Sprintf("%d", i)
+			}
+			continue
+		}
+		if strings.HasPrefix(raw, "### ") && !strings.HasPrefix(raw, "#### ") {
+			allHeadings = append(allHeadings, headingLine{level: 3, line: i})
+			rest := strings.TrimSpace(raw[4:])
+			parts := strings.SplitN(rest, ".", 3)
+			if len(parts) == 3 && isAllASCIIDigits(parts[0]) && isAllASCIIDigits(parts[1]) {
+				id := parts[0] + "." + parts[1]
+				numbered = append(numbered, agentGuideSection{
+					ID:      id,
+					Level:   3,
+					Title:   strings.TrimSpace(parts[2]),
+					Aliases: sectionAliasesByID[id],
+				})
+				numbered[len(numbered)-1].Content = fmt.Sprintf("%d", i)
+			}
+		}
+	}
+
+	for idx := range numbered {
+		startLine, _ := strconv.Atoi(numbered[idx].Content)
+		endLine := len(lines)
+		for _, hl := range allHeadings {
+			if hl.line > startLine && hl.level <= numbered[idx].Level {
+				endLine = hl.line
+				break
+			}
+		}
+		numbered[idx].Content = trimSectionBlock(lines[startLine:endLine])
+	}
+	return numbered
+}
+
+func resolveSkillSectionSelectors(rawSelectors []string, sections []agentGuideSection) ([]string, error) {
+	byID := make(map[string]agentGuideSection, len(sections))
+	aliasToIDs := map[string][]string{
+		"core": {"1", "2", "3"},
+	}
+	for _, sec := range sections {
+		byID[sec.ID] = sec
+		aliasToIDs[strings.ToLower(sec.ID)] = []string{sec.ID}
+		for _, alias := range sec.Aliases {
+			aliasToIDs[strings.ToLower(alias)] = []string{sec.ID}
+		}
+	}
+
+	var expanded []string
+	seen := map[string]bool{}
+	for _, raw := range rawSelectors {
+		parts := strings.Split(raw, ",")
+		for _, p := range parts {
+			tok := strings.ToLower(strings.TrimSpace(p))
+			if tok == "" {
+				return nil, fmt.Errorf("%s: empty section selector in --section", model.ErrValidation)
+			}
+			ids, ok := aliasToIDs[tok]
+			if !ok {
+				return nil, fmt.Errorf("%s: unknown agent-guide section %q (run `hecto agent-guide --toc` to list valid sections)", model.ErrValidation, strings.TrimSpace(p))
+			}
+			for _, id := range ids {
+				if _, exists := byID[id]; !exists {
+					return nil, fmt.Errorf("%s: section %q not found in embedded SKILL.md", model.ErrValidation, id)
+				}
+				if !seen[id] {
+					seen[id] = true
+					expanded = append(expanded, id)
+				}
+			}
+		}
+	}
+
+	if len(expanded) == 0 {
+		return nil, fmt.Errorf("%s: --section requires at least one section id or alias", model.ErrValidation)
+	}
+
+	// If a parent section N is selected, skip child subsections N.M to avoid duplicate output.
+	parentSelected := map[string]bool{}
+	for _, id := range expanded {
+		if !strings.Contains(id, ".") {
+			parentSelected[id] = true
+		}
+	}
+	deduped := make([]string, 0, len(expanded))
+	for _, id := range expanded {
+		if dot := strings.IndexByte(id, '.'); dot > 0 {
+			if parentSelected[id[:dot]] {
+				continue
+			}
+		}
+		deduped = append(deduped, id)
+	}
+	return deduped, nil
+}
+
+func handleAgentGuide(args []string, stdout, stderr io.Writer, jsonOutput bool) int {
+	if len(args) == 0 {
+		if !jsonOutput {
+			_, _ = fmt.Fprint(stdout, skillMD)
+			return 0
+		}
+		return emitResult(stdout, stderr, true, model.NewSuccess(map[string]interface{}{
+			"content": skillMD,
+		}))
+	}
+
+	fset := flag.NewFlagSet("agent-guide", flag.ContinueOnError)
+	var tocFlag, listFlag bool
+	var sectionFlags multiStringFlag
+	fset.BoolVar(&tocFlag, "toc", false, "Print concise Table of Contents with section IDs and aliases")
+	fset.BoolVar(&listFlag, "list", false, "Alias for --toc")
+	fset.Var(&sectionFlags, "section", "Extract one or more section IDs/aliases (comma-separated or repeated)")
+
+	pos, err := parseSubcommandFlags(fset, args)
+	if err != nil {
+		return emitResult(stdout, stderr, jsonOutput, model.NewError(model.ErrValidation, err.Error()))
+	}
+	if err := rejectUnexpectedPositionals(pos, 0); err != nil {
+		return emitResult(stdout, stderr, jsonOutput, resultFromError(err))
+	}
+
+	visited := visitedFlagsMap(fset)
+	wantTOC := tocFlag || listFlag
+	wantSection := visited["section"]
+	if wantTOC && wantSection {
+		return emitResult(stdout, stderr, jsonOutput, model.NewError(model.ErrValidation, "cannot specify both --toc/--list and --section"))
+	}
+
+	if !wantTOC && !wantSection {
+		if !jsonOutput {
+			_, _ = fmt.Fprint(stdout, skillMD)
+			return 0
+		}
+		return emitResult(stdout, stderr, true, model.NewSuccess(map[string]interface{}{
+			"content": skillMD,
+		}))
+	}
+
+	sections := parseSkillSections(skillMD)
+	if wantTOC {
+		if jsonOutput {
+			toc := make([]agentGuideTOCEntry, 0, len(sections))
+			for _, sec := range sections {
+				toc = append(toc, agentGuideTOCEntry{
+					ID:      sec.ID,
+					Level:   sec.Level,
+					Title:   sec.Title,
+					Aliases: sec.Aliases,
+				})
+			}
+			return emitResult(stdout, stderr, true, model.NewSuccess(map[string]interface{}{
+				"sections":          toc,
+				"composite_aliases": map[string][]string{"core": {"1", "2", "3"}},
+			}))
+		}
+		var b strings.Builder
+		b.WriteString("# hecto agent-guide — Table of Contents\n\n")
+		for _, sec := range sections {
+			indent := ""
+			if sec.Level == 3 {
+				indent = "  "
+			}
+			aliasStr := ""
+			if len(sec.Aliases) > 0 {
+				aliasStr = fmt.Sprintf(" (aliases: %s)", strings.Join(sec.Aliases, ", "))
+			}
+			b.WriteString(fmt.Sprintf("%s- [%s] %s%s\n", indent, sec.ID, sec.Title, aliasStr))
+		}
+		b.WriteString("\nComposite alias: core -> 1, 2, 3\n")
+		b.WriteString("Usage: hecto agent-guide --section <id|alias[,...]>\n")
+		_, _ = fmt.Fprint(stdout, b.String())
+		return 0
+	}
+
+	selectedIDs, err := resolveSkillSectionSelectors(sectionFlags, sections)
+	if err != nil {
+		return emitResult(stdout, stderr, jsonOutput, resultFromError(err))
+	}
+
+	byID := make(map[string]agentGuideSection, len(sections))
+	for _, sec := range sections {
+		byID[sec.ID] = sec
+	}
+	blocks := make([]string, 0, len(selectedIDs))
+	for _, id := range selectedIDs {
+		blocks = append(blocks, byID[id].Content)
+	}
+	joined := strings.Join(blocks, "\n\n---\n\n")
+	if jsonOutput {
+		return emitResult(stdout, stderr, true, model.NewSuccess(map[string]interface{}{
+			"sections": selectedIDs,
+			"content":  joined,
+		}))
+	}
+	_, _ = fmt.Fprintln(stdout, joined)
+	return 0
 }
 
 func (c *cliContext) resolveTargetCollection(overrideSelector string) (model.Collection, string, error) {
@@ -2086,20 +2397,553 @@ func (c *cliContext) handleReq(args []string) model.Result {
 }
 
 // ============================================================================
-// 5. RUN COMMAND (`hecto run`)
+// 5. RUN COMMAND (`hecto run`) & AGENT OUTPUT HELPERS
 // ============================================================================
+
+const (
+	defaultCompactMaxBody     = 500
+	redactedSecretPlaceholder = "***REDACTED***"
+)
+
+type compactRunOutput struct {
+	StatusCode       int                       `json:"status_code"`
+	StatusText       string                    `json:"status_text,omitempty"`
+	TimeMs           int64                     `json:"time_ms"`
+	SizeBytes        int64                     `json:"size_bytes"`
+	Body             string                    `json:"body"`
+	BodyTruncated    bool                      `json:"body_truncated,omitempty"`
+	ScriptTests      []engine.ScriptTestResult `json:"script_tests,omitempty"`
+	ScriptLogs       []string                  `json:"script_logs,omitempty"`
+	EnvUpdates       map[string]string         `json:"env_updates,omitempty"`
+	ScopedEnvUpdates *engine.ScopedEnvUpdates  `json:"scoped_env_updates,omitempty"`
+	ScriptError      string                    `json:"script_error,omitempty"`
+	NetworkError     string                    `json:"network_error,omitempty"`
+}
+
+type compactStepRunOutput struct {
+	StatusCode       int                       `json:"status_code"`
+	StatusText       string                    `json:"status_text,omitempty"`
+	TimeMs           int64                     `json:"time_ms"`
+	SizeBytes        int64                     `json:"size_bytes"`
+	Body             string                    `json:"body,omitempty"`
+	BodyTruncated    bool                      `json:"body_truncated,omitempty"`
+	ScriptTests      []engine.ScriptTestResult `json:"script_tests,omitempty"`
+	ScriptLogs       []string                  `json:"script_logs,omitempty"`
+	EnvUpdates       map[string]string         `json:"env_updates,omitempty"`
+	ScopedEnvUpdates *engine.ScopedEnvUpdates  `json:"scoped_env_updates,omitempty"`
+	ScriptError      string                    `json:"script_error,omitempty"`
+	NetworkError     string                    `json:"network_error,omitempty"`
+}
+
+type compactFlowStepRunOutput struct {
+	StepID          string                `json:"step_id"`
+	NodeID          string                `json:"node_id"`
+	RequestID       string                `json:"request_id"`
+	RequestName     string                `json:"request_name,omitempty"`
+	Method          string                `json:"method,omitempty"`
+	Status          string                `json:"status"`
+	FailureCategory string                `json:"failure_category,omitempty"`
+	FailureReason   string                `json:"failure_reason,omitempty"`
+	RunOutput       *compactStepRunOutput `json:"run_output,omitempty"`
+}
+
+type compactFlowNodeRunOutput struct {
+	NodeID          string                     `json:"node_id"`
+	Status          string                     `json:"status"`
+	MatchedBranchID string                     `json:"matched_branch_id,omitempty"`
+	StepResults     []compactFlowStepRunOutput `json:"step_results"`
+}
+
+type compactFlowRunOutput struct {
+	FlowID        string                     `json:"flow_id"`
+	FlowName      string                     `json:"flow_name"`
+	Status        string                     `json:"status"`
+	TotalTimeMs   int64                      `json:"total_time_ms"`
+	StepsExecuted int                        `json:"steps_executed"`
+	StepsPassed   int                        `json:"steps_passed"`
+	StepsFailed   int                        `json:"steps_failed"`
+	StepsSkipped  int                        `json:"steps_skipped"`
+	HaltedError   string                     `json:"halted_error,omitempty"`
+	NodeResults   []compactFlowNodeRunOutput `json:"node_results"`
+}
+
+func isSensitiveHeaderKey(k string, extraKeys map[string]bool) bool {
+	lower := strings.ToLower(strings.TrimSpace(k))
+	if lower == "" {
+		return false
+	}
+	if extraKeys[lower] {
+		return true
+	}
+	switch lower {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "api-key", "x-auth-token":
+		return true
+	}
+	for _, needle := range []string{
+		"token", "secret", "password", "apikey", "api-key", "api_key", "auth", "jwt", "credential", "session", "private-key", "private_key", "access-key", "access_key",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSensitiveVarKey(k string) bool {
+	lower := strings.ToLower(strings.TrimSpace(k))
+	for _, needle := range []string{
+		"token", "secret", "password", "passwd", "pwd", "apikey", "api-key", "api_key", "auth", "jwt", "credential", "private_key", "private-key", "access_key", "access-key", "cookie", "session",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSensitiveKeyWithExtra(k string, extraKeys map[string]bool) bool {
+	lower := strings.ToLower(strings.TrimSpace(k))
+	if lower != "" && extraKeys[lower] {
+		return true
+	}
+	return isSensitiveVarKey(lower)
+}
+
+func collectAPIKeyFromAuthConfig(cfg *model.AuthConfig, out map[string]bool) {
+	if cfg != nil && strings.EqualFold(cfg.Type, "apiKey") && cfg.APIKey != nil {
+		if key := strings.ToLower(strings.TrimSpace(cfg.APIKey.Key)); key != "" {
+			out[key] = true
+		}
+	}
+}
+
+func collectAPIKeyFromAuthMap(m map[string]*model.AuthConfig, out map[string]bool) {
+	for _, cfg := range m {
+		collectAPIKeyFromAuthConfig(cfg, out)
+	}
+}
+
+func collectRunAPIKeyNames(coll model.Collection, pathFolders []model.TreeNode, req model.Request) map[string]bool {
+	out := map[string]bool{}
+	collectAPIKeyFromAuthConfig(coll.Auth, out)
+	collectAPIKeyFromAuthMap(coll.AuthEnvs, out)
+	for _, pf := range pathFolders {
+		collectAPIKeyFromAuthConfig(pf.Auth, out)
+		collectAPIKeyFromAuthMap(pf.AuthEnvs, out)
+	}
+	collectAPIKeyFromAuthConfig(req.Auth, out)
+	collectAPIKeyFromAuthMap(req.AuthEnvs, out)
+	return out
+}
+
+func collectTreeFolderAPIKeys(nodes []model.TreeNode, out map[string]bool) {
+	for _, n := range nodes {
+		if n.Type == "folder" {
+			collectAPIKeyFromAuthConfig(n.Auth, out)
+			collectAPIKeyFromAuthMap(n.AuthEnvs, out)
+		}
+		if len(n.Children) > 0 {
+			collectTreeFolderAPIKeys(n.Children, out)
+		}
+	}
+}
+
+func collectFlowAPIKeyNames(collSvc *service.CollectionService, reqSvc *service.RequestService, collRoot string, coll model.Collection, flow model.Flow) map[string]bool {
+	out := map[string]bool{}
+	collectAPIKeyFromAuthConfig(coll.Auth, out)
+	collectAPIKeyFromAuthMap(coll.AuthEnvs, out)
+	if collSvc != nil && collRoot != "" {
+		if treeRes := collSvc.GetTree(collRoot); treeRes.Success {
+			if nodes, ok := treeRes.Data.([]model.TreeNode); ok {
+				collectTreeFolderAPIKeys(nodes, out)
+			}
+		}
+	}
+	if reqSvc != nil {
+		seen := map[string]bool{}
+		var reqIDs []string
+		collectReferencedRequestIDs(flow.Nodes, seen, &reqIDs)
+		for _, id := range reqIDs {
+			if res := reqSvc.Get(id); res.Success {
+				if req, ok := res.Data.(model.Request); ok {
+					collectAPIKeyFromAuthConfig(req.Auth, out)
+					collectAPIKeyFromAuthMap(req.AuthEnvs, out)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func redactHeaderKVPairs(pairs []model.KVPair, extraKeys map[string]bool) {
+	for i := range pairs {
+		if isSensitiveHeaderKey(pairs[i].Key, extraKeys) {
+			pairs[i].Value = redactedSecretPlaceholder
+		}
+	}
+}
+
+func redactVarKVPairs(pairs []model.KVPair, extraKeys map[string]bool) {
+	for i := range pairs {
+		if isSensitiveKeyWithExtra(pairs[i].Key, extraKeys) {
+			pairs[i].Value = redactedSecretPlaceholder
+		}
+	}
+}
+
+func redactSensitiveURLEncoded(rawQuery string, extraKeys map[string]bool) string {
+	if rawQuery == "" {
+		return rawQuery
+	}
+	parts := strings.Split(rawQuery, "&")
+	changed := false
+	for i, part := range parts {
+		eq := strings.IndexByte(part, '=')
+		if eq < 0 {
+			continue
+		}
+		rawKey := part[:eq]
+		decodedKey, err := url.QueryUnescape(rawKey)
+		if err != nil {
+			decodedKey = rawKey
+		}
+		if isSensitiveKeyWithExtra(decodedKey, extraKeys) {
+			parts[i] = rawKey + "=" + redactedSecretPlaceholder
+			changed = true
+		}
+	}
+	if !changed {
+		return rawQuery
+	}
+	return strings.Join(parts, "&")
+}
+
+func redactSensitiveURL(rawURL string, extraKeys map[string]bool) string {
+	if rawURL == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	changed := false
+	if u.User != nil {
+		if _, hasPass := u.User.Password(); hasPass {
+			u.User = url.UserPassword("REDACTED", "REDACTED")
+		} else {
+			u.User = url.User("REDACTED")
+		}
+		changed = true
+	}
+	if u.RawQuery != "" {
+		redactedQ := redactSensitiveURLEncoded(u.RawQuery, extraKeys)
+		if redactedQ != u.RawQuery {
+			u.RawQuery = redactedQ
+			changed = true
+		}
+	}
+	if !changed {
+		return rawURL
+	}
+	return u.String()
+}
+
+func redactSensitiveErrorText(msg string, extraKeys map[string]bool) string {
+	if msg == "" {
+		return msg
+	}
+	var out strings.Builder
+	rest := msg
+	for {
+		idxHTTP := strings.Index(rest, "http://")
+		idxHTTPS := strings.Index(rest, "https://")
+		idx := -1
+		if idxHTTP >= 0 && idxHTTPS >= 0 {
+			if idxHTTP < idxHTTPS {
+				idx = idxHTTP
+			} else {
+				idx = idxHTTPS
+			}
+		} else if idxHTTP >= 0 {
+			idx = idxHTTP
+		} else if idxHTTPS >= 0 {
+			idx = idxHTTPS
+		}
+		if idx < 0 {
+			out.WriteString(rest)
+			break
+		}
+		out.WriteString(rest[:idx])
+		urlPart := rest[idx:]
+		end := len(urlPart)
+		for i := 0; i < len(urlPart); i++ {
+			c := urlPart[i]
+			if c <= ' ' || c == '"' || c == '\'' || c == '>' || c == ')' || c == ']' {
+				end = i
+				break
+			}
+		}
+		out.WriteString(redactSensitiveURL(urlPart[:end], extraKeys))
+		rest = urlPart[end:]
+	}
+	return out.String()
+}
+
+func isURLEncodedRequest(req *model.ExecuteRequest) bool {
+	if req == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(req.BodyType), "urlencoded") {
+		return true
+	}
+	for _, h := range req.Headers {
+		if h.Enabled && strings.EqualFold(strings.TrimSpace(h.Key), "content-type") &&
+			strings.Contains(strings.ToLower(h.Value), "application/x-www-form-urlencoded") {
+			return true
+		}
+	}
+	return false
+}
+
+func redactExecuteRequest(req *model.ExecuteRequest, extraKeys map[string]bool) {
+	if req == nil {
+		return
+	}
+	req.URL = redactSensitiveURL(req.URL, extraKeys)
+	redactHeaderKVPairs(req.Headers, extraKeys)
+	redactVarKVPairs(req.FormData, extraKeys)
+	if isURLEncodedRequest(req) && req.Body != "" {
+		req.Body = redactSensitiveURLEncoded(req.Body, extraKeys)
+	}
+}
+
+func redactStringMap(m map[string]string) {
+	for k := range m {
+		if isSensitiveVarKey(k) {
+			m[k] = redactedSecretPlaceholder
+		}
+	}
+}
+
+func redactAuthConfig(cfg *model.AuthConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.Bearer != nil {
+		cfg.Bearer.Token = redactedSecretPlaceholder
+	}
+	if cfg.Basic != nil {
+		cfg.Basic.Password = redactedSecretPlaceholder
+	}
+	if cfg.APIKey != nil {
+		cfg.APIKey.Value = redactedSecretPlaceholder
+	}
+}
+
+func redactRunOutput(ro *engine.RunOutput, extraKeys map[string]bool) {
+	if ro == nil {
+		return
+	}
+	mergedKeys := make(map[string]bool, len(extraKeys))
+	for k, v := range extraKeys {
+		mergedKeys[k] = v
+	}
+	if ro.ScopedAuthUpdates != nil {
+		collectAPIKeyFromAuthConfig(ro.ScopedAuthUpdates.CollectionGlobal, mergedKeys)
+		for _, item := range ro.ScopedAuthUpdates.CollectionEnvs {
+			collectAPIKeyFromAuthConfig(item.Auth, mergedKeys)
+		}
+		for _, authCfg := range ro.ScopedAuthUpdates.FolderGlobals {
+			collectAPIKeyFromAuthConfig(authCfg, mergedKeys)
+		}
+		for _, item := range ro.ScopedAuthUpdates.FolderEnvs {
+			collectAPIKeyFromAuthConfig(item.Auth, mergedKeys)
+		}
+	}
+
+	redactExecuteRequest(&ro.Request, mergedKeys)
+	redactExecuteRequest(&ro.ResolvedRequest, mergedKeys)
+	for k, vals := range ro.Headers {
+		if isSensitiveHeaderKey(k, mergedKeys) {
+			masked := make([]string, len(vals))
+			for i := range masked {
+				masked[i] = redactedSecretPlaceholder
+			}
+			ro.Headers[k] = masked
+		}
+	}
+	redactStringMap(ro.EnvUpdates)
+	if ro.ScopedEnvUpdates != nil {
+		redactStringMap(ro.ScopedEnvUpdates.Collection)
+		for _, envMap := range ro.ScopedEnvUpdates.GlobalEnvs {
+			redactStringMap(envMap)
+		}
+		for _, folderMap := range ro.ScopedEnvUpdates.FolderGlobals {
+			redactStringMap(folderMap)
+		}
+		for i := range ro.ScopedEnvUpdates.FolderEnvs {
+			if isSensitiveVarKey(ro.ScopedEnvUpdates.FolderEnvs[i].Key) {
+				ro.ScopedEnvUpdates.FolderEnvs[i].Value = redactedSecretPlaceholder
+			}
+		}
+	}
+	if ro.ScopedAuthUpdates != nil {
+		redactAuthConfig(ro.ScopedAuthUpdates.CollectionGlobal)
+		for i := range ro.ScopedAuthUpdates.CollectionEnvs {
+			redactAuthConfig(ro.ScopedAuthUpdates.CollectionEnvs[i].Auth)
+		}
+		for _, authCfg := range ro.ScopedAuthUpdates.FolderGlobals {
+			redactAuthConfig(authCfg)
+		}
+		for i := range ro.ScopedAuthUpdates.FolderEnvs {
+			redactAuthConfig(ro.ScopedAuthUpdates.FolderEnvs[i].Auth)
+		}
+	}
+	ro.NetworkError = redactSensitiveErrorText(ro.NetworkError, mergedKeys)
+	ro.ScriptError = redactSensitiveErrorText(ro.ScriptError, mergedKeys)
+}
+
+func truncateUTF8Body(body string, maxBytes int) (string, bool) {
+	if maxBytes < 0 || len(body) <= maxBytes {
+		return body, false
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s... [truncated, total %d bytes]", body[:cut], len(body)), true
+}
+
+func truncateRunOutputBody(ro *engine.RunOutput, maxBytes int) {
+	if ro == nil || maxBytes < 0 {
+		return
+	}
+	truncated, didTruncate := truncateUTF8Body(ro.Body, maxBytes)
+	ro.Body = truncated
+	ro.BodyTruncated = ro.BodyTruncated || didTruncate
+}
+
+func toCompactRunOutput(ro *engine.RunOutput) *compactRunOutput {
+	if ro == nil {
+		return nil
+	}
+	return &compactRunOutput{
+		StatusCode:       ro.StatusCode,
+		StatusText:       ro.StatusText,
+		TimeMs:           ro.TimeMs,
+		SizeBytes:        ro.SizeBytes,
+		Body:             ro.Body,
+		BodyTruncated:    ro.BodyTruncated,
+		ScriptTests:      ro.ScriptTests,
+		ScriptLogs:       ro.ScriptLogs,
+		EnvUpdates:       ro.EnvUpdates,
+		ScopedEnvUpdates: ro.ScopedEnvUpdates,
+		ScriptError:      ro.ScriptError,
+		NetworkError:     ro.NetworkError,
+	}
+}
+
+func toCompactStepRunOutput(ro *engine.RunOutput, includeBody bool, maxBody int) *compactStepRunOutput {
+	if ro == nil {
+		return nil
+	}
+	out := &compactStepRunOutput{
+		StatusCode:       ro.StatusCode,
+		StatusText:       ro.StatusText,
+		TimeMs:           ro.TimeMs,
+		SizeBytes:        ro.SizeBytes,
+		ScriptTests:      ro.ScriptTests,
+		ScriptLogs:       ro.ScriptLogs,
+		EnvUpdates:       ro.EnvUpdates,
+		ScopedEnvUpdates: ro.ScopedEnvUpdates,
+		ScriptError:      ro.ScriptError,
+		NetworkError:     ro.NetworkError,
+	}
+	if includeBody {
+		body, didTruncate := truncateUTF8Body(ro.Body, maxBody)
+		out.Body = body
+		out.BodyTruncated = ro.BodyTruncated || didTruncate
+	}
+	return out
+}
+
+func walkUniqueFlowRunOutputs(flowOut *engine.FlowRunOutput, fn func(*engine.RunOutput)) {
+	if flowOut == nil {
+		return
+	}
+	seen := map[*engine.RunOutput]bool{}
+	visit := func(ro *engine.RunOutput) {
+		if ro != nil && !seen[ro] {
+			seen[ro] = true
+			fn(ro)
+		}
+	}
+	for i := range flowOut.NodeResults {
+		for j := range flowOut.NodeResults[i].StepResults {
+			visit(flowOut.NodeResults[i].StepResults[j].RunOutput)
+		}
+	}
+	for i := range flowOut.StepResults {
+		visit(flowOut.StepResults[i].RunOutput)
+	}
+}
+
+func toCompactFlowRunOutput(flowOut *engine.FlowRunOutput, showPassedBody bool, maxBody int) *compactFlowRunOutput {
+	if flowOut == nil {
+		return nil
+	}
+	nodes := make([]compactFlowNodeRunOutput, 0, len(flowOut.NodeResults))
+	for _, nr := range flowOut.NodeResults {
+		steps := make([]compactFlowStepRunOutput, 0, len(nr.StepResults))
+		for _, sr := range nr.StepResults {
+			includeBody := sr.Status != "passed" || showPassedBody
+			steps = append(steps, compactFlowStepRunOutput{
+				StepID:          sr.StepID,
+				NodeID:          sr.NodeID,
+				RequestID:       sr.RequestID,
+				RequestName:     sr.RequestName,
+				Method:          sr.Method,
+				Status:          sr.Status,
+				FailureCategory: sr.FailureCategory,
+				FailureReason:   sr.FailureReason,
+				RunOutput:       toCompactStepRunOutput(sr.RunOutput, includeBody, maxBody),
+			})
+		}
+		nodes = append(nodes, compactFlowNodeRunOutput{
+			NodeID:          nr.NodeID,
+			Status:          nr.Status,
+			MatchedBranchID: nr.MatchedBranchID,
+			StepResults:     steps,
+		})
+	}
+	return &compactFlowRunOutput{
+		FlowID:        flowOut.FlowID,
+		FlowName:      flowOut.FlowName,
+		Status:        flowOut.Status,
+		TotalTimeMs:   flowOut.TotalTimeMs,
+		StepsExecuted: flowOut.StepsExecuted,
+		StepsPassed:   flowOut.StepsPassed,
+		StepsFailed:   flowOut.StepsFailed,
+		StepsSkipped:  flowOut.StepsSkipped,
+		HaltedError:   flowOut.HaltedError,
+		NodeResults:   nodes,
+	}
+}
 
 func (c *cliContext) handleRun(args []string) model.Result {
 	fset := flag.NewFlagSet("run", flag.ContinueOnError)
 	var envSel string
 	var cliVars multiStringFlag
-	var timeoutSec int
-	var noSaveEnv bool
+	var timeoutSec, maxBody int
+	var noSaveEnv, compact, redact bool
 
 	fset.StringVar(&envSel, "env", "", "Environment override <id|name|none>")
 	fset.Var(&cliVars, "var", "Runtime variable override K=V")
 	fset.IntVar(&timeoutSec, "timeout", 0, "HTTP timeout in seconds")
 	fset.BoolVar(&noSaveEnv, "no-save-env", false, "Do not persist script variable/auth mutations to disk")
+	fset.BoolVar(&compact, "compact", false, "Emit compact, redacted output for AI agents")
+	fset.BoolVar(&redact, "redact", false, "Mask sensitive headers, variables, and auth secrets on stdout")
+	fset.IntVar(&maxBody, "max-body", -1, "Truncate response body on stdout at max bytes")
 
 	pos, err := parseSubcommandFlags(fset, args)
 	if err != nil {
@@ -2108,10 +2952,16 @@ func (c *cliContext) handleRun(args []string) model.Result {
 	if len(pos) == 0 {
 		return model.NewError(model.ErrValidation, "request selector <id|path> is required for `hecto run`")
 	}
+	if err := rejectUnexpectedPositionals(pos, 1); err != nil {
+		return resultFromError(err)
+	}
 
 	visited := visitedFlagsMap(fset)
 	if visited["timeout"] && timeoutSec <= 0 {
 		return model.NewError(model.ErrValidation, "--timeout must be a positive integer (seconds)")
+	}
+	if visited["max-body"] && maxBody < 0 {
+		return model.NewError(model.ErrValidation, "--max-body must be a non-negative integer (bytes)")
 	}
 
 	coll, collRoot, err := c.resolveTargetCollection("")
@@ -2167,7 +3017,29 @@ func (c *cliContext) handleRun(args []string) model.Result {
 		NoSaveEnv:       noSaveEnv,
 	})
 	if err != nil {
-		return resultFromError(err)
+		errRes := resultFromError(err)
+		if (redact || compact) && errRes.Error != nil {
+			extraAPIKeys := collectRunAPIKeyNames(coll, pathFolders, req)
+			errRes.Error.Message = redactSensitiveErrorText(errRes.Error.Message, extraAPIKeys)
+		}
+		return errRes
+	}
+
+	effectiveMaxBody := -1
+	if visited["max-body"] {
+		effectiveMaxBody = maxBody
+	} else if compact {
+		effectiveMaxBody = defaultCompactMaxBody
+	}
+	if redact || compact {
+		extraAPIKeys := collectRunAPIKeyNames(coll, pathFolders, req)
+		redactRunOutput(runOut, extraAPIKeys)
+	}
+	if effectiveMaxBody >= 0 {
+		truncateRunOutputBody(runOut, effectiveMaxBody)
+	}
+	if compact {
+		return model.NewSuccess(toCompactRunOutput(runOut))
 	}
 	return model.NewSuccess(runOut)
 }
@@ -2991,13 +3863,16 @@ func (c *cliContext) handleFlow(args []string) model.Result {
 		fset := flag.NewFlagSet("flow run", flag.ContinueOnError)
 		var envSel string
 		var cliVars multiStringFlag
-		var timeoutMs int
-		var noSaveEnv bool
+		var timeoutMs, maxBody int
+		var noSaveEnv, compact, redact bool
 
 		fset.StringVar(&envSel, "env", "", "Environment override <id|name|none>")
 		fset.Var(&cliVars, "var", "Runtime variable override K=V")
 		fset.IntVar(&timeoutMs, "timeout-ms", 0, "Per-step HTTP timeout override in milliseconds")
 		fset.BoolVar(&noSaveEnv, "no-save-env", false, "Do not persist script variable/auth mutations to disk")
+		fset.BoolVar(&compact, "compact", false, "Emit compact, redacted output for AI agents")
+		fset.BoolVar(&redact, "redact", false, "Mask sensitive headers, variables, and auth secrets on stdout")
+		fset.IntVar(&maxBody, "max-body", -1, "Truncate step response body on stdout at max bytes")
 
 		pos, err := parseSubcommandFlags(fset, rest)
 		if err != nil {
@@ -3006,10 +3881,16 @@ func (c *cliContext) handleFlow(args []string) model.Result {
 		if len(pos) == 0 {
 			return model.NewError(model.ErrValidation, "flow selector <id|path> is required for `hecto flow run`")
 		}
+		if err := rejectUnexpectedPositionals(pos, 1); err != nil {
+			return resultFromError(err)
+		}
 
 		visited := visitedFlagsMap(fset)
 		if visited["timeout-ms"] && timeoutMs <= 0 {
 			return model.NewError(model.ErrValidation, "--timeout-ms must be a positive integer (milliseconds)")
+		}
+		if visited["max-body"] && maxBody < 0 {
+			return model.NewError(model.ErrValidation, "--max-body must be a non-negative integer (bytes)")
 		}
 
 		flow, _, err := c.flowSvc.ResolveFlowSelector(collRoot, pos[0])
@@ -3059,7 +3940,43 @@ func (c *cliContext) handleFlow(args []string) model.Result {
 			NoSaveEnv:       noSaveEnv,
 		})
 		if err != nil {
-			return resultFromError(err)
+			errRes := resultFromError(err)
+			if (redact || compact) && errRes.Error != nil {
+				extraAPIKeys := collectFlowAPIKeyNames(c.collSvc, c.reqSvc, collRoot, coll, flow)
+				errRes.Error.Message = redactSensitiveErrorText(errRes.Error.Message, extraAPIKeys)
+			}
+			return errRes
+		}
+
+		effectiveMaxBody := -1
+		if visited["max-body"] {
+			effectiveMaxBody = maxBody
+		} else if compact {
+			effectiveMaxBody = defaultCompactMaxBody
+		}
+		if redact || compact {
+			extraAPIKeys := collectFlowAPIKeyNames(c.collSvc, c.reqSvc, collRoot, coll, flow)
+			walkUniqueFlowRunOutputs(flowOut, func(ro *engine.RunOutput) {
+				redactRunOutput(ro, extraAPIKeys)
+			})
+			flowOut.HaltedError = redactSensitiveErrorText(flowOut.HaltedError, extraAPIKeys)
+			for i := range flowOut.NodeResults {
+				for j := range flowOut.NodeResults[i].StepResults {
+					flowOut.NodeResults[i].StepResults[j].FailureReason = redactSensitiveErrorText(flowOut.NodeResults[i].StepResults[j].FailureReason, extraAPIKeys)
+				}
+			}
+			for i := range flowOut.StepResults {
+				flowOut.StepResults[i].FailureReason = redactSensitiveErrorText(flowOut.StepResults[i].FailureReason, extraAPIKeys)
+			}
+		}
+		if compact {
+			showPassedBody := visited["max-body"] && maxBody > 0
+			return model.NewSuccess(toCompactFlowRunOutput(flowOut, showPassedBody, effectiveMaxBody))
+		}
+		if effectiveMaxBody >= 0 {
+			walkUniqueFlowRunOutputs(flowOut, func(ro *engine.RunOutput) {
+				truncateRunOutputBody(ro, effectiveMaxBody)
+			})
 		}
 		return model.NewSuccess(flowOut)
 
@@ -4283,4 +5200,3 @@ func (c *cliContext) handleMockRouteUpdate(collRoot string, rest []string) model
 	savedRoutes := saveRes.Data.(model.MockServerStatus).Routes
 	return model.NewSuccess(savedRoutes[idx])
 }
-

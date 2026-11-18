@@ -36,6 +36,9 @@ description: Use the standalone `hecto` CLI to inspect, create, update, move, de
    - You can address any **Folder** or **Request** by its `UUID` or by its slash-separated hierarchical name path (e.g., `"Users/Auth"` or `"Users/Auth/Login"`).
 4. **Isolated Testing (`--data-dir` / `HECTO_CONFIG_DIR`)**:
    - When running automated tests or sandboxed experiments, always pass `--data-dir /tmp/my-isolated-dir` or set `HECTO_CONFIG_DIR=/tmp/my-isolated-dir` so you never touch the user's real collections.
+5. **JIT Manual & Safe Compact Output (Recommended for AI Agents)**:
+   - Use `hecto agent-guide --toc` to list sections/aliases and `hecto agent-guide --section <id|alias[,...]>` (e.g., `core`, `req`, `flow`, `mock`, `3.4,6`) to read only the needed reference instead of loading the entire manual.
+   - Pass `--compact` on `hecto run` / `hecto flow run` to drop duplicate fields, truncate large bodies (`500` bytes by default, override via `--max-body <bytes>`), and automatically redact sensitive headers/variables/auth values on `stdout` (`--redact`) without altering disk persistence.
 
 ---
 
@@ -128,11 +131,14 @@ hecto req move <id|path> --to <target-id|path|root> [-c <coll>] [--json]
 ```
 > **Read-Merge-Write (`update`)**: Only flags explicitly passed on the command line are modified; unflagged fields are preserved intact. Passing `--body ""`, `--pre-script ""`, or `--post-script ""` clears that field.
 
-### 3.5. `run` & `import`
+### 3.5. `run`, `import` & `agent-guide`
 ```bash
-hecto run <id|path> [-c <coll>] [--env <id|name|none>] [--var K=V]... [--timeout <sec>] [--no-save-env] [--json]
+hecto run <id|path> [-c <coll>] [--env <id|name|none>] [--var K=V]... [--timeout <sec>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]
 hecto import <file-or-curl> [-c <coll>] [--folder <id|path>] [--name <name>] [--json]
+hecto agent-guide [--toc | --list | --section <id|alias[,...]>] [--json]
 ```
+- `hecto agent-guide --toc --json` emits `{"success":true,"data":{"sections":[...],"composite_aliases":{"core":["1","2","3"]}}}`.
+- `hecto agent-guide --section flow --json` emits `{"success":true,"data":{"sections":["6"],"content":"..."}}`.
 
 ---
 
@@ -170,6 +176,7 @@ In `--pre-script` and `--post-script`, use the `ha` (or `pm`) object:
   }
 }
 ```
+> **Compact & Redaction Flags (`--compact`, `--redact`, `--max-body <bytes>`):** `--redact` masks sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `X-Auth`, configured `apiKey` headers, ...), sensitive URL query/userinfo params, `FormData`/`urlencoded` credentials, error URLs, and secret variables/auth fields as `"***REDACTED***"` on `stdout` only (real values still persist to disk). `--max-body <bytes>` truncates `body` cleanly on UTF-8 rune boundaries and sets `"body_truncated": true`. `--compact` enables `--redact`, defaults `--max-body 500`, and omits `request`, `resolved_request`, `headers`, `console_logs`, `scoped_auth_updates`, and empty optional fields (`status_text`, `script_tests`, `script_logs`).
 
 ---
 
@@ -214,7 +221,7 @@ Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scena
 | `hecto flow delete <id\|path>` | `[-c <coll>] [--json]` — Delete a flow file from `<collection>/flows/`. |
 | `hecto flow move <id\|path>` | `--to <folder-id\|path\|root> [-c <coll>] [--json]` — Move a flow to another FlowFolder or root. |
 | `hecto flow folder <verb>` | `create --name <name> [--parent <id\|path>]` \| `update <id\|path> --name <name>` \| `delete <id\|path>` \| `move <id\|path> --to <id\|path\|root>` \| `list` \| `tree` \| `get <id\|path>` |
-| `hecto flow run <id\|path>` | `[-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
+| `hecto flow run <id\|path>` | `[-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
 
 ### 6.2. Shorthand `--steps` vs Full `--nodes-json`
 - **`--steps` shorthand:** Comma `,` separates sequential `FlowNode` rows; `||` separates parallel `FlowStep` items within the same row. Each token is a Request UUID or `<Folder>/<Request>` path:
@@ -286,6 +293,7 @@ Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scena
   }
 }
 ```
+> **Flow `--compact` Mode:** Automatically enables `--redact`, drops the duplicate top-level `step_results` array, projects each step's `run_output` to compact fields (`status_code`, `time_ms`, `size_bytes`, `body_truncated`, `script_tests`, `script_logs`, `env_updates`, `scoped_env_updates`, `script_error`, `network_error`), omits `body` on `passed` steps (unless `--max-body > 0` is explicitly provided), and keeps truncated `body` (default `500` bytes) plus failure details on `failed` steps.
 
 ---
 
