@@ -9,23 +9,68 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"hecto-api/model"
 	"hecto-api/storage"
 )
 
-const gitCommandTimeout = 60 * time.Second
+const (
+	gitCommandTimeout  = 60 * time.Second
+	staleIndexLockAge  = 2 * time.Minute
+)
 
 // GitSyncService handles per-collection Git remote configuration and pull/push operations.
 type GitSyncService struct {
-	fs     *storage.FileSystem
-	logger *slog.Logger
+	fs      *storage.FileSystem
+	logger  *slog.Logger
+	locksMu sync.Mutex
+	locks   map[string]*sync.Mutex
 }
 
 // NewGitSyncService creates a new GitSyncService.
 func NewGitSyncService(fs *storage.FileSystem, logger *slog.Logger) *GitSyncService {
-	return &GitSyncService{fs: fs, logger: logger}
+	return &GitSyncService{
+		fs:     fs,
+		logger: logger,
+		locks:  make(map[string]*sync.Mutex),
+	}
+}
+
+func (s *GitSyncService) lockCollection(collDir string) func() {
+	cleanDir := filepath.Clean(strings.TrimSpace(collDir))
+	s.locksMu.Lock()
+	if s.locks == nil {
+		s.locks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := s.locks[cleanDir]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.locks[cleanDir] = mu
+	}
+	s.locksMu.Unlock()
+
+	mu.Lock()
+	s.cleanStaleIndexLock(cleanDir)
+	return mu.Unlock
+}
+
+func (s *GitSyncService) lockCollectionByID(collectionsRoot, collectionID string) func() {
+	root := strings.TrimSpace(collectionsRoot)
+	id := strings.TrimSpace(collectionID)
+	if root == "" || id == "" || !isCleanID(id, root) {
+		return func() {}
+	}
+	return s.lockCollection(filepath.Join(root, id))
+}
+
+func (s *GitSyncService) cleanStaleIndexLock(collDir string) {
+	lockPath := filepath.Join(collDir, ".git", "index.lock")
+	info, err := os.Stat(lockPath)
+	if err == nil && time.Since(info.ModTime()) > staleIndexLockAge {
+		_ = os.Remove(lockPath)
+	}
 }
 
 func isValidGitRemoteURL(remoteURL string) bool {
@@ -64,22 +109,129 @@ func (s *GitSyncService) runGit(collDir string, args ...string) (string, error) 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = collDir
 
-	env := os.Environ()
+	rawEnv := os.Environ()
+	env := make([]string, 0, len(rawEnv)+5)
 	hasSSH := false
-	for _, e := range env {
+	for _, e := range rawEnv {
+		if strings.HasPrefix(e, "LC_ALL=") || strings.HasPrefix(e, "LANG=") || strings.HasPrefix(e, "LANGUAGE=") {
+			continue
+		}
 		if strings.HasPrefix(e, "GIT_SSH_COMMAND=") {
 			hasSSH = true
-			break
 		}
+		env = append(env, e)
 	}
-	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	env = append(env, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0")
 	if !hasSSH {
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "status", "diff", "symbolic-ref", "for-each-ref", "rev-parse", "show", "ls-files", "remote":
+			env = append(env, "GIT_OPTIONAL_LOCKS=0")
+		}
 	}
 	cmd.Env = env
 
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+func isHistoryRelPath(relPath string) bool {
+	clean := strings.TrimSpace(filepath.ToSlash(relPath))
+	clean = strings.TrimPrefix(clean, "./")
+	return clean == ".history" || strings.HasPrefix(clean, ".history/")
+}
+
+func ensureGitIgnore(collDir string) error {
+	gitignorePath := filepath.Join(collDir, ".gitignore")
+	var existing string
+	if raw, err := os.ReadFile(gitignorePath); err == nil {
+		existing = string(raw)
+	}
+
+	hasHistory := false
+	hasTmp := false
+	norm := strings.ReplaceAll(existing, "\r\n", "\n")
+	for _, line := range strings.Split(norm, "\n") {
+		t := strings.TrimSpace(line)
+		if t == ".history/" || t == ".history" || t == "/.history/" || t == "/.history" {
+			hasHistory = true
+		} else if t == ".tmp-*" {
+			hasTmp = true
+		}
+	}
+	if hasHistory && hasTmp {
+		return nil
+	}
+
+	var toAppend []string
+	if !hasHistory {
+		toAppend = append(toAppend, ".history/")
+	}
+	if !hasTmp {
+		toAppend = append(toAppend, ".tmp-*")
+	}
+
+	var next strings.Builder
+	if existing != "" {
+		next.WriteString(strings.TrimRight(norm, "\n"))
+		next.WriteString("\n")
+	}
+	next.WriteString(strings.Join(toAppend, "\n"))
+	next.WriteString("\n")
+	return os.WriteFile(gitignorePath, []byte(next.String()), 0644)
+}
+
+func mergeGitIgnoreChunks(collDir string, chunks ...string) error {
+	seen := make(map[string]bool)
+	var lines []string
+	for _, chunk := range chunks {
+		norm := strings.ReplaceAll(chunk, "\r\n", "\n")
+		for _, line := range strings.Split(norm, "\n") {
+			t := strings.TrimSpace(line)
+			if t == "" || strings.HasPrefix(t, "<<<<<<<") || t == "=======" || strings.HasPrefix(t, ">>>>>>>") {
+				continue
+			}
+			if !seen[t] {
+				seen[t] = true
+				lines = append(lines, t)
+			}
+		}
+	}
+	for _, required := range []string{".history/", ".tmp-*"} {
+		if !seen[required] {
+			seen[required] = true
+			lines = append(lines, required)
+		}
+	}
+	return os.WriteFile(filepath.Join(collDir, ".gitignore"), []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+
+func (s *GitSyncService) ensureGitIgnoreAndPurgeHistory(collDir string) {
+	_ = ensureGitIgnore(collDir)
+	_ = os.RemoveAll(filepath.Join(collDir, ".history"))
+	if s.fs.Exists(filepath.Join(collDir, ".git")) {
+		_, _ = s.runGit(collDir, "rm", "-rf", "--cached", "--ignore-unmatch", ".history")
+	}
+}
+
+func (s *GitSyncService) purgePulledHistoryIfPresent(collDir string) {
+	hasDir := s.fs.Exists(filepath.Join(collDir, ".history"))
+	tracked, trackedErr := s.runGit(collDir, "ls-files", ".history")
+	hasTracked := trackedErr == nil && strings.TrimSpace(tracked) != ""
+	if !hasDir && !hasTracked {
+		_ = ensureGitIgnore(collDir)
+		return
+	}
+	s.ensureGitIgnoreAndPurgeHistory(collDir)
+	if len(s.getConflictFiles(collDir)) == 0 && !s.fs.Exists(filepath.Join(collDir, ".git", "MERGE_HEAD")) {
+		staged, err := s.runGit(collDir, "diff", "--cached", "--name-only", "--", ".history")
+		if err == nil && strings.TrimSpace(staged) != "" {
+			_, _ = s.runGit(collDir, "add", "--", ".gitignore")
+			_, _ = s.runGit(collDir, "commit", "-m", "chore(hecto): purge .history from tracking", "--", ".history", ".gitignore")
+		}
+	}
 }
 
 func (s *GitSyncService) validateCollectionDir(collectionsRoot, collectionID string) (string, string, *model.Collection, *model.Result) {
@@ -180,6 +332,13 @@ func (s *GitSyncService) ensureGitRepoAndRemote(collDir, remoteURL string) error
 		}
 	}
 
+	if len(s.getConflictFiles(collDir)) == 0 {
+		s.ensureGitIgnoreAndPurgeHistory(collDir)
+	} else {
+		_ = ensureGitIgnore(collDir)
+		_ = os.RemoveAll(filepath.Join(collDir, ".history"))
+	}
+
 	return nil
 }
 
@@ -236,6 +395,10 @@ func (s *GitSyncService) autoResolveCollectionMetaConflict(collDir, metaPath str
 	if merged.ActiveEnvID == "" && incomingColl.ActiveEnvID != "" {
 		merged.ActiveEnvID = incomingColl.ActiveEnvID
 	}
+	if merged.GitAutoSync == nil && incomingColl.GitAutoSync != nil {
+		val := *incomingColl.GitAutoSync
+		merged.GitAutoSync = &val
+	}
 	if merged.Locale == "" && incomingColl.Locale != "" {
 		merged.Locale = incomingColl.Locale
 	}
@@ -279,6 +442,10 @@ func (s *GitSyncService) autoResolveCollectionMetaConflict(collDir, metaPath str
 			}
 			if len(diskColl.AuthEnvs) == 0 && len(merged.AuthEnvs) > 0 {
 				diskColl.AuthEnvs = merged.AuthEnvs
+			}
+			if merged.GitAutoSync != nil && (diskColl.GitAutoSync == nil || *diskColl.GitAutoSync != *merged.GitAutoSync) {
+				val := *merged.GitAutoSync
+				diskColl.GitAutoSync = &val
 			}
 			_ = s.fs.WriteJSON(metaPath, diskColl)
 		} else {
@@ -345,10 +512,20 @@ func (s *GitSyncService) getConflictFiles(collDir string) []string {
 func (s *GitSyncService) inspectStatus(collDir string, configuredRemote string) model.GitSyncStatus {
 	gitDir := filepath.Join(collDir, ".git")
 	hasRepo := s.fs.Exists(gitDir)
+	autoSyncEnabled := true
+	var localColl model.Collection
+	var localCollPtr *model.Collection
+	if err := s.fs.ReadJSON(filepath.Join(collDir, collectionFileName), &localColl); err == nil {
+		localCollPtr = &localColl
+		if localColl.GitAutoSync != nil {
+			autoSyncEnabled = *localColl.GitAutoSync
+		}
+	}
 	status := model.GitSyncStatus{
-		HasGitRepo: hasRepo,
-		RemoteURL:  strings.TrimSpace(configuredRemote),
-		Branch:     "main",
+		HasGitRepo:      hasRepo,
+		RemoteURL:       strings.TrimSpace(configuredRemote),
+		Branch:          "main",
+		AutoSyncEnabled: autoSyncEnabled,
 	}
 	if !hasRepo {
 		return status
@@ -370,11 +547,6 @@ func (s *GitSyncService) inspectStatus(collDir string, configuredRemote string) 
 		status.HasConflicts = true
 		status.ConflictFiles = conflicts
 		isStash := s.isStashConflict(collDir)
-		var localColl model.Collection
-		var localCollPtr *model.Collection
-		if err := s.fs.ReadJSON(filepath.Join(collDir, collectionFileName), &localColl); err == nil {
-			localCollPtr = &localColl
-		}
 		detailedConflicts := make([]model.GitFileConflict, 0, len(conflicts))
 		for _, f := range conflicts {
 			fc, _ := s.buildFileConflict(collDir, f, localCollPtr, status.RemoteURL, isStash)
@@ -394,6 +566,9 @@ func (s *GitSyncService) SaveRemoteURL(collectionsRoot, collectionID, remoteURL 
 	if !isValidGitRemoteURL(remoteURL) {
 		return model.NewError(model.ErrValidation, "Git Remote URL không hợp lệ (hỗ trợ HTTPS, SSH git@..., ssh://, hoặc đường dẫn hợp lệ)")
 	}
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -420,6 +595,9 @@ func (s *GitSyncService) SaveRemoteURL(collectionsRoot, collectionID, remoteURL 
 
 // GetStatus returns the current Git synchronization status for a collection.
 func (s *GitSyncService) GetStatus(collectionsRoot, collectionID string) model.Result {
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
+
 	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
 		return *errRes
@@ -433,6 +611,9 @@ func (s *GitSyncService) GetStatus(collectionsRoot, collectionID string) model.R
 // Optional branch parameter specifies target branch on origin to pull.
 func (s *GitSyncService) Pull(collectionsRoot, collectionID string, branch ...string) model.Result {
 	s.logger.Info("GitSyncService.Pull called", "collectionID", collectionID)
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -454,6 +635,7 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string, branch ...st
 	}
 
 	// Attempt 3-Way Auto-Merge if conflicts were previously left in the working tree
+	preResolvedExisting := false
 	if existingConflicts := s.getConflictFiles(collDir); len(existingConflicts) > 0 {
 		unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, remoteURL, s.isStashConflict(collDir))
 		if !allResolved || len(unresolved) > 0 {
@@ -471,9 +653,11 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string, branch ...st
 				},
 			}
 		}
+		preResolvedExisting = true
 	}
 
 	// Stage and auto-commit local changes before pulling so git pull can merge cleanly
+	s.ensureGitIgnoreAndPurgeHistory(collDir)
 	if porcelain, err := s.runGit(collDir, "status", "--porcelain"); err == nil && strings.TrimSpace(porcelain) != "" {
 		if out, err := s.runGit(collDir, "add", "-A"); err != nil {
 			return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể stage thay đổi trước khi pull: %s", out))
@@ -534,12 +718,18 @@ func (s *GitSyncService) Pull(collectionsRoot, collectionID string, branch ...st
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Lỗi khi thực thi git pull: %s", pullOut))
 	}
 
+	s.purgePulledHistoryIfPresent(collDir)
+
 	if s.fs != nil {
 		_ = s.fs.IndexRebuild(collDir)
 	}
 
 	status := s.inspectStatus(collDir, remoteURL)
-	status.Output = pullOut
+	if preResolvedExisting {
+		status.Output = strings.TrimSpace("Auto-merged resolved conflicts\n" + pullOut)
+	} else {
+		status.Output = pullOut
+	}
 	return model.NewSuccess(status)
 }
 
@@ -575,6 +765,9 @@ func (s *GitSyncService) resolveTargetRemoteBranch(collDir string) (string, bool
 // resets hard to origin/<branch>, and rebuilds the collection index.
 func (s *GitSyncService) ClearAndPull(collectionsRoot, collectionID string, remoteURL ...string) model.Result {
 	s.logger.Info("GitSyncService.ClearAndPull called", "collectionID", collectionID)
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -638,16 +831,22 @@ func (s *GitSyncService) ClearAndPull(collectionsRoot, collectionID string, remo
 		resetOut = "Remote repository chưa có nhánh nào để pull."
 	}
 
-	// Re-persist GitRemoteURL in collection.json in case origin/<branch>'s collection.json had a different/empty URL
+	// Re-persist GitRemoteURL and GitAutoSync in collection.json in case origin/<branch>'s collection.json had a different/empty value
 	var updatedColl model.Collection
 	if hasRemoteBranch && s.fs.ReadJSON(metaPath, &updatedColl) == nil {
 		updatedColl.ID = coll.ID
 		updatedColl.IsDefault = coll.IsDefault
 		updatedColl.GitRemoteURL = targetRemote
+		if coll.GitAutoSync != nil {
+			val := *coll.GitAutoSync
+			updatedColl.GitAutoSync = &val
+		}
 		_ = s.fs.WriteJSON(metaPath, updatedColl)
 	} else {
 		_ = s.fs.WriteJSON(metaPath, *coll)
 	}
+
+	s.purgePulledHistoryIfPresent(collDir)
 
 	if s.fs != nil {
 		_ = s.fs.IndexRebuild(collDir)
@@ -662,6 +861,9 @@ func (s *GitSyncService) ClearAndPull(collectionsRoot, collectionID string, remo
 // pops the stash, runs 3-Way JSON Auto-Merge, and reports ErrGitConflict with conflict details if any conflicts remain.
 func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remoteURL ...string) model.Result {
 	s.logger.Info("GitSyncService.StashAndPull called", "collectionID", collectionID)
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -686,6 +888,7 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 		return model.NewError(model.ErrGitError, err.Error())
 	}
 
+	preResolvedExisting := false
 	if existingConflicts := s.getConflictFiles(collDir); len(existingConflicts) > 0 {
 		unresolved, allResolved := s.processConflictsAndAutoMerge(collDir, metaPath, coll, targetRemote, s.isStashConflict(collDir))
 		if !allResolved || len(unresolved) > 0 {
@@ -703,6 +906,7 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 				},
 			}
 		}
+		preResolvedExisting = true
 	}
 
 	// Ensure at least an initial commit exists before git stash push -u (git stash requires HEAD)
@@ -722,6 +926,8 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 	}
 
 	prePullHead, _ := s.runGit(collDir, "rev-parse", "--verify", "HEAD")
+
+	s.ensureGitIgnoreAndPurgeHistory(collDir)
 
 	stashed := false
 	if porcelain, err := s.runGit(collDir, "status", "--porcelain"); err == nil && strings.TrimSpace(porcelain) != "" {
@@ -822,17 +1028,26 @@ func (s *GitSyncService) StashAndPull(collectionsRoot, collectionID string, remo
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Lỗi khi thực thi git stash pop: %s", popOut))
 	}
 
+	s.purgePulledHistoryIfPresent(collDir)
+
 	if s.fs != nil {
 		_ = s.fs.IndexRebuild(collDir)
 	}
 
 	status := s.inspectStatus(collDir, targetRemote)
-	status.Output = combinedOut
+	if preResolvedExisting {
+		status.Output = strings.TrimSpace("Auto-merged resolved conflicts\n" + combinedOut)
+	} else {
+		status.Output = combinedOut
+	}
 	return model.NewSuccess(status)
 }
 
 // ListLocalBranches returns the list of local and remote git branches for a collection.
 func (s *GitSyncService) ListLocalBranches(collectionsRoot, collectionID string) model.Result {
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
+
 	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
 		return *errRes
@@ -902,6 +1117,9 @@ func (s *GitSyncService) CheckoutBranch(collectionsRoot, collectionID, branch st
 		return model.NewError(model.ErrValidation, "Tên nhánh Git không hợp lệ")
 	}
 
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
+
 	collDir, _, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
 		return *errRes
@@ -921,6 +1139,7 @@ func (s *GitSyncService) CheckoutBranch(collectionsRoot, collectionID, branch st
 	}
 
 	// Auto-save/commit any uncommitted local changes on the current branch first
+	s.ensureGitIgnoreAndPurgeHistory(collDir)
 	porcelain, _ := s.runGit(collDir, "status", "--porcelain")
 	if strings.TrimSpace(porcelain) != "" {
 		_, _ = s.runGit(collDir, "add", "-A")
@@ -949,6 +1168,8 @@ func (s *GitSyncService) CheckoutBranch(collectionsRoot, collectionID, branch st
 		_ = s.fs.IndexRebuild(collDir)
 	}
 
+	s.purgePulledHistoryIfPresent(collDir)
+
 	status := s.inspectStatus(collDir, remoteURL)
 	return model.NewSuccess(status)
 }
@@ -961,6 +1182,9 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 		targetBranch = strings.TrimSpace(branch[0])
 	}
 	s.logger.Info("GitSyncService.Push called", "collectionID", collectionID, "branch", targetBranch)
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -1004,6 +1228,8 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 			}
 		}
 	}
+
+	s.ensureGitIgnoreAndPurgeHistory(collDir)
 
 	if out, err := s.runGit(collDir, "add", "-A"); err != nil {
 		return model.NewError(model.ErrGitError, fmt.Sprintf("Không thể git add trong thư mục Collection: %s", out))
@@ -1089,6 +1315,7 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 						}
 					}
 					if mergeErr == nil || allResolved {
+						s.purgePulledHistoryIfPresent(collDir)
 						if targetBranch != currentBranch {
 							_, _ = s.runGit(collDir, "branch", "-f", targetBranch, "HEAD")
 						}
@@ -1100,7 +1327,11 @@ func (s *GitSyncService) Push(collectionsRoot, collectionID string, branch ...st
 								_ = s.fs.IndexRebuild(collDir)
 							}
 							status := s.inspectStatus(collDir, remoteURL)
-							status.Output = retryOut
+							if strings.TrimSpace(mergeOut) != "" {
+								status.Output = strings.TrimSpace(mergeOut + "\n" + retryOut)
+							} else {
+								status.Output = retryOut
+							}
 							return model.NewSuccess(status)
 						} else {
 							pushOut = retryOut

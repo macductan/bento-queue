@@ -10,7 +10,6 @@ import UnsavedChangesDialog from '@/components/UnsavedChangesDialog.vue'
 import EnvModal from '@/components/environment/EnvModal.vue'
 import GitSyncModal from '@/components/GitSyncModal.vue'
 import GitConflictResolverModal from '@/components/GitConflictResolverModal.vue'
-import HistoryModal from '@/components/HistoryModal.vue'
 import MockServerModal from '@/components/MockServerModal.vue'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useFlowStore } from '@/stores/flowStore'
@@ -72,7 +71,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
     if (uiStore.workspaceMode !== 'apis') {
       return
     }
-    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
+    if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.mockServerModalOpen) {
       return
     }
     if (tabStore.activeTabId) {
@@ -81,7 +80,7 @@ const handleKeyDown = (e: KeyboardEvent) => {
     return
   }
 
-  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.historyModalOpen || uiStore.mockServerModalOpen) {
+  if (uiStore.confirm !== null || uiStore.contextMenu !== null || uiStore.unsavedPrompt !== null || uiStore.envModalOpen || uiStore.settingsModalOpen || uiStore.gitSyncModalOpen || uiStore.gitConflictModalOpen || uiStore.mockServerModalOpen) {
     return
   }
 
@@ -155,6 +154,8 @@ const handleKeyDown = (e: KeyboardEvent) => {
   }
 }
 
+let isUnmounted = false
+
 onMounted(async () => {
   cleanupInputUndo = installGlobalInputUndo(window)
   if (window.innerWidth > 0) {
@@ -168,10 +169,15 @@ onMounted(async () => {
     envStore.loadAll(),
     flowStore.loadFlowTree()
   ])
+  if (isUnmounted) return
   envStore.syncActiveEnvFromCollection()
+  collectionStore.startAutoSyncScheduler()
+  void collectionStore.autoPull({ reason: 'startup' })
 })
 
 onUnmounted(() => {
+  isUnmounted = true
+  collectionStore.stopAutoSyncScheduler()
   cleanupInputUndo?.()
   cleanupInputUndo = null
   stopSidebarResize()
@@ -204,7 +210,6 @@ onUnmounted(() => {
     <EnvModal />
     <GitSyncModal />
     <GitConflictResolverModal />
-    <HistoryModal />
     <MockServerModal />
   </div>
 </template>

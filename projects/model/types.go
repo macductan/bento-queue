@@ -160,6 +160,7 @@ type Collection struct {
 	AuthEnvs     map[string]*AuthConfig `json:"auth_envs,omitempty"`
 	ActiveEnvID  string                 `json:"active_env_id,omitempty"`
 	GitRemoteURL string                 `json:"git_remote_url,omitempty"`
+	GitAutoSync  *bool                  `json:"git_auto_sync,omitempty"`
 	IsDefault    bool                   `json:"is_default,omitempty"`
 	IsActive     bool                   `json:"is_active,omitempty"`
 	Locale       string                 `json:"locale,omitempty"`
@@ -190,14 +191,15 @@ type GitFileConflict struct {
 
 // GitSyncStatus represents the current Git synchronization status for a collection.
 type GitSyncStatus struct {
-	HasGitRepo    bool              `json:"has_git_repo"`
-	RemoteURL     string            `json:"remote_url"`
-	Branch        string            `json:"branch"`
-	HasChanges    bool              `json:"has_changes"`
-	HasConflicts  bool              `json:"has_conflicts"`
-	ConflictFiles []string          `json:"conflict_files,omitempty"`
-	Conflicts     []GitFileConflict `json:"conflicts,omitempty"`
-	Output        string            `json:"output,omitempty"`
+	HasGitRepo      bool              `json:"has_git_repo"`
+	RemoteURL       string            `json:"remote_url"`
+	Branch          string            `json:"branch"`
+	AutoSyncEnabled bool              `json:"auto_sync_enabled"`
+	HasChanges      bool              `json:"has_changes"`
+	HasConflicts    bool              `json:"has_conflicts"`
+	ConflictFiles   []string          `json:"conflict_files,omitempty"`
+	Conflicts       []GitFileConflict `json:"conflicts,omitempty"`
+	Output          string            `json:"output,omitempty"`
 }
 
 // ExecuteRequest is the data sent from Vue to Go for HTTP execution (AD-1).
@@ -294,36 +296,6 @@ type ExecuteResponse struct {
 	Timestamp  string              `json:"timestamp"`
 	Truncated  bool                `json:"truncated"`
 	IsBinary   bool                `json:"is_binary"`
-}
-
-// ExecutionHistoryEntry records a single API execution in collection history.
-type ExecutionHistoryEntry struct {
-	ID           string           `json:"id"`
-	CollectionID string           `json:"collection_id"`
-	RequestID    string           `json:"request_id,omitempty"`
-	RequestName  string           `json:"request_name"`
-	Method       string           `json:"method"`
-	URL          string           `json:"url"`
-	StatusCode   int              `json:"status_code"`
-	StatusText   string           `json:"status_text"`
-	TimeMs       int64            `json:"time_ms"`
-	SizeBytes    int64            `json:"size_bytes"`
-	Timestamp    string           `json:"timestamp"`
-	Request      ExecuteRequest   `json:"request"`
-	Response     *ExecuteResponse `json:"response,omitempty"`
-	Error        string           `json:"error,omitempty"`
-}
-
-// ChangelogEntry records a modification event in a collection.
-type ChangelogEntry struct {
-	ID           string    `json:"id"`
-	CollectionID string    `json:"collection_id"`
-	EntityType   string    `json:"entity_type"` // "request", "folder", "collection", "environment"
-	EntityID     string    `json:"entity_id"`
-	EntityName   string    `json:"entity_name"`
-	Action       string    `json:"action"` // "create", "update", "rename", "delete", "duplicate"
-	Summary      string    `json:"summary"`
-	Timestamp    time.Time `json:"timestamp"`
 }
 
 // MockRoute represents a single route configured on the local Mock HTTP Server.

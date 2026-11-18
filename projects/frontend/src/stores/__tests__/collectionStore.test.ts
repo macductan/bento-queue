@@ -1,6 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useCollectionStore } from '../collectionStore'
+import {
+  useCollectionStore,
+  AUTO_PUSH_DEBOUNCE_MS,
+  AUTO_PULL_INTERVAL_MS,
+  AUTO_PULL_FOCUS_THROTTLE_MS
+} from '../collectionStore'
 import { useRequestStore } from '../requestStore'
 import { useResponseStore } from '../responseStore'
 import { useEnvironmentStore } from '../environmentStore'
@@ -36,7 +41,12 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SaveEnvironment: vi.fn().mockResolvedValue({ success: true, data: {} }),
   DeleteEnvironment: vi.fn().mockResolvedValue({ success: true, data: {} }),
   SendRequest: vi.fn().mockResolvedValue({ success: true, data: {} }),
-  AbortRequest: vi.fn().mockResolvedValue({})
+  AbortRequest: vi.fn().mockResolvedValue({}),
+  GitPullCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  GitPushCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  GetCollectionGitStatus: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  SaveCollectionGitRemote: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  ResolveGitConflict: vi.fn().mockResolvedValue({ success: true, data: {} })
 }))
 
 import {
@@ -53,7 +63,10 @@ import {
   ListEnvironments,
   GetRequest,
   CreateRequest,
-  MoveFolder
+  MoveFolder,
+  GitPullCollection,
+  GitPushCollection,
+  ResolveGitConflict
 } from '../../../wailsjs/go/main/App'
 
 function resSuccess(data: any = {}): model.Result {
@@ -1375,13 +1388,11 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
   })
 
   describe('smartReload & External Change Sync (Story 4)', () => {
-    it('sets hasExternalChanges when Wails runtime emits collection:external-change', () => {
-      let registeredCallback: (() => void) | null = null
+    it('sets hasExternalChanges on external-change and schedules auto-push only for active collection on local-changed', () => {
+      const callbacks: Record<string, (payload?: any) => void> = {}
       ;(window as any).runtime = {
-        EventsOnMultiple: vi.fn((eventName: string, cb: () => void) => {
-          if (eventName === 'collection:external-change') {
-            registeredCallback = cb
-          }
+        EventsOnMultiple: vi.fn((eventName: string, cb: (payload?: any) => void) => {
+          callbacks[eventName] = cb
           return () => {}
         })
       }
@@ -1389,11 +1400,26 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       try {
         setActivePinia(createPinia())
         const store = useCollectionStore()
-        expect(store.hasExternalChanges).toBe(false)
-        expect(registeredCallback).toBeTypeOf('function')
+        store.collections = [
+          { id: 'col-a', name: 'A', git_remote_url: 'https://github.com/org/a.git', is_active: true } as any
+        ]
+        store.activeCollectionId = 'col-a'
 
-        registeredCallback!()
+        expect(store.hasExternalChanges).toBe(false)
+        expect(callbacks['collection:external-change']).toBeTypeOf('function')
+        expect(callbacks['collection:local-changed']).toBeTypeOf('function')
+
+        callbacks['collection:external-change']()
         expect(store.hasExternalChanges).toBe(true)
+
+        // Inactive collection event is ignored
+        callbacks['collection:local-changed']({ collectionId: 'col-other' })
+        expect(store.autoPushPending).toBe(false)
+
+        // Active collection event arms debounced auto-push
+        callbacks['collection:local-changed']({ collectionId: 'col-a' })
+        expect(store.autoPushPending).toBe(true)
+        store.cancelAutoPush()
       } finally {
         delete (window as any).runtime
       }
@@ -1728,6 +1754,276 @@ describe('collectionStore - Multi Collection & State Isolation', () => {
       expect(flowStore.expandedFlowFolders.size).toBe(0)
       expect(flowStore.sortDirectionMap).toEqual({})
       expect(loadFlowTreeSpy).toHaveBeenCalled()
+    })
+  })
+
+  describe('Hybrid Auto Pull & Auto Push Git Sync', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    function setupRemoteCollection(gitAutoSync?: boolean) {
+      const store = useCollectionStore()
+      store.collections = [
+        {
+          id: 'team-col',
+          name: 'Team Collection',
+          git_remote_url: 'https://github.com/org/team-col.git',
+          is_active: true,
+          ...(gitAutoSync !== undefined ? { git_auto_sync: gitAutoSync } : {})
+        } as any
+      ]
+      store.activeCollectionId = 'team-col'
+      return store
+    }
+
+    it('autoPull pulls on startup/switch, reloads only on worktree changes, and throttles focus pulls to 60s', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-11-18T10:00:00Z'))
+
+      const store = setupRemoteCollection()
+      const smartReloadSpy = vi.spyOn(store, 'smartReload').mockResolvedValue()
+
+      // 1. Startup pull with "Already up to date." -> does NOT call smartReload
+      vi.mocked(GitPullCollection).mockResolvedValueOnce(
+        resSuccess({ branch: 'main', output: 'Already up to date.' })
+      )
+      await store.autoPull({ reason: 'startup' })
+      expect(GitPullCollection).toHaveBeenCalledWith('team-col')
+      expect(smartReloadSpy).not.toHaveBeenCalled()
+
+      // 2. Focus pull immediately within 60s -> throttled
+      await store.autoPull({ reason: 'focus' })
+      expect(GitPullCollection).toHaveBeenCalledTimes(1)
+
+      // 3. Advance 60s -> focus pull proceeds and triggers smartReload when remote changed
+      vi.advanceTimersByTime(AUTO_PULL_FOCUS_THROTTLE_MS)
+      vi.mocked(GitPullCollection).mockResolvedValueOnce(
+        resSuccess({ branch: 'main', output: 'Updating 111..222\nFast-forward\n req.yaml | 2 +-' })
+      )
+      await store.autoPull({ reason: 'focus' })
+      expect(GitPullCollection).toHaveBeenCalledTimes(2)
+      expect(smartReloadSpy).toHaveBeenCalledTimes(1)
+
+      // 4. Switch collection trigger works immediately without focus throttle
+      vi.mocked(GitPullCollection).mockResolvedValueOnce(
+        resSuccess({ branch: 'main', output: 'Already up to date.' })
+      )
+      await store.autoPull({ reason: 'switch' })
+      expect(GitPullCollection).toHaveBeenCalledTimes(3)
+    })
+
+    it('startAutoSyncScheduler runs 3m interval pull when visible & clean, skips when hidden or dirty, and handles focus/visibility events', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-11-18T10:00:00Z'))
+      const store = setupRemoteCollection()
+      const reqStore = useRequestStore()
+      vi.spyOn(store, 'smartReload').mockResolvedValue()
+
+      vi.mocked(GitPullCollection).mockResolvedValue(
+        resSuccess({ branch: 'main', output: 'Already up to date.' })
+      )
+
+      const origVisibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+      let mockVisibility: DocumentVisibilityState = 'visible'
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => mockVisibility
+      })
+
+      try {
+        store.startAutoSyncScheduler()
+
+        // Dirty request -> skips interval pull
+        reqStore.original = createMockRequest({ id: 'r1', name: 'Req 1', url: 'https://a.test' })
+        reqStore.current = createMockRequest({ id: 'r1', name: 'Req 1', url: 'https://edited.test' })
+        expect(reqStore.isDirty).toBe(true)
+
+        await vi.advanceTimersByTimeAsync(AUTO_PULL_INTERVAL_MS)
+        expect(GitPullCollection).not.toHaveBeenCalled()
+
+        // Hidden tab -> skips interval pull even when clean
+        reqStore.original = createMockRequest({ id: 'r1', name: 'Req 1', url: 'https://edited.test' })
+        expect(reqStore.isDirty).toBe(false)
+        mockVisibility = 'hidden'
+        await vi.advanceTimersByTimeAsync(AUTO_PULL_INTERVAL_MS)
+        expect(GitPullCollection).not.toHaveBeenCalled()
+
+        // Visible & clean -> runs interval pull
+        mockVisibility = 'visible'
+        await vi.advanceTimersByTimeAsync(AUTO_PULL_INTERVAL_MS)
+        expect(GitPullCollection).toHaveBeenCalledTimes(1)
+
+        // Focus after throttle -> runs focus pull
+        vi.advanceTimersByTime(AUTO_PULL_FOCUS_THROTTLE_MS)
+        window.dispatchEvent(new Event('focus'))
+        await vi.waitFor(() => {
+          expect(GitPullCollection).toHaveBeenCalledTimes(2)
+        })
+
+        // Visibilitychange to visible after throttle -> runs pull
+        vi.advanceTimersByTime(AUTO_PULL_FOCUS_THROTTLE_MS)
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.waitFor(() => {
+          expect(GitPullCollection).toHaveBeenCalledTimes(3)
+        })
+
+        // Stop scheduler -> no further interval, focus, or visibility calls
+        store.stopAutoSyncScheduler()
+        vi.advanceTimersByTime(AUTO_PULL_FOCUS_THROTTLE_MS)
+        window.dispatchEvent(new Event('focus'))
+        document.dispatchEvent(new Event('visibilitychange'))
+        await vi.advanceTimersByTimeAsync(AUTO_PULL_INTERVAL_MS)
+        expect(GitPullCollection).toHaveBeenCalledTimes(3)
+      } finally {
+        store.stopAutoSyncScheduler()
+        if (origVisibilityDescriptor) {
+          Object.defineProperty(document, 'visibilityState', origVisibilityDescriptor)
+        } else {
+          delete (document as any).visibilityState
+        }
+      }
+    })
+
+    it('scheduleAutoPush debounces multiple saves, reloads after merged remote push, preserves pending on error, defers while dirty, and surfaces GIT_CONFLICT', async () => {
+      vi.useFakeTimers()
+      const store = setupRemoteCollection()
+      const reqStore = useRequestStore()
+      const uiStore = useUiStore()
+      const smartReloadSpy = vi.spyOn(store, 'smartReload').mockResolvedValue()
+
+      vi.mocked(GitPushCollection).mockResolvedValue(
+        resSuccess({ branch: 'main', output: 'pushed' })
+      )
+
+      // Rapid saves -> only 1 push after 15s debounce, skips smartReload on clean push
+      store.scheduleAutoPush()
+      await vi.advanceTimersByTimeAsync(5000)
+      store.scheduleAutoPush()
+      expect(store.autoPushPending).toBe(true)
+      expect(GitPushCollection).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(AUTO_PUSH_DEBOUNCE_MS - 5000)
+      expect(GitPushCollection).not.toHaveBeenCalled() // timer was reset by second edit
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(GitPushCollection).toHaveBeenCalledTimes(1)
+      expect(store.autoPushPending).toBe(false)
+      expect(smartReloadSpy).not.toHaveBeenCalled()
+
+      // Push that auto-merges remote JSON conflict -> calls smartReload
+      vi.mocked(GitPushCollection).mockResolvedValueOnce(
+        resSuccess({
+          branch: 'main',
+          output: 'Auto-merging req.json\nCONFLICT (content): Merge conflict in req.json\nAutomatic merge failed\nTo origin main'
+        })
+      )
+      store.scheduleAutoPush()
+      await vi.advanceTimersByTimeAsync(AUTO_PUSH_DEBOUNCE_MS)
+      expect(GitPushCollection).toHaveBeenCalledTimes(2)
+      expect(smartReloadSpy).toHaveBeenCalledTimes(1)
+
+      // Transient non-conflict error keeps autoPushPending = true
+      vi.mocked(GitPushCollection).mockResolvedValueOnce(resError('Network timeout', 'GIT_ERROR'))
+      store.scheduleAutoPush()
+      await vi.advanceTimersByTimeAsync(AUTO_PUSH_DEBOUNCE_MS)
+      expect(GitPushCollection).toHaveBeenCalledTimes(3)
+      expect(store.autoPushPending).toBe(true)
+
+      // Defer when user has unsaved edits in editor
+      reqStore.original = createMockRequest({ id: 'r2', name: 'Req 2', url: 'https://b.test' })
+      reqStore.current = createMockRequest({ id: 'r2', name: 'Req 2', url: 'https://unsaved.test' })
+      expect(reqStore.isDirty).toBe(true)
+
+      store.scheduleAutoPush()
+      await vi.advanceTimersByTimeAsync(AUTO_PUSH_DEBOUNCE_MS)
+      expect(GitPushCollection).toHaveBeenCalledTimes(3)
+      expect(store.autoPushPending).toBe(true)
+
+      // Clean edits -> pushes on deferred tick
+      reqStore.original = createMockRequest({ id: 'r2', name: 'Req 2', url: 'https://unsaved.test' })
+      expect(reqStore.isDirty).toBe(false)
+      await vi.advanceTimersByTimeAsync(AUTO_PUSH_DEBOUNCE_MS)
+      expect(GitPushCollection).toHaveBeenCalledTimes(4)
+
+      // Conflict handling -> sets gitConflictError & opens modal
+      vi.mocked(GitPushCollection).mockResolvedValueOnce({
+        success: false,
+        data: { has_conflicts: true, conflict_files: ['req.yaml'], conflicts: [] },
+        error: { code: 'GIT_CONFLICT', message: 'Conflict on auto push' }
+      } as any)
+      store.scheduleAutoPush()
+      await vi.advanceTimersByTimeAsync(AUTO_PUSH_DEBOUNCE_MS)
+      expect(store.gitConflictError?.files).toEqual(['req.yaml'])
+      expect(uiStore.gitSyncModalOpen).toBe(true)
+    })
+
+    it('skips autoPull/autoPush when git_auto_sync is false, handles autoPull GIT_CONFLICT, resets on delete/refresh, and pushes after resolveGitConflicts', async () => {
+      vi.useFakeTimers()
+      const uiStore = useUiStore()
+      const disabledStore = setupRemoteCollection(false)
+
+      expect(disabledStore.isGitAutoSyncEnabled).toBe(false)
+      expect(await disabledStore.autoPull({ reason: 'interval' })).toBe(false)
+      disabledStore.scheduleAutoPush()
+      expect(disabledStore.autoPushPending).toBe(false)
+      expect(await disabledStore.executeAutoPush()).toBe(false)
+      expect(GitPullCollection).not.toHaveBeenCalled()
+      expect(GitPushCollection).not.toHaveBeenCalled()
+
+      // autoPull GIT_CONFLICT opens GitSyncModal and ConflictResolverModal when detailed conflicts present
+      const store = setupRemoteCollection(true)
+      vi.mocked(GitPullCollection).mockResolvedValueOnce({
+        success: false,
+        data: {
+          has_conflicts: true,
+          conflict_files: ['req1.json'],
+          conflicts: [{ file_path: 'req1.json' }]
+        },
+        error: { code: 'GIT_CONFLICT', message: 'Pull conflict' }
+      } as any)
+      expect(await store.autoPull({ reason: 'startup' })).toBe(false)
+      expect(store.gitConflictError?.files).toEqual(['req1.json'])
+      expect(uiStore.gitSyncModalOpen).toBe(true)
+      expect(uiStore.gitConflictModalOpen).toBe(true)
+
+      // resolveGitConflicts clears conflict error and schedules debounced auto-push
+      store.gitSyncStatus = { has_conflicts: false, remote_url: 'https://github.com/org/team-col.git' } as any
+      vi.mocked(ResolveGitConflict).mockResolvedValueOnce(
+        resSuccess({ has_git_repo: true, remote_url: 'https://github.com/org/team-col.git', branch: 'main', has_conflicts: false })
+      )
+      vi.mocked(ListCollections).mockResolvedValueOnce(
+        resSuccess([{ id: 'team-col', name: 'Team Collection', git_remote_url: 'https://github.com/org/team-col.git', is_active: true }])
+      )
+      await store.resolveGitConflicts({ 'req1.json': { id: 'req1' } })
+      expect(store.autoPushPending).toBe(true)
+
+      // refresh() cancels pending auto-push and resets Git state
+      store.lastAutoPullAt = 12345
+      await store.refresh()
+      expect(store.autoPushPending).toBe(false)
+      expect(store.gitSyncStatus).toBeNull()
+      expect(store.gitConflictError).toBeNull()
+      expect(store.lastAutoPullAt).toBe(0)
+
+      // Active deleteCollection() cancels pending auto-push and resets Git state
+      store.collections = [
+        { id: 'default', name: 'Default', is_default: true, is_active: false } as any,
+        { id: 'team-col', name: 'Team', git_remote_url: 'https://github.com/org/team-col.git', is_active: true } as any
+      ]
+      store.activeCollectionId = 'team-col'
+      store.scheduleAutoPush()
+      store.gitSyncStatus = { has_git_repo: true, remote_url: 'https://github.com/org/team-col.git', branch: 'team' } as any
+      store.gitConflictError = { message: 'Old conflict', files: ['a.json'] }
+      store.lastAutoPullAt = 999
+      vi.mocked(DeleteCollection).mockResolvedValueOnce(resSuccess({ active_collection: 'default' }))
+
+      await store.deleteCollection('team-col')
+      expect(store.activeCollectionId).toBe('default')
+      expect(store.autoPushPending).toBe(false)
+      expect(store.gitSyncStatus).toBeNull()
+      expect(store.gitConflictError).toBeNull()
+      expect(store.lastAutoPullAt).toBe(0)
     })
   })
 })

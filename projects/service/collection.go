@@ -987,6 +987,10 @@ func (s *CollectionService) UpdateCollection(collectionsRoot string, coll model.
 	if strings.TrimSpace(coll.GitRemoteURL) != "" {
 		existingColl.GitRemoteURL = strings.TrimSpace(coll.GitRemoteURL)
 	}
+	if coll.GitAutoSync != nil {
+		val := *coll.GitAutoSync
+		existingColl.GitAutoSync = &val
+	}
 	if locale != "" {
 		existingColl.Locale = locale
 	}
@@ -1084,6 +1088,11 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) mode
 	}
 
 	now := time.Now()
+	var copiedGitAutoSync *bool
+	if srcColl.GitAutoSync != nil {
+		val := *srcColl.GitAutoSync
+		copiedGitAutoSync = &val
+	}
 	newColl := model.Collection{
 		ID:          newID,
 		Name:        newName,
@@ -1092,6 +1101,7 @@ func (s *CollectionService) DuplicateCollection(collectionsRoot, id string) mode
 		Auth:        srcColl.Auth,
 		AuthEnvs:    srcColl.AuthEnvs,
 		ActiveEnvID: srcColl.ActiveEnvID,
+		GitAutoSync: copiedGitAutoSync,
 		Locale:      srcColl.Locale,
 		IsDefault:   false,
 		IsActive:    false,

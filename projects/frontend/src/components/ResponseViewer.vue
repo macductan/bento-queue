@@ -262,7 +262,6 @@ const hasActiveGlobalOverlay = () =>
       uiStore.settingsModalOpen ||
       uiStore.gitSyncModalOpen ||
       uiStore.gitConflictModalOpen ||
-      uiStore.historyModalOpen ||
       uiStore.mockServerModalOpen ||
       uiStore.importError
   )

@@ -25,6 +25,9 @@ var fieldLabels = map[string]string{
 	"url":                   "URL",
 	"description":           "Mô tả (Description)",
 	"active_env_id":         "Môi trường đang chọn (Active Environment)",
+	"git_auto_sync":         "Tự động đồng bộ Git (Auto Sync)",
+	"port":                  "Cổng Mock Server (Port)",
+	"routes":                "Danh sách Mock Routes",
 	"layout":                "Bố cục sơ đồ (Layout)",
 	"direction":             "Bố cục sơ đồ (Layout)",
 	"timeout_ms":            "Thời gian chờ mặc định (Timeout ms)",
@@ -179,11 +182,16 @@ func detectEntityMeta(relPath string, baseObj, oursObj, theirsObj map[string]int
 		}
 	} else if slashPath == folderMetaFile || strings.HasSuffix(slashPath, "/"+folderMetaFile) {
 		entityType = "folder"
+	} else if slashPath == "mock-server.json" {
+		entityType = "mock_server"
 	} else if strings.HasPrefix(slashPath, "environments/") {
 		entityType = "environment"
 	}
 
 	entityName := ""
+	if entityType == "mock_server" {
+		entityName = "Mock Server"
+	}
 	for _, obj := range []map[string]interface{}{oursObj, theirsObj, baseObj} {
 		if obj == nil {
 			continue
@@ -723,9 +731,9 @@ func MergeJSONObjects(relPath string, baseObj, oursObj, theirsObj map[string]int
 			continue
 		}
 
-		// 2. Auto-resolve collection-specific local identity fields
+		// 2. Auto-resolve collection-specific local identity & device preference fields
 		if isCollectionMeta {
-			if k == "id" || k == "is_default" || k == "is_active" {
+			if k == "id" || k == "is_default" || k == "is_active" || k == "git_auto_sync" {
 				if inO {
 					merged[k] = oVal
 				} else if inT {
@@ -1006,6 +1014,9 @@ func (s *GitSyncService) buildFileConflict(collDir, relPath string, localColl *m
 		if strings.TrimSpace(remoteURL) != "" {
 			mergedObj["git_remote_url"] = strings.TrimSpace(remoteURL)
 		}
+		if localColl.GitAutoSync != nil {
+			mergedObj["git_auto_sync"] = *localColl.GitAutoSync
+		}
 	}
 
 	entityType, entityName = detectEntityMeta(slashPath, baseObj, mergedObj, theirsObj)
@@ -1034,6 +1045,36 @@ func (s *GitSyncService) processConflictsAndAutoMerge(collDir, metaPath string, 
 
 	var unresolved []model.GitFileConflict
 	for _, relPath := range conflictFiles {
+		slashPath := filepath.ToSlash(strings.TrimSpace(relPath))
+		if isHistoryRelPath(slashPath) {
+			_ = os.RemoveAll(filepath.Join(collDir, ".history"))
+			_, _ = s.runGit(collDir, "rm", "-rf", "--ignore-unmatch", "--", ".history")
+			_, _ = s.runGit(collDir, "rm", "-f", "--ignore-unmatch", "--", slashPath)
+			s.removeStashConflictFileEntry(collDir, relPath)
+			continue
+		}
+		if slashPath == ".gitignore" {
+			_, _, oursRaw, oursExists, theirsRaw, theirsExists := s.readConflictStages(collDir, ".gitignore", isStashPop)
+			var chunks []string
+			if oursExists {
+				chunks = append(chunks, oursRaw)
+			}
+			if theirsExists {
+				chunks = append(chunks, theirsRaw)
+			}
+			if err := mergeGitIgnoreChunks(collDir, chunks...); err != nil {
+				fileConflict, _ := s.buildFileConflict(collDir, relPath, localColl, remoteURL, isStashPop)
+				unresolved = append(unresolved, fileConflict)
+				continue
+			}
+			if _, err := s.runGit(collDir, "add", "--", ".gitignore"); err != nil {
+				fileConflict, _ := s.buildFileConflict(collDir, relPath, localColl, remoteURL, isStashPop)
+				unresolved = append(unresolved, fileConflict)
+				continue
+			}
+			s.removeStashConflictFileEntry(collDir, relPath)
+			continue
+		}
 		fileConflict, canAutoMerge := s.buildFileConflict(collDir, relPath, localColl, remoteURL, isStashPop)
 		if canAutoMerge && fileConflict.ConflictType == "field_conflict" && len(fileConflict.Fields) == 0 {
 			absPath := filepath.Join(collDir, filepath.FromSlash(fileConflict.FilePath))
@@ -1114,6 +1155,11 @@ func (s *GitSyncService) ensureCollectionMetaConsistent(metaPath string, localCo
 			diskColl.GitRemoteURL = trimmedRemote
 			changed = true
 		}
+		if localColl.GitAutoSync != nil && (diskColl.GitAutoSync == nil || *diskColl.GitAutoSync != *localColl.GitAutoSync) {
+			val := *localColl.GitAutoSync
+			diskColl.GitAutoSync = &val
+			changed = true
+		}
 		if changed {
 			_ = s.fs.WriteJSON(metaPath, diskColl)
 		}
@@ -1169,6 +1215,9 @@ func validateConflictRelPath(collDir, relPath string) (string, string, error) {
 // commits the completed merge (or stash resolution), and rebuilds the collection index.
 func (s *GitSyncService) ResolveConflict(collectionsRoot, collectionID string, resolvedFiles map[string]interface{}) model.Result {
 	s.logger.Info("GitSyncService.ResolveConflict called", "collectionID", collectionID, "fileCount", len(resolvedFiles))
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {
@@ -1229,6 +1278,9 @@ func (s *GitSyncService) ResolveConflict(collectionsRoot, collectionID string, r
 				toWrite["is_default"] = coll.IsDefault
 				if strings.TrimSpace(coll.GitRemoteURL) != "" {
 					toWrite["git_remote_url"] = strings.TrimSpace(coll.GitRemoteURL)
+				}
+				if coll.GitAutoSync != nil {
+					toWrite["git_auto_sync"] = *coll.GitAutoSync
 				}
 			}
 			if err := s.fs.WriteJSON(entry.absPath, toWrite); err != nil {
@@ -1291,6 +1343,9 @@ func (s *GitSyncService) ResolveConflict(collectionsRoot, collectionID string, r
 // AbortMerge aborts an ongoing Git merge or StashAndPull conflict, restoring the collection to its safe state before Pull.
 func (s *GitSyncService) AbortMerge(collectionsRoot, collectionID string) model.Result {
 	s.logger.Info("GitSyncService.AbortMerge called", "collectionID", collectionID)
+
+	unlock := s.lockCollectionByID(collectionsRoot, collectionID)
+	defer unlock()
 
 	collDir, metaPath, coll, errRes := s.validateCollectionDir(collectionsRoot, collectionID)
 	if errRes != nil {

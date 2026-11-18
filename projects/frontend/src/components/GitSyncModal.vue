@@ -2,7 +2,9 @@
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const uiStore = useUiStore()
 const collectionStore = useCollectionStore()
 
@@ -271,6 +273,11 @@ const openConflictResolver = () => {
 const onAbortMerge = async () => {
   await collectionStore.abortGitMerge()
 }
+
+const onToggleAutoSync = async (e: Event) => {
+  const checked = (e.target as HTMLInputElement).checked
+  await collectionStore.updateActiveCollectionGitAutoSync(checked)
+}
 </script>
 
 <template>
@@ -333,7 +340,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="open-conflict-resolver-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="px-2.5 py-1 rounded bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
             @click="openConflictResolver"
           >
@@ -342,7 +349,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="git-sync-abort-merge-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="px-2.5 py-1 rounded bg-surface-raised border border-red-500/50 hover:bg-surface-hover text-red-200 text-xs font-semibold disabled:opacity-50 cursor-pointer"
             @click="onAbortMerge"
           >
@@ -369,7 +376,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="save-git-remote-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="px-3 py-1.5 rounded bg-brand-primary text-white text-xs font-semibold hover:opacity-90 disabled:opacity-50 shrink-0 cursor-pointer"
             @click="onSaveRemote"
           >
@@ -393,7 +400,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="git-clear-and-pull-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="px-3 py-1.5 rounded bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
             @click="onConfirmClearAndPull"
           >
@@ -402,7 +409,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="git-stash-and-pull-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="px-3 py-1.5 rounded bg-brand-primary hover:opacity-90 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
             @click="onConfirmStashAndPull"
           >
@@ -411,7 +418,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="git-save-only-remote-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="px-3 py-1.5 rounded bg-surface-raised border border-border-default hover:bg-surface-hover text-text-primary text-xs font-semibold disabled:opacity-50 cursor-pointer"
             @click="onConfirmSaveRemoteOnly"
           >
@@ -443,7 +450,7 @@ const onAbortMerge = async () => {
               v-model="selectedBranch"
               data-test="git-push-branch-select"
               aria-label="Chọn nhánh Git"
-              :disabled="collectionStore.gitSyncLoading"
+              :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
               class="sr-only"
               @change="selectBranch(selectedBranch)"
             >
@@ -456,7 +463,7 @@ const onAbortMerge = async () => {
             <button
               type="button"
               data-test="custom-branch-select-btn"
-              :disabled="collectionStore.gitSyncLoading"
+              :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
               aria-haspopup="listbox"
               :aria-expanded="branchDropdownOpen"
               class="h-7 px-2.5 rounded bg-surface-raised hover:bg-surface-hover border border-border-default hover:border-border-hover focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary transition-colors cursor-pointer text-xs font-mono text-text-primary flex items-center gap-1.5 select-none disabled:opacity-50"
@@ -515,7 +522,7 @@ const onAbortMerge = async () => {
                 <button
                   type="button"
                   data-test="refresh-branches-btn"
-                  :disabled="isRefreshingBranches || collectionStore.gitSyncLoading"
+                  :disabled="isRefreshingBranches || collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
                   class="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-hover cursor-pointer disabled:opacity-40 transition-colors"
                   title="Tải lại danh sách nhánh từ remote"
                   @click="refreshBranches"
@@ -617,7 +624,7 @@ const onAbortMerge = async () => {
             v-if="selectedBranch && selectedBranch !== currentBranch"
             type="button"
             data-test="checkout-selected-branch-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="text-[11px] px-2 py-0.5 rounded bg-brand-primary/15 hover:bg-brand-primary/25 text-brand-primary font-medium border border-brand-primary/30 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
             title="Chuyển working tree sang nhánh đã chọn"
             @click="onCheckoutBranch(selectedBranch)"
@@ -634,13 +641,34 @@ const onAbortMerge = async () => {
         </div>
       </div>
 
+      <!-- Auto Sync Toggle -->
+      <div class="flex items-center justify-between gap-3 px-3 py-2.5 rounded border border-border-default bg-surface-base">
+        <div class="space-y-0.5 min-w-0">
+          <label for="git-auto-sync-checkbox" class="text-xs font-semibold text-text-primary block cursor-pointer">
+            {{ t('gitSync.autoSyncLabel') }}
+          </label>
+          <p class="text-[11px] text-text-muted leading-snug">
+            {{ t('gitSync.autoSyncDesc') }}
+          </p>
+        </div>
+        <input
+          id="git-auto-sync-checkbox"
+          data-test="git-auto-sync-toggle"
+          type="checkbox"
+          :checked="collectionStore.isGitAutoSyncEnabled"
+          :disabled="!collectionStore.activeCollection || collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
+          class="h-4 w-4 shrink-0 accent-brand-primary cursor-pointer disabled:opacity-50"
+          @change="onToggleAutoSync"
+        />
+      </div>
+
       <!-- Pull & Push Actions -->
       <div class="flex items-center justify-between pt-2 border-t border-border-default gap-2">
         <div class="flex items-center gap-2">
           <button
             type="button"
             data-test="git-pull-modal-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="h-8 px-3 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors"
             @click="onPull"
           >
@@ -649,7 +677,7 @@ const onAbortMerge = async () => {
           <button
             type="button"
             data-test="git-push-modal-btn"
-            :disabled="collectionStore.gitSyncLoading"
+            :disabled="collectionStore.gitSyncLoading || collectionStore.autoSyncInFlight"
             class="h-8 px-3 rounded bg-surface-raised border border-border-default text-xs font-semibold text-text-primary hover:bg-surface-hover disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-colors"
             @click="onPush"
           >

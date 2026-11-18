@@ -79,6 +79,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
       const result = await SaveEnvironment(env)
       if (result.success) {
         await loadAll() // Reload to get updated list (with IDs and updated timestamps)
+        useCollectionStore().scheduleAutoPush()
         return true
       } else {
         uiStore.showToast(`Error saving environment: ${result.error?.message}`)
@@ -101,6 +102,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
           await collectionStore.updateActiveCollectionEnv(null)
         }
         await loadAll()
+        collectionStore.scheduleAutoPush()
         return true
       } else {
         uiStore.showToast(`Error deleting environment: ${result.error?.message}`)
@@ -142,7 +144,10 @@ export const useEnvironmentStore = defineStore('environment', () => {
             env.variables.push({ key, value: val, enabled: true } as any)
           }
         }
-        await SaveEnvironment(env)
+        const saveRes = await SaveEnvironment(env)
+        if (saveRes?.success) {
+          useCollectionStore().scheduleAutoPush()
+        }
         return
       }
     }
@@ -217,7 +222,10 @@ export const useEnvironmentStore = defineStore('environment', () => {
             targetEnv.variables.push({ key, value: val, enabled: true } as any)
           }
         }
-        await SaveEnvironment(targetEnv)
+        const saveRes = await SaveEnvironment(targetEnv)
+        if (saveRes?.success) {
+          useCollectionStore().scheduleAutoPush()
+        }
       }
     }
 
@@ -344,6 +352,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
 
     if (anyFolderUpdated) {
       await collectionStore.loadTree()
+      collectionStore.scheduleAutoPush()
     }
   }
 
@@ -501,6 +510,7 @@ export const useEnvironmentStore = defineStore('environment', () => {
 
     if (anyFolderUpdated) {
       await collectionStore.loadTree()
+      collectionStore.scheduleAutoPush()
     }
   }
 

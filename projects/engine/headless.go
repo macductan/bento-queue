@@ -146,7 +146,6 @@ type RunOptions struct {
 	EnvSvc          *service.EnvironmentService
 	RequestSvc      *service.RequestService
 	ExecutorSvc     *service.ExecutorService
-	HistorySvc      *service.HistoryService
 	CollectionsRoot string
 	CollectionRoot  string
 	Collection      model.Collection
@@ -872,7 +871,6 @@ func ApplyScriptUpdatesToDisk(
 // 2. Persisting Pre-request variable/auth updates to disk (unless NoSaveEnv is true)
 // 3. HTTP request execution via ExecutorService.Send
 // 4. Post-response script execution + persisting Post-response variable/auth updates to disk
-// 5. Recording execution history via HistoryService.RecordExecution
 func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	fs := opts.FS
@@ -896,10 +894,6 @@ func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 	execSvc := opts.ExecutorSvc
 	if execSvc == nil {
 		execSvc = service.NewExecutorService(silentLogger)
-	}
-	historySvc := opts.HistorySvc
-	if historySvc == nil {
-		historySvc = service.NewHistoryService(fs, silentLogger)
 	}
 
 	// Ensure Collection metadata is loaded if CollectionRoot is provided
@@ -1038,22 +1032,6 @@ func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 			errCode = sendRes.Error.Code
 			errMsg = sendRes.Error.Message
 		}
-		if opts.CollectionRoot != "" {
-			reqName := opts.Request.Name
-			if strings.TrimSpace(reqName) == "" {
-				reqName = preOut.ExecuteRequest.URL
-			}
-			historySvc.RecordExecution(opts.CollectionRoot, model.ExecutionHistoryEntry{
-				CollectionID: coll.ID,
-				RequestID:    opts.Request.ID,
-				RequestName:  reqName,
-				Method:       preOut.ExecuteRequest.Method,
-				URL:          preOut.ExecuteRequest.URL,
-				Timestamp:    time.Now().UTC().Format(time.RFC3339),
-				Request:      preOut.ExecuteRequest,
-				Error:        fmt.Sprintf("[%s] %s", errCode, errMsg),
-			})
-		}
 		var envUpdatesOut map[string]string
 		if len(mergedEnvUpdates) > 0 {
 			envUpdatesOut = mergedEnvUpdates
@@ -1126,28 +1104,6 @@ func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 				}
 			}
 		}
-	}
-
-	// Step 5: Record Execution History
-	if opts.CollectionRoot != "" {
-		reqName := opts.Request.Name
-		if strings.TrimSpace(reqName) == "" {
-			reqName = preOut.ExecuteRequest.URL
-		}
-		historySvc.RecordExecution(opts.CollectionRoot, model.ExecutionHistoryEntry{
-			CollectionID: coll.ID,
-			RequestID:    opts.Request.ID,
-			RequestName:  reqName,
-			Method:       preOut.ExecuteRequest.Method,
-			URL:          preOut.ExecuteRequest.URL,
-			StatusCode:   resp.StatusCode,
-			StatusText:   resp.StatusText,
-			TimeMs:       int64(resp.TimeMs),
-			SizeBytes:    int64(resp.SizeBytes),
-			Timestamp:    resp.Timestamp,
-			Request:      preOut.ExecuteRequest,
-			Response:     &resp,
-		})
 	}
 
 	var envUpdatesOut map[string]string

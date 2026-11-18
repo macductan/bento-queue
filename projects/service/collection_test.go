@@ -1708,6 +1708,46 @@ func TestCollection_Locale_PersistenceAndDuplicate(t *testing.T) {
 	}
 }
 
+func TestCollection_GitAutoSync_PersistenceAndDuplicate(t *testing.T) {
+	svc, fs, collectionsRoot := setupCollectionService(t)
+
+	collRes := svc.CreateCollection(collectionsRoot, "AutoSync Test")
+	if !collRes.Success {
+		t.Fatalf("CreateCollection failed: %+v", collRes)
+	}
+	coll := collRes.Data.(model.Collection)
+	if coll.GitAutoSync != nil {
+		t.Errorf("expected nil GitAutoSync initially (default true), got %v", *coll.GitAutoSync)
+	}
+
+	disabled := false
+	updateRes := svc.UpdateCollection(collectionsRoot, model.Collection{
+		ID:          coll.ID,
+		Name:        "AutoSync Test",
+		GitAutoSync: &disabled,
+	})
+	if !updateRes.Success {
+		t.Fatalf("UpdateCollection failed: %+v", updateRes)
+	}
+
+	var diskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collectionsRoot, coll.ID, "collection.json"), &diskColl); err != nil {
+		t.Fatalf("ReadJSON failed: %v", err)
+	}
+	if diskColl.GitAutoSync == nil || *diskColl.GitAutoSync {
+		t.Errorf("expected disk GitAutoSync false, got %v", diskColl.GitAutoSync)
+	}
+
+	dupRes := svc.DuplicateCollection(collectionsRoot, coll.ID)
+	if !dupRes.Success {
+		t.Fatalf("DuplicateCollection failed: %+v", dupRes)
+	}
+	dupColl := dupRes.Data.(model.Collection)
+	if dupColl.GitAutoSync == nil || *dupColl.GitAutoSync {
+		t.Errorf("expected duplicated collection GitAutoSync false, got %v", dupColl.GitAutoSync)
+	}
+}
+
 func TestAuthEnvs_DiskPersistence(t *testing.T) {
 	svc, fs, collectionsRoot := setupCollectionService(t)
 

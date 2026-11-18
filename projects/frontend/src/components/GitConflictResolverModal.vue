@@ -399,6 +399,8 @@ function entityTypeBadge(entityType: string): { label: string; classes: string }
       return { label: 'Flow', classes: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' }
     case 'flow_folder':
       return { label: 'Flow Folder', classes: 'bg-teal-500/20 text-teal-300 border-teal-500/40' }
+    case 'mock_server':
+      return { label: 'Mock Server', classes: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' }
     default:
       return { label: 'Collection', classes: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' }
   }

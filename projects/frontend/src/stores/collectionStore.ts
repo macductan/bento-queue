@@ -86,9 +86,117 @@ interface CollectionState {
   draggingNode: { id: string; type: 'folder' | 'request' } | null
   sortDirectionMap: Record<string, 'asc' | 'desc'>
   hasExternalChanges: boolean
+  autoSyncInFlight: boolean
+  autoPushPending: boolean
+  lastAutoPullAt: number
+}
+
+export const AUTO_PUSH_DEBOUNCE_MS = 15_000
+export const AUTO_PULL_INTERVAL_MS = 180_000
+export const AUTO_PULL_FOCUS_THROTTLE_MS = 60_000
+
+interface AutoSyncRuntime {
+  pushTimer: ReturnType<typeof setTimeout> | null
+  pullInterval: ReturnType<typeof setInterval> | null
+  focusHandler: (() => void) | null
+  visibilityHandler: (() => void) | null
+  syncEpoch: number
+  suppressLocalChangeCount: number
+  pendingSwitchPullTargetId: string | null
 }
 
 const externalChangeBoundStores = new WeakSet<object>()
+const autoSyncRuntimeMap = new WeakMap<object, AutoSyncRuntime>()
+
+function getAutoSyncRuntime(store: object): AutoSyncRuntime {
+  let rt = autoSyncRuntimeMap.get(store)
+  if (!rt) {
+    rt = {
+      pushTimer: null,
+      pullInterval: null,
+      focusHandler: null,
+      visibilityHandler: null,
+      syncEpoch: 0,
+      suppressLocalChangeCount: 0,
+      pendingSwitchPullTargetId: null
+    }
+    autoSyncRuntimeMap.set(store, rt)
+  }
+  return rt
+}
+
+function bumpGitSyncEpoch(store: object): number {
+  const rt = getAutoSyncRuntime(store)
+  rt.syncEpoch += 1
+  return rt.syncEpoch
+}
+
+function resetGitSyncStateForTransition(store: any) {
+  bumpGitSyncEpoch(store)
+  getAutoSyncRuntime(store).pendingSwitchPullTargetId = null
+  store.cancelAutoPush()
+  store.gitSyncStatus = null
+  store.gitConflictError = null
+  store.lastAutoPullAt = 0
+}
+
+function schedulePendingSwitchPullIfNeeded(store: any) {
+  const rt = getAutoSyncRuntime(store)
+  const pendingId = rt.pendingSwitchPullTargetId
+  if (!pendingId) return
+  rt.pendingSwitchPullTargetId = null
+  if (
+    (store.activeCollectionId || 'default') === pendingId &&
+    !store.gitSyncLoading &&
+    !store.autoSyncInFlight
+  ) {
+    queueMicrotask(() => {
+      void store.autoPull({ reason: 'switch' })
+    })
+  }
+}
+
+async function hasActiveExecution(): Promise<boolean> {
+  try {
+    const flowStore = useFlowStore()
+    if (flowStore.isRunning) return true
+  } catch {
+    // Ignore when flowStore is unavailable
+  }
+  try {
+    const { useResponseStore } = await import('./responseStore')
+    if (useResponseStore().loading) return true
+  } catch {
+    // Ignore when responseStore is unavailable
+  }
+  return false
+}
+
+function didGitPullUpdateWorktree(output?: string): boolean {
+  const trimmed = (output || '').trim()
+  if (!trimmed) return false
+  const lower = trimmed.toLowerCase()
+  if (
+    lower.includes('already up to date') ||
+    lower.includes('already up-to-date') ||
+    lower.includes('chưa có nhánh nào để pull')
+  ) {
+    return false
+  }
+  return true
+}
+
+function didGitPushMergeRemote(output?: string): boolean {
+  const lower = (output || '').toLowerCase()
+  return (
+    lower.includes('merge made by') ||
+    lower.includes('fast-forward') ||
+    lower.includes('updating ') ||
+    lower.includes('auto-merging') ||
+    lower.includes('automatic merge failed') ||
+    lower.includes('conflict')
+  )
+}
 
 const useBaseCollectionStore = defineStore('collection', {
   state: (): CollectionState => ({
@@ -109,7 +217,10 @@ const useBaseCollectionStore = defineStore('collection', {
     gitBranches: [],
     draggingNode: null,
     sortDirectionMap: {},
-    hasExternalChanges: false
+    hasExternalChanges: false,
+    autoSyncInFlight: false,
+    autoPushPending: false,
+    lastAutoPullAt: 0
   }),
   getters: {
     activeCollection(state): model.Collection | null {
@@ -119,6 +230,21 @@ const useBaseCollectionStore = defineStore('collection', {
     isDefaultActive(state): boolean {
       if (!state.activeCollectionId) return true
       return state.activeCollectionId === 'default' || state.collections.find(c => c.id === state.activeCollectionId)?.is_default === true
+    },
+    isGitRemoteConfigured(state): boolean {
+      const coll = state.activeCollectionId
+        ? state.collections.find(c => c.id === state.activeCollectionId) || null
+        : null
+      return Boolean(coll?.git_remote_url?.trim() || state.gitSyncStatus?.remote_url?.trim())
+    },
+    isGitAutoSyncEnabled(state): boolean {
+      const coll = state.activeCollectionId
+        ? state.collections.find(c => c.id === state.activeCollectionId) || null
+        : null
+      if (coll) {
+        return (coll as any).git_auto_sync !== false
+      }
+      return state.gitSyncStatus?.auto_sync_enabled !== false
     }
   },
   actions: {
@@ -128,6 +254,14 @@ const useBaseCollectionStore = defineStore('collection', {
       try {
         EventsOn('collection:external-change', () => {
           this.hasExternalChanges = true
+        })
+        EventsOn('collection:local-changed', (payload?: any) => {
+          const rt = getAutoSyncRuntime(this)
+          if (rt.suppressLocalChangeCount > 0) return
+          const payloadId = payload?.collectionId
+          const currentActive = this.activeCollectionId || 'default'
+          if (payloadId && payloadId !== currentActive) return
+          this.scheduleAutoPush()
         })
       } catch {
         // Ignore when Wails runtime is not injected in unit test environment
@@ -149,7 +283,10 @@ const useBaseCollectionStore = defineStore('collection', {
         this.loadCollections({ skipEnvSync: true }),
         this.loadTree(),
         envStore.loadAll(),
-        flowStore.loadFlowTree()
+        flowStore.loadFlowTree(),
+        import('./mockServerStore')
+          .then(({ useMockServerStore }) => useMockServerStore().loadStatus())
+          .catch(() => {})
       ])
       envStore.syncActiveEnvFromCollection()
 
@@ -324,6 +461,7 @@ const useBaseCollectionStore = defineStore('collection', {
     },
     async refresh() {
       this.hasExternalChanges = false
+      resetGitSyncStateForTransition(this)
       this.tree = []
       this.activeRequestId = null
       this.activeFolderId = null
@@ -444,6 +582,7 @@ const useBaseCollectionStore = defineStore('collection', {
         if (result.success) {
           this.hasExternalChanges = false
           this.activeCollectionId = targetId
+          resetGitSyncStateForTransition(this)
           reqStore.clearRequest()
           flowStore.flowTree = []
           flowStore.sortDirectionMap = {}
@@ -470,6 +609,7 @@ const useBaseCollectionStore = defineStore('collection', {
             flowStore.loadFlowTree()
           ])
           envStore.syncActiveEnvFromCollection()
+          void this.autoPull({ reason: 'switch' })
           return true
         } else {
           uiStore.showToast(result.error?.message || 'Không thể chuyển collection')
@@ -521,6 +661,9 @@ const useBaseCollectionStore = defineStore('collection', {
         if (result.success) {
           await this.loadCollections()
           uiStore.showToast('Đã đổi tên collection')
+          if (id === (this.activeCollectionId || 'default')) {
+            this.scheduleAutoPush()
+          }
           return true
         } else {
           uiStore.showToast(result.error?.message || 'Không thể đổi tên collection')
@@ -552,6 +695,7 @@ const useBaseCollectionStore = defineStore('collection', {
           const isActive = id === this.activeCollectionId || Boolean((result.data as any)?.active_collection)
           if (isActive) {
             this.activeCollectionId = 'default'
+            resetGitSyncStateForTransition(this)
             const { useRequestStore } = await import('./requestStore')
             useRequestStore().clearRequest()
             const flowStore = useFlowStore()
@@ -573,6 +717,7 @@ const useBaseCollectionStore = defineStore('collection', {
               flowStore.loadFlowTree()
             ])
             envStore.syncActiveEnvFromCollection()
+            void this.autoPull({ reason: 'switch' })
           } else {
             await this.loadCollections()
           }
@@ -809,6 +954,9 @@ const useBaseCollectionStore = defineStore('collection', {
               ;(coll as any).auth_envs = authEnvs
             }
           }
+          if (id === (this.activeCollectionId || 'default')) {
+            this.scheduleAutoPush()
+          }
           return true
         } else {
           uiStore.showToast(result.error?.message || 'Không thể cập nhật biến collection')
@@ -856,6 +1004,7 @@ const useBaseCollectionStore = defineStore('collection', {
             }
           }
           coll.active_env_id = normalizedEnvId
+          this.scheduleAutoPush()
           return true
         } else {
           coll.active_env_id = prevActiveEnvId
@@ -871,7 +1020,9 @@ const useBaseCollectionStore = defineStore('collection', {
     async updateActiveCollectionLocale(locale: 'en' | 'vi'): Promise<boolean> {
       const coll = this.activeCollection
       if (!coll) return true
+      const targetId = coll.id || this.activeCollectionId || 'default'
       const prevLocale = (coll as any).locale
+      const prevIsActive = coll.is_active
       ;(coll as any).locale = locale
 
       let updateFn: typeof UpdateCollection | undefined
@@ -896,8 +1047,12 @@ const useBaseCollectionStore = defineStore('collection', {
         if (result.success) {
           if (result.data && Object.keys(result.data).length > 0) {
             Object.assign(coll, result.data)
+            coll.is_active = prevIsActive
           }
           ;(coll as any).locale = locale
+          if ((this.activeCollectionId || 'default') === targetId) {
+            this.scheduleAutoPush()
+          }
           return true
         } else {
           ;(coll as any).locale = prevLocale
@@ -933,6 +1088,7 @@ const useBaseCollectionStore = defineStore('collection', {
                if (path) path.forEach(n => this.expandedFolders.add(n.id))
              }
           }
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể tạo request')
@@ -954,6 +1110,7 @@ const useBaseCollectionStore = defineStore('collection', {
           if (result.data) {
              this.expandedFolders.add(result.data.id)
           }
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể tạo thư mục')
@@ -981,6 +1138,7 @@ const useBaseCollectionStore = defineStore('collection', {
           if (reqStore.original?.id === id) {
             reqStore.original.name = resolvedName
           }
+          this.scheduleAutoPush()
           return true
         } else {
           const { useUiStore } = await import('./uiStore')
@@ -1002,7 +1160,8 @@ const useBaseCollectionStore = defineStore('collection', {
           await this.loadTree()
           const updatedNode = this.findNode(this.tree, id)
           const resolvedName = updatedNode ? updatedNode.name : ((result.data as any)?.name || trimmed)
-          useTabStore().updateTabMeta('folder', id, { name: resolvedName })
+          useTabStore().updateTabMeta('folder', id, { name: updatedNode ? updatedNode.name : resolvedName })
+          this.scheduleAutoPush()
           return true
         } else {
           const { useUiStore } = await import('./uiStore')
@@ -1049,6 +1208,7 @@ const useBaseCollectionStore = defineStore('collection', {
             this.selectNextRequestOrClear(id)
           }
           await this.loadTree()
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể xóa request')
@@ -1133,6 +1293,7 @@ const useBaseCollectionStore = defineStore('collection', {
             await this.loadTree()
             await tabStore.closeTabsByEntities(entitiesToClose)
           }
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể xóa thư mục')
@@ -1156,6 +1317,7 @@ const useBaseCollectionStore = defineStore('collection', {
         if (result.success && result.data) {
           await this.loadTree()
           void this.selectRequest(result.data.id)
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể sao chép request')
@@ -1181,6 +1343,7 @@ const useBaseCollectionStore = defineStore('collection', {
                 path.forEach(node => this.expandedFolders.add(node.id))
              }
           }
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể di chuyển request')
@@ -1210,6 +1373,7 @@ const useBaseCollectionStore = defineStore('collection', {
           if (updatedNode) {
             useTabStore().updateTabMeta('folder', id, { name: updatedNode.name })
           }
+          this.scheduleAutoPush()
         } else {
           const { useUiStore } = await import('./uiStore')
           useUiStore().showToast(result.error?.message || 'Không thể di chuyển thư mục')
@@ -1254,6 +1418,7 @@ const useBaseCollectionStore = defineStore('collection', {
               }
               void this.selectRequest(firstRequestId)
             }
+            this.scheduleAutoPush()
           } else {
             uiStore.showImportError(result.error?.message || 'Không thể import Postman collection')
           }
@@ -1427,6 +1592,7 @@ const useBaseCollectionStore = defineStore('collection', {
               folder.children = reorderList(folder.children)
             }
           }
+          this.scheduleAutoPush()
           return true
         } else {
           const { useUiStore } = await import('./uiStore')
@@ -1564,6 +1730,7 @@ const useBaseCollectionStore = defineStore('collection', {
     },
     async saveGitRemote(remoteUrl: string, collectionId?: string): Promise<boolean> {
       const targetId = collectionId || this.activeCollectionId || 'default'
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       try {
         const res = await SaveCollectionGitRemote(targetId, remoteUrl.trim())
@@ -1572,6 +1739,9 @@ const useBaseCollectionStore = defineStore('collection', {
         if (res.success) {
           this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
           await this.loadCollections()
+          if (!remoteUrl.trim()) {
+            this.cancelAutoPush()
+          }
           uiStore.showToast('Đã lưu cấu hình Git Remote')
           return true
         } else {
@@ -1584,6 +1754,7 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async flushDirtyBeforeGitSync(): Promise<boolean> {
@@ -1628,6 +1799,8 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       }
 
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       this.gitConflictError = null
       try {
@@ -1663,6 +1836,7 @@ const useBaseCollectionStore = defineStore('collection', {
               flowStore.clearCurrentFlow()
             }
           }
+          this.lastAutoPullAt = Date.now()
           uiStore.showToast('Git Pull thành công')
           return true
         } else {
@@ -1688,6 +1862,7 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async gitCheckout(branch: string, collectionId?: string): Promise<boolean> {
@@ -1699,6 +1874,8 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       }
 
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       try {
         const res = typeof GitCheckoutBranch === 'function'
@@ -1733,6 +1910,7 @@ const useBaseCollectionStore = defineStore('collection', {
               flowStore.clearCurrentFlow()
             }
           }
+          this.lastAutoPullAt = Date.now()
           uiStore.showToast(`Đã chuyển sang nhánh ${branch}`)
           return true
         } else {
@@ -1744,6 +1922,7 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async fetchLocalBranches(collectionId?: string): Promise<string[]> {
@@ -1767,6 +1946,8 @@ const useBaseCollectionStore = defineStore('collection', {
       const targetId = collectionId || this.activeCollectionId || 'default'
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       this.gitConflictError = null
       try {
@@ -1804,6 +1985,7 @@ const useBaseCollectionStore = defineStore('collection', {
               flowStore.clearCurrentFlow()
             }
           }
+          this.lastAutoPullAt = Date.now()
           uiStore.showToast('Đã xóa dữ liệu local và đồng bộ từ Remote')
           return true
         } else {
@@ -1825,6 +2007,7 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async gitStashAndPull(remoteUrl: string, collectionId?: string): Promise<boolean> {
@@ -1836,6 +2019,8 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       }
 
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       this.gitConflictError = null
       try {
@@ -1873,6 +2058,7 @@ const useBaseCollectionStore = defineStore('collection', {
               flowStore.clearCurrentFlow()
             }
           }
+          this.lastAutoPullAt = Date.now()
           uiStore.showToast('Đã stash, pull và gộp thay đổi thành công')
           return true
         } else {
@@ -1898,6 +2084,7 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async gitPush(branch?: string, collectionId?: string): Promise<boolean> {
@@ -1927,6 +2114,8 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       }
 
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       try {
         const res = targetBranch && typeof GitPushCollectionToBranch === 'function'
@@ -1961,6 +2150,7 @@ const useBaseCollectionStore = defineStore('collection', {
               }
             }
           }
+          this.lastAutoPullAt = Date.now()
           uiStore.showToast('Git Push thành công')
           return true
         } else {
@@ -1986,12 +2176,15 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async resolveGitConflicts(resolvedFiles: Record<string, any>, collectionId?: string): Promise<boolean> {
       const targetId = collectionId || this.activeCollectionId || 'default'
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       try {
         const res = await ResolveGitConflict(targetId, resolvedFiles)
@@ -2024,7 +2217,9 @@ const useBaseCollectionStore = defineStore('collection', {
               flowStore.clearCurrentFlow()
             }
           }
+          this.lastAutoPullAt = Date.now()
           uiStore.showToast('Đã giải quyết xung đột và hoàn tất đồng bộ Git')
+          this.scheduleAutoPush()
           return true
         } else {
           const statusData = res.data as model.GitSyncStatus | undefined
@@ -2045,12 +2240,15 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
     },
     async abortGitMerge(collectionId?: string): Promise<boolean> {
       const targetId = collectionId || this.activeCollectionId || 'default'
       const { useUiStore } = await import('./uiStore')
       const uiStore = useUiStore()
+      this.cancelAutoPush()
+      bumpGitSyncEpoch(this)
       this.gitSyncLoading = true
       try {
         const res = await AbortGitMerge(targetId)
@@ -2104,7 +2302,354 @@ const useBaseCollectionStore = defineStore('collection', {
         return false
       } finally {
         this.gitSyncLoading = false
+        schedulePendingSwitchPullIfNeeded(this)
       }
+    },
+    async hasUnsavedEdits(): Promise<boolean> {
+      const { useRequestStore } = await import('./requestStore')
+      const reqStore = useRequestStore()
+      const flowStore = useFlowStore()
+      const tabStore = useTabStore()
+      return Boolean(
+        reqStore.isDirty ||
+        flowStore.isDirty ||
+        tabStore.tabs.some(t => t.isDirty)
+      )
+    },
+    async updateActiveCollectionGitAutoSync(enabled: boolean): Promise<boolean> {
+      const coll = this.activeCollection
+      if (!coll) return false
+      const targetId = coll.id || this.activeCollectionId || 'default'
+      const prevValue = (coll as any).git_auto_sync
+      const prevIsActive = coll.is_active
+      ;(coll as any).git_auto_sync = enabled
+      if (this.gitSyncStatus) {
+        this.gitSyncStatus.auto_sync_enabled = enabled
+      }
+
+      let updateFn: typeof UpdateCollection | undefined
+      try {
+        updateFn = UpdateCollection
+      } catch {
+        return true
+      }
+      if (typeof updateFn !== 'function') {
+        return true
+      }
+
+      const { useUiStore } = await import('./uiStore')
+      const uiStore = useUiStore()
+      const { t } = await import('@/i18n')
+      const rt = getAutoSyncRuntime(this)
+      rt.suppressLocalChangeCount += 1
+      try {
+        const payload: any = {
+          ...coll,
+          id: targetId,
+          git_auto_sync: enabled
+        }
+        const result = await updateFn(payload)
+        const stillSameActive = (this.activeCollectionId || 'default') === targetId
+        if (result?.success) {
+          if (result.data && Object.keys(result.data).length > 0) {
+            Object.assign(coll, result.data)
+            coll.is_active = prevIsActive
+          }
+          ;(coll as any).git_auto_sync = enabled
+          if (stillSameActive) {
+            if (this.gitSyncStatus) {
+              this.gitSyncStatus.auto_sync_enabled = enabled
+            }
+            if (!enabled) {
+              this.cancelAutoPush()
+              uiStore.showToast(t('gitSync.autoSyncDisabledToast'))
+            } else {
+              uiStore.showToast(t('gitSync.autoSyncEnabledToast'))
+              void this.autoPull({ reason: 'toggle', force: true })
+            }
+          }
+          return true
+        } else {
+          ;(coll as any).git_auto_sync = prevValue
+          if (stillSameActive && this.gitSyncStatus) {
+            this.gitSyncStatus.auto_sync_enabled = prevValue !== false
+          }
+          uiStore.showToast(result?.error?.message || 'Không thể lưu cấu hình Auto Sync')
+          return false
+        }
+      } catch (err: any) {
+        ;(coll as any).git_auto_sync = prevValue
+        if ((this.activeCollectionId || 'default') === targetId && this.gitSyncStatus) {
+          this.gitSyncStatus.auto_sync_enabled = prevValue !== false
+        }
+        uiStore.showToast(String(err))
+        return false
+      } finally {
+        rt.suppressLocalChangeCount = Math.max(0, rt.suppressLocalChangeCount - 1)
+      }
+    },
+    scheduleAutoPush(delayMs: number = AUTO_PUSH_DEBOUNCE_MS) {
+      if (!this.isGitRemoteConfigured || !this.isGitAutoSyncEnabled) {
+        return
+      }
+      if (this.gitConflictError || this.gitSyncStatus?.has_conflicts) {
+        return
+      }
+      const rt = getAutoSyncRuntime(this)
+      if (rt.pushTimer) {
+        clearTimeout(rt.pushTimer)
+        rt.pushTimer = null
+      }
+      this.autoPushPending = true
+      rt.pushTimer = setTimeout(() => {
+        rt.pushTimer = null
+        void this.executeAutoPush()
+      }, delayMs)
+    },
+    cancelAutoPush() {
+      const rt = getAutoSyncRuntime(this)
+      if (rt.pushTimer) {
+        clearTimeout(rt.pushTimer)
+        rt.pushTimer = null
+      }
+      this.autoPushPending = false
+    },
+    async executeAutoPush(): Promise<boolean> {
+      if (!this.isGitRemoteConfigured || !this.isGitAutoSyncEnabled) {
+        this.autoPushPending = false
+        return false
+      }
+      if (this.gitConflictError || this.gitSyncStatus?.has_conflicts) {
+        this.autoPushPending = false
+        return false
+      }
+      if (this.gitSyncLoading || this.autoSyncInFlight || this.switching) {
+        this.scheduleAutoPush(AUTO_PUSH_DEBOUNCE_MS)
+        return false
+      }
+      if (typeof GitPushCollection !== 'function') {
+        this.autoPushPending = false
+        return false
+      }
+
+      const targetId = this.activeCollectionId || 'default'
+      const rt = getAutoSyncRuntime(this)
+      const epoch = rt.syncEpoch
+      this.autoSyncInFlight = true
+      try {
+        if ((await this.hasUnsavedEdits()) || (await hasActiveExecution())) {
+          if (rt.syncEpoch === epoch && (this.activeCollectionId || 'default') === targetId && this.isGitAutoSyncEnabled) {
+            this.scheduleAutoPush(AUTO_PUSH_DEBOUNCE_MS)
+          }
+          return false
+        }
+        if (rt.syncEpoch !== epoch || (this.activeCollectionId || 'default') !== targetId || this.switching) {
+          return false
+        }
+
+        this.autoPushPending = false
+        const res = await GitPushCollection(targetId)
+        const currentTargetId = this.activeCollectionId || 'default'
+        if (rt.syncEpoch !== epoch || currentTargetId !== targetId || this.switching) {
+          return false
+        }
+        if (res?.success) {
+          this.gitSyncStatus = (res.data as model.GitSyncStatus) || null
+          this.gitConflictError = null
+          this.lastAutoPullAt = Date.now()
+          const output = (res.data as model.GitSyncStatus | undefined)?.output
+          if (didGitPushMergeRemote(output)) {
+            await this.smartReload()
+          }
+          return true
+        }
+
+        const statusData = res?.data as model.GitSyncStatus | undefined
+        if (statusData) {
+          this.gitSyncStatus = statusData
+        }
+        if (res?.error?.code === 'GIT_CONFLICT') {
+          const { useUiStore } = await import('./uiStore')
+          const uiStore = useUiStore()
+          this.gitConflictError = {
+            message: res.error.message,
+            files: statusData?.conflict_files || []
+          }
+          uiStore.gitSyncModalOpen = true
+          if (statusData?.conflicts && statusData.conflicts.length > 0) {
+            uiStore.gitConflictModalOpen = true
+          }
+          uiStore.showToast(res.error.message)
+        } else if (this.isGitRemoteConfigured && this.isGitAutoSyncEnabled) {
+          this.autoPushPending = true
+        }
+        return false
+      } catch {
+        if (
+          rt.syncEpoch === epoch &&
+          (this.activeCollectionId || 'default') === targetId &&
+          !this.switching &&
+          this.isGitRemoteConfigured &&
+          this.isGitAutoSyncEnabled
+        ) {
+          this.autoPushPending = true
+        }
+        return false
+      } finally {
+        this.autoSyncInFlight = false
+        schedulePendingSwitchPullIfNeeded(this)
+      }
+    },
+    async autoPull(opts?: { reason?: 'startup' | 'switch' | 'focus' | 'interval' | 'toggle'; force?: boolean }): Promise<boolean> {
+      const reason = opts?.reason || 'interval'
+      const targetId = this.activeCollectionId || 'default'
+      if (!this.isGitRemoteConfigured) {
+        return false
+      }
+      const ensureInitialStatusIfNeeded = () => {
+        if ((reason === 'startup' || reason === 'switch') && !this.gitSyncStatus) {
+          void this.fetchGitStatus(targetId)
+        }
+      }
+      if (!this.isGitAutoSyncEnabled) {
+        ensureInitialStatusIfNeeded()
+        return false
+      }
+      const rt = getAutoSyncRuntime(this)
+      if (this.gitSyncLoading || this.autoSyncInFlight) {
+        if (reason === 'switch') {
+          rt.pendingSwitchPullTargetId = targetId
+        }
+        return false
+      }
+      if (reason !== 'switch' && this.switching) {
+        return false
+      }
+      if (this.gitConflictError || this.gitSyncStatus?.has_conflicts) {
+        return false
+      }
+      if (reason === 'interval' && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return false
+      }
+      if (reason === 'focus' && !opts?.force) {
+        const now = Date.now()
+        if (this.lastAutoPullAt > 0 && now - this.lastAutoPullAt < AUTO_PULL_FOCUS_THROTTLE_MS) {
+          return false
+        }
+      }
+      if (this.autoPushPending && !opts?.force) {
+        ensureInitialStatusIfNeeded()
+        return false
+      }
+      if (typeof GitPullCollection !== 'function') {
+        return false
+      }
+
+      const epoch = rt.syncEpoch
+      this.autoSyncInFlight = true
+      try {
+        if ((await this.hasUnsavedEdits()) || (await hasActiveExecution())) {
+          ensureInitialStatusIfNeeded()
+          return false
+        }
+        if (rt.syncEpoch !== epoch || (this.activeCollectionId || 'default') !== targetId) {
+          return false
+        }
+
+        const res = await GitPullCollection(targetId)
+        const currentTargetId = this.activeCollectionId || 'default'
+        if (rt.syncEpoch !== epoch || currentTargetId !== targetId) {
+          return false
+        }
+        this.lastAutoPullAt = Date.now()
+        if (res?.success) {
+          const statusData = (res.data as model.GitSyncStatus) || null
+          this.gitSyncStatus = statusData
+          this.gitConflictError = null
+          if (didGitPullUpdateWorktree(statusData?.output)) {
+            await this.smartReload()
+            if (this.switching || (this.activeCollectionId || 'default') !== targetId || rt.syncEpoch !== epoch) {
+              return false
+            }
+            const { useUiStore } = await import('./uiStore')
+            const { t } = await import('@/i18n')
+            useUiStore().showToast(t('gitSync.autoPullUpdatedToast'))
+          }
+          if (this.autoPushPending && !rt.pushTimer && this.isGitAutoSyncEnabled && !statusData?.has_conflicts) {
+            queueMicrotask(() => {
+              void this.executeAutoPush()
+            })
+          }
+          return true
+        }
+
+        const statusData = res?.data as model.GitSyncStatus | undefined
+        if (statusData) {
+          this.gitSyncStatus = statusData
+        } else if (!this.gitSyncStatus) {
+          void this.fetchGitStatus(targetId)
+        }
+        if (res?.error?.code === 'GIT_CONFLICT') {
+          const { useUiStore } = await import('./uiStore')
+          const uiStore = useUiStore()
+          this.gitConflictError = {
+            message: res.error.message,
+            files: statusData?.conflict_files || []
+          }
+          uiStore.gitSyncModalOpen = true
+          if (statusData?.conflicts && statusData.conflicts.length > 0) {
+            uiStore.gitConflictModalOpen = true
+          }
+          uiStore.showToast(res.error.message)
+        }
+        return false
+      } catch {
+        ensureInitialStatusIfNeeded()
+        return false
+      } finally {
+        this.autoSyncInFlight = false
+        schedulePendingSwitchPullIfNeeded(this)
+      }
+    },
+    startAutoSyncScheduler() {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return
+      const rt = getAutoSyncRuntime(this)
+      if (rt.pullInterval || rt.focusHandler || rt.visibilityHandler) {
+        return
+      }
+      rt.focusHandler = () => {
+        void this.autoPull({ reason: 'focus' })
+      }
+      rt.visibilityHandler = () => {
+        if (document.visibilityState === 'visible') {
+          void this.autoPull({ reason: 'focus' })
+        }
+      }
+      window.addEventListener('focus', rt.focusHandler)
+      document.addEventListener('visibilitychange', rt.visibilityHandler)
+      rt.pullInterval = setInterval(() => {
+        void this.autoPull({ reason: 'interval' })
+      }, AUTO_PULL_INTERVAL_MS)
+    },
+    stopAutoSyncScheduler() {
+      const rt = getAutoSyncRuntime(this)
+      if (rt.pushTimer) {
+        clearTimeout(rt.pushTimer)
+        rt.pushTimer = null
+      }
+      this.autoPushPending = false
+      if (rt.pullInterval) {
+        clearInterval(rt.pullInterval)
+        rt.pullInterval = null
+      }
+      if (typeof window !== 'undefined' && rt.focusHandler) {
+        window.removeEventListener('focus', rt.focusHandler)
+      }
+      if (typeof document !== 'undefined' && rt.visibilityHandler) {
+        document.removeEventListener('visibilitychange', rt.visibilityHandler)
+      }
+      rt.focusHandler = null
+      rt.visibilityHandler = null
     }
   }
 })

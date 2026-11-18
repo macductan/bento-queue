@@ -33,9 +33,17 @@ export default {
     mockRunningTitle: 'Local Mock Server (Đang chạy :{port})',
     importPostman: 'Nhập Postman',
     importing: 'Đang nhập...',
-    historyAndChangelog: 'Lịch sử & Nhật ký',
     manageEnvironments: 'Quản lý Môi trường',
     settings: 'Cài đặt'
+  },
+  gitSync: {
+    autoSyncLabel: 'Tự động đồng bộ (Auto Pull & Push)',
+    autoSyncDesc: 'Tự động kéo về khi mở app, quay lại cửa sổ và mỗi 3 phút; tự động đẩy lên sau 15 giây ngừng sửa.',
+    autoSyncEnabledToast: 'Đã bật tự động đồng bộ Git cho collection này',
+    autoSyncDisabledToast: 'Đã tắt tự động đồng bộ Git cho collection này',
+    autoPullUpdatedToast: 'Đã cập nhật dữ liệu mới từ Git Remote',
+    syncing: 'Đang đồng bộ...',
+    pendingPush: 'Chờ đẩy lên'
   },
   sidebar: {
     collection: 'Bộ sưu tập',

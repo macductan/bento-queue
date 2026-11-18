@@ -456,6 +456,7 @@ const saveFolderData = async (options?: { silent?: boolean } | boolean): Promise
           uiStore.showToast('Đã lưu cấu hình thư mục')
         }
         await collectionStore.loadTree() // Reload tree to reflect new headers/variables in store
+        collectionStore.scheduleAutoPush()
         return true
       } else {
         saveStatus.value = 'error'

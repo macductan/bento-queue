@@ -32,6 +32,20 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.19.0] - 2026-11-18
+
+### Added — Hybrid Auto Pull & Auto Push Git Sync
+- **Tự động Pull (Hybrid Auto Pull - `collectionStore.ts`, `App.vue`)**: Tự động đồng bộ dữ liệu từ Git Remote khi khởi động ứng dụng, chuyển Collection, khi cửa sổ nhận lại focus/hiển thị (throttle 60 giây) và định kỳ mỗi 3 phút (khi tab đang hiển thị và không có thay đổi chưa lưu `isDirty`/thực thi đang chạy); tự động gọi `smartReload()` và hiện toast thông báo khi có thay đổi mới từ remote, hoặc chuyển sang `fetchGitStatus()` để hiển thị đúng nhánh/xung đột nếu Auto Sync tắt.
+- **Tự động Push (15s Debounced Auto Push - `collectionStore.ts`, `app.go`)**: Tự động gom các thay đổi sau khi lưu/chỉnh sửa Request, Folder, Environment, Flow, Mock Server (`mock-server.json`) hoặc cấu hình Collection (debounce 15 giây) để đẩy lên Git Remote; phát sự kiện `collection:local-changed` theo từng collection ID, hoãn đẩy nếu đang chỉnh sửa dở (`isDirty`) hoặc đang chạy request/flow, và giữ nguyên trạng thái `Pending` hoặc mở Conflict Resolver khi phát sinh `GIT_CONFLICT`.
+- **Cấu hình theo Collection & Trạng thái UI (`collection.go`, `GitSyncModal.vue`, `AppHeader.vue`)**: Bổ sung tùy chọn `git_auto_sync` (`AutoSyncEnabled` mặc định `true` khi có `git_remote_url`), công tắc bật/tắt `[data-test="git-auto-sync-toggle"]` trong `GitSyncModal.vue` và hiển thị trạng thái đồng bộ (`Đang đồng bộ...` / `Chờ đẩy lên`) trên nút Git ở `AppHeader.vue`.
+- **An toàn đồng bộ Backend (`git_sync.go`, `git_merge.go`)**: Khóa tuần tự theo từng thư mục Collection (`lockCollection`/`lockCollectionByID`), tự dọn `.git/index.lock` bị treo quá 2 phút, thêm `GIT_OPTIONAL_LOCKS=0` cho lệnh Git chỉ đọc, ép `LC_ALL=C`/`LANG=C` trong `runGit`, và bảo toàn tùy chọn local `git_auto_sync` khi merge hoặc `ClearAndPull`.
+
+### Removed & Fixed — Loại bỏ hoàn toàn History/Changelog & Tự động dọn `.history/` khi Git Sync
+- **Xóa bỏ hoàn toàn History & Changelog**: Xóa `HistoryService` (`projects/service/history.go`), `HistoryModal.vue`, `historyStore.ts`, nút History trên `AppHeader.vue`, 5 Wails bindings (`GetExecutionHistory`, `GetChangelog`, `ClearExecutionHistory`, v.v.) và toàn bộ lời gọi ghi `.history/` ở cả Desktop UI lẫn CLI/Headless.
+- **Dọn sạch `.history/` & chống Conflict Git (`git_sync.go`, `git_merge.go`)**: Tự động đảm bảo `.gitignore` của từng Collection chứa `.history/` và `.tmp-*` (giữ nguyên các quy tắc riêng hiện có), xóa `.history/` trên đĩa và gỡ khỏi Git index (`git rm -rf --cached --ignore-unmatch .history`), đồng thời tự động giải quyết ngầm xung đột `.history/*` và `.gitignore` khi đồng bộ với các remote cũ.
+
+---
+
 ## [v1.18.0] - 2026-11-17
 
 ### Added

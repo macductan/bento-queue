@@ -33,9 +33,17 @@ export default {
     mockRunningTitle: 'Local Mock Server (Running on :{port})',
     importPostman: 'Import Postman',
     importing: 'Importing...',
-    historyAndChangelog: 'History & Changelog',
     manageEnvironments: 'Manage Environments',
     settings: 'Settings'
+  },
+  gitSync: {
+    autoSyncLabel: 'Auto Sync (Pull & Push)',
+    autoSyncDesc: 'Automatically pull on startup, window focus, and every 3 min; auto-push 15s after editing.',
+    autoSyncEnabledToast: 'Auto Sync enabled for this collection',
+    autoSyncDisabledToast: 'Auto Sync disabled for this collection',
+    autoPullUpdatedToast: 'Updated collection from Git Remote',
+    syncing: 'Syncing...',
+    pendingPush: 'Pending push'
   },
   sidebar: {
     collection: 'Collection',

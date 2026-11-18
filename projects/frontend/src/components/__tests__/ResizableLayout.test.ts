@@ -159,7 +159,11 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       const uiStore = useUiStore()
       const envStore = useEnvironmentStore()
+      const collectionStore = useCollectionStore()
       const syncSpy = vi.spyOn(envStore, 'syncActiveEnvFromCollection')
+      const startSchedulerSpy = vi.spyOn(collectionStore, 'startAutoSyncScheduler')
+      const autoPullSpy = vi.spyOn(collectionStore, 'autoPull').mockResolvedValue(false)
+      const stopSchedulerSpy = vi.spyOn(collectionStore, 'stopAutoSyncScheduler')
 
       expect(uiStore.sidebarWidth).toBe(500)
 
@@ -168,8 +172,11 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
 
       expect(uiStore.sidebarWidth).toBe(400)
       expect(syncSpy).toHaveBeenCalled()
+      expect(startSchedulerSpy).toHaveBeenCalledTimes(1)
+      expect(autoPullSpy).toHaveBeenCalledWith({ reason: 'startup' })
 
       wrapper.unmount()
+      expect(stopSchedulerSpy).toHaveBeenCalledTimes(1)
     })
 
     it('resets sidebarWidth to 260 on double-click', async () => {
@@ -349,6 +356,21 @@ describe('ResizableLayout - Vertical & Horizontal Splitters', () => {
       } as any
       await nextTick()
       expect(gitBtn.text()).toContain('Git: develop')
+
+      // Git Sync Pill: background autoSyncInFlight & autoPushPending states
+      collectionStore.autoSyncInFlight = true
+      await nextTick()
+      expect(gitBtn.text()).toContain('Đang đồng bộ...')
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').classes()).toContain('bg-sky-400')
+
+      collectionStore.autoSyncInFlight = false
+      collectionStore.autoPushPending = true
+      await nextTick()
+      expect(gitBtn.text()).toContain('Chờ đẩy lên')
+      expect(headerWrapper.find('[data-test="git-status-badge-configured"]').classes()).toContain('bg-amber-300')
+
+      collectionStore.autoPushPending = false
+      await nextTick()
 
       // Git Sync Pill: conflict state with 2 files
       collectionStore.gitConflictError = { message: 'Conflict', files: ['a.json', 'b.json'] }

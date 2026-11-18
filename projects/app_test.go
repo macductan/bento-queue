@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -536,5 +537,45 @@ func TestApp_SyncActiveCollectionFromDisk_And_WatcherEvent(t *testing.T) {
 	case <-time.After(1500 * time.Millisecond):
 		t.Fatal("expected collection:external-change event after external file write")
 	}
+}
+
+func TestApp_NotifyLocalDataChanged_TargetedAndMockServer(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HECTO_CONFIG_DIR", tmpDir)
+
+	app := NewApp()
+	ctx := context.Background()
+	app.startup(ctx)
+	defer app.shutdown(ctx)
+
+	createRes := app.CreateCollection("Inactive Coll")
+	require.True(t, createRes.Success)
+	inactiveColl := createRes.Data.(model.Collection)
+
+	var mu sync.Mutex
+	var events []map[string]interface{}
+	app.onEvent = func(eventName string, data ...interface{}) {
+		if eventName == "collection:local-changed" && len(data) > 0 {
+			if m, ok := data[0].(map[string]interface{}); ok {
+				mu.Lock()
+				events = append(events, m)
+				mu.Unlock()
+			}
+		}
+	}
+
+	// Renaming an inactive collection emits its own collectionId, not the active collection's ID
+	renameRes := app.RenameCollection(inactiveColl.ID, "Inactive Renamed")
+	require.True(t, renameRes.Success)
+
+	// Saving Mock Server config on active collection emits active collectionId ("default")
+	mockRes := app.SaveMockServerConfig(model.MockServerConfig{Port: 4015, Routes: []model.MockRoute{}})
+	require.True(t, mockRes.Success)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 2)
+	assert.Equal(t, inactiveColl.ID, events[0]["collectionId"])
+	assert.Equal(t, "default", events[1]["collectionId"])
 }
 

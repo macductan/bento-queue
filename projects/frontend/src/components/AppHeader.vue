@@ -47,6 +47,12 @@ const gitButtonLabel = computed(() => {
     return t('header.gitConflict', { count: gitConflictCount.value })
   }
   if (isGitConfigured.value) {
+    if (collectionStore.autoSyncInFlight) {
+      return `Git: ${gitBranchName.value} (${t('gitSync.syncing')})`
+    }
+    if (collectionStore.autoPushPending) {
+      return `Git: ${gitBranchName.value} · ${t('gitSync.pendingPush')}`
+    }
     return `Git: ${gitBranchName.value}`
   }
   return t('header.gitSync')
@@ -144,7 +150,14 @@ onUnmounted(() => {
         <span
           v-else-if="isGitConfigured"
           data-test="git-status-badge-configured"
-          class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
+          class="w-2 h-2 rounded-full shrink-0"
+          :class="
+            collectionStore.autoSyncInFlight
+              ? 'bg-sky-400 animate-pulse'
+              : collectionStore.autoPushPending
+                ? 'bg-amber-300 animate-pulse'
+                : 'bg-emerald-400'
+          "
         />
         <span
           v-else
@@ -204,20 +217,6 @@ onUnmounted(() => {
       <div class="h-5 w-px bg-zinc-800 mx-0.5"></div>
 
       <EnvSelector />
-
-      <button
-        type="button"
-        data-test="open-history-modal-btn"
-        @click="uiStore.openHistoryModal()"
-        class="icon-btn text-text-muted hover:text-text-primary p-2 flex items-center justify-center rounded transition-colors"
-        :title="t('header.historyAndChangelog')"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-          <path d="M3 3v5h5"></path>
-          <path d="M12 7v5l4 2"></path>
-        </svg>
-      </button>
 
       <button
         type="button"
