@@ -466,3 +466,43 @@ func TestSwitchActiveCollection(t *testing.T) {
 	}
 }
 
+func TestConfigDir(t *testing.T) {
+	svc, tmpDir := setupTestConfigService(t)
+
+	// 1. Custom dir overrides env and UserConfigDir
+	custom := filepath.Join(tmpDir, "custom-cfg")
+	svc.SetCustomConfigDir(custom)
+	dir, err := svc.ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir with custom dir failed: %v", err)
+	}
+	if dir != custom {
+		t.Errorf("ConfigDir() = %q, want %q", dir, custom)
+	}
+
+	// 2. HECTO_CONFIG_DIR env override when customConfigDir is empty
+	svc.SetCustomConfigDir("")
+	envDir := filepath.Join(tmpDir, "env-cfg")
+	t.Setenv("HECTO_CONFIG_DIR", envDir)
+	dir, err = svc.ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir with HECTO_CONFIG_DIR failed: %v", err)
+	}
+	if dir != envDir {
+		t.Errorf("ConfigDir() = %q, want %q", dir, envDir)
+	}
+
+	// 3. Default OS UserConfigDir/hecto-api
+	t.Setenv("HECTO_CONFIG_DIR", "")
+	xdgDir := filepath.Join(tmpDir, "xdg-cfg")
+	t.Setenv("XDG_CONFIG_HOME", xdgDir)
+	dir, err = svc.ConfigDir()
+	if err != nil {
+		t.Fatalf("ConfigDir with default UserConfigDir failed: %v", err)
+	}
+	wantDefault := filepath.Join(xdgDir, appName)
+	if dir != wantDefault {
+		t.Errorf("ConfigDir() = %q, want %q", dir, wantDefault)
+	}
+}
+

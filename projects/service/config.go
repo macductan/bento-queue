@@ -111,17 +111,27 @@ func (s *ConfigService) resolveCustomDir() string {
 	return strings.TrimSpace(os.Getenv("HECTO_CONFIG_DIR"))
 }
 
-// resolveConfigPath trả về đường dẫn config file: {os.UserConfigDir()}/hecto-api/config.json
-// hoặc {customDir}/config.json nếu được cấu hình qua SetCustomConfigDir / HECTO_CONFIG_DIR.
-func (s *ConfigService) resolveConfigPath() (string, error) {
+// ConfigDir trả về thư mục chứa config.json: {customDir} nếu được cấu hình qua
+// SetCustomConfigDir / HECTO_CONFIG_DIR, hoặc {os.UserConfigDir()}/hecto-api.
+func (s *ConfigService) ConfigDir() (string, error) {
 	if customDir := s.resolveCustomDir(); customDir != "" {
-		return filepath.Join(customDir, configFileName), nil
+		return customDir, nil
 	}
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, appName, configFileName), nil
+	return filepath.Join(configDir, appName), nil
+}
+
+// resolveConfigPath trả về đường dẫn config file: {os.UserConfigDir()}/hecto-api/config.json
+// hoặc {customDir}/config.json nếu được cấu hình qua SetCustomConfigDir / HECTO_CONFIG_DIR.
+func (s *ConfigService) resolveConfigPath() (string, error) {
+	dir, err := s.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, configFileName), nil
 }
 
 // resolveDefaultCollectionsRoot trả về default collections root:

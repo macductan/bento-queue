@@ -23,12 +23,24 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 - **Nguồn duy nhất cho Version (Single Source of Truth)**:
   - Trường `"version"` trong `projects/frontend/package.json`.
 - **AI Agent CLI (`hecto`) & Shared TypeScript Engine (`goja` - từ `v1.14.0`)**:
-  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`), `hecto run`, `hecto flow run` và `hecto import`.
+  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow`, `mock` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`/`start`/`stop`), `hecto run`, `hecto flow run` và `hecto import`.
   - Shared TypeScript Execution Engine (`projects/frontend/src/utils/headless-engine.ts` $\rightarrow$ `projects/engine/headless-engine.js`) nhúng qua `//go:embed` trên pure-Go `github.com/dop251/goja` đảm bảo đồng nhất 100% logic giải biến 4 tầng, kế thừa Auth/Header, `btoa`/`atob` Latin-1 (hỗ trợ tiếng Việt/Unicode), thực thi `ha.*` Pre-request/Post-response scripts và đánh giá luồng đa nhánh `flowRunner.ts` giữa Desktop UI và CLI.
   - Đồng bộ file 3 lớp (`projects/storage/watcher.go` dùng `fsnotify` + lọc self-write 400ms + debounce 300ms + `collectionStore.smartReload()`): tự động phát hiện thay đổi từ CLI/Git/Editor ngoài, giữ nguyên trạng thái mở cây thư mục (`expandedFolders`) và bảo vệ các tab đang chỉnh sửa dở (`isDirty`).
 - **API Flow (Structured Flowchart Runner - từ `v1.15.0`)**:
   - Lưu trữ độc lập tại `<collection>/flows/` với `FlowFolder` (`_folder.json`) và `Flow` (`<flow-uuid>.json`).
   - Bước thực thi kiểu Con trỏ mỏng (`Thin Pointer` trỏ tới `request_id` gốc), tái sử dụng 100% biến 4 tầng, kế thừa Auth/Header và Script của Request gốc; hỗ trợ chạy Tuần tự, Hàng Song song (`Promise.all` / goroutines kèm gom tuần tự thay đổi biến sau hàng), và Rẽ nhánh 3 chế độ (`success`, `error`, `custom` 3 ô).
+
+---
+
+## [v1.20.0] - 2026-11-18
+
+### Added — Standalone `hecto mock` CLI & Single-Instance Mock Daemon
+- **Hệ lệnh `hecto mock` cho AI Agent & Terminal (`projects/cmd/hecto/main.go`, `projects/cmd/hecto/SKILL.md`)**:
+  - Bổ sung trọn bộ lệnh quản lý và vận hành Mock HTTP Server từ dòng lệnh: `hecto mock status | config | start (serve) | stop` và `hecto mock route list | get | create | update | delete`, tương thích 100% với cấu trúc `<collection>/mock-server.json` và `MockServerModal.vue` trên Desktop UI (`GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD|ANY`, `port` `1024..65535`, `status_code` `100..599`, `delay_ms` `0..30000`, route selector `<id | "METHOD /path">`, cập nhật Read-Merge-Write qua `FlagSet.Visit` và vị trí cờ linh hoạt).
+  - Cập nhật tài liệu nhúng `SKILL.md` (`hecto agent-guide`) với bảng tra cứu lệnh, quy tắc vận hành đơn phiên, JSON schema và kịch bản mẫu cho AI Coding Agent.
+- **Quản lý Đơn phiên 1 Port duy nhất & Hot-Reload (`projects/cmd/hecto/main.go`, `projects/service/mock_server.go`, `projects/service/config.go`)**:
+  - Đảm bảo tại mọi thời điểm chỉ mở tối đa 1 Mock Server / 1 port trên toàn CLI thông qua file trạng thái toàn cục `<configDir>/mock-daemon.json` (nằm ngoài thư mục Collection để giữ sạch Git Sync); tự động dừng tiến trình cũ trước khi mở port mới, hỗ trợ cả chế độ foreground lẫn `--daemon` (đồng bộ sẵn sàng TCP qua pipe FD 3 trước khi trả JSON) và tự động dọn stale/recycled PID.
+  - Bổ sung `MockServerService.ReloadRoutes`, `CleanMockPath` và `ConfigService.ConfigDir`, kết hợp `fsnotify` tự động hot-reload `routes` khi `mock-server.json` thay đổi trên đĩa (bảo toàn routes đang chạy nếu file tạm thời lỗi cú pháp) và chỉ lưu `port` xuống đĩa sau khi bind TCP thành công, kèm bộ unit & CLI integration tests toàn diện.
 
 ---
 

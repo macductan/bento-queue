@@ -1,10 +1,11 @@
 generated: 09-24-2026 16:36
-last_updated: 2026-11-18 11:57
+last_updated: 2026-11-18 14:44
 project: hecto-api
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
+  spec-cli-mock-server: done
   spec-git-auto-sync-and-remove-history: done
   spec-curl-hide-auth: done
   spec-response-search-and-line-numbers: done

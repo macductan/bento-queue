@@ -287,3 +287,111 @@ Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scena
 }
 ```
 
+---
+
+## 7. Local Mock HTTP Server (`hecto mock`)
+
+`hecto mock` configures `<collection>/mock-server.json` (100% compatible with the Desktop UI `MockServerModal.vue`) and runs an embedded local HTTP mock server on `127.0.0.1:<port>`.
+
+### Single Active Instance & Hot-Reload Rules
+- **1 Global Instance at a Time:** State for the live CLI mock daemon is stored in a single global file `<configDir>/mock-daemon.json` (`pid`, `port`, `base_url`, `collection_id`, `coll_root`, `started_at`) — never inside `<collection>/`. (Note: Desktop UI in-process servers do not write `mock-daemon.json`.)
+- **Auto-Stop Previous Daemon:** Any `hecto mock start` (foreground or `--daemon`, alias `serve`) automatically stops any previously running CLI daemon before binding the new port.
+- **Port Policy:** Ports must be in `1024..65535` (default `4010`, port `0` is disallowed). `hecto mock` never silently switches ports — if the target port is occupied by an external process, it returns `IO_ERROR`.
+- **Collection-Scoped `status`:** `hecto mock status [-c <coll>]` sets `running: true` only when the live daemon matches `<coll>`. If a daemon is running on a different collection, `status` returns `running: false` for the queried collection together with `active_daemon` metadata, and automatically cleans up stale PID files.
+- **Hot-Reload:** Running mock servers watch `<collection>/mock-server.json` and hot-reload `routes` in memory whenever routes are created, updated, or deleted via CLI or edited on disk (no restart required).
+- **HTTP Matching Behavior:** Supports `:param` and `*` path segments, `ANY` method wildcard, `delay_ms` (`0..30000`), custom headers (defaults to `Content-Type: application/json; charset=utf-8`), CORS headers (`Access-Control-Allow-Origin: *`), and returns HTTP `404` JSON `{"error":"MOCK_ROUTE_NOT_FOUND","method":...,"path":...}` for unmatched requests (with configured `OPTIONS`/`ANY` routes matched first before falling back to `204` on unmatched `OPTIONS`).
+
+### 7.1. `hecto mock` Command Matrix
+
+| Command | Flags & Usage |
+|---|---|
+| `hecto mock status` | `[-c <coll>] [--json]` — Inspect mock server status, configured port, routes, and live daemon info. |
+| `hecto mock config` | `[--port <1024..65535>] [-c <coll>] [--json]` — Read or update the collection's configured port in `mock-server.json` (alias `-p`). |
+| `hecto mock start` / `serve` | `[--port <1024..65535>] [--daemon] [-c <coll>] [--json]` — Start the mock server (foreground flushes 1 status line and waits for `SIGINT`/`SIGTERM`; `--daemon` detaches stdio, waits until TCP ready, prints JSON, and exits `0`). |
+| `hecto mock stop` | `[-c <coll>] [--json]` — Stop the active mock daemon and remove `<configDir>/mock-daemon.json`. |
+| `hecto mock route list` | `[-c <coll>] [--json]` — List all `MockRoute` entries in `<collection>/mock-server.json`. |
+| `hecto mock route get` | `<id\|"METHOD /path"> [-c <coll>] [--json]` — Get a single route by UUID or `"METHOD /path"` (returns `VALIDATION` with matching IDs if ambiguous). |
+| `hecto mock route create` | `--path </path> [--method <GET\|POST\|PUT\|PATCH\|DELETE\|OPTIONS\|HEAD\|ANY>] [--status-code <100..599>] [--delay-ms <0..30000>] [--header "K:V"]... [--body <str\|@file>] [--description <text>] [--enabled\|--disabled] [-c <coll>] [--json]` — Defaults: `method=GET`, `status_code=200`, `delay_ms=0`, `enabled=true`. |
+| `hecto mock route update` | `<id\|"METHOD /path"> [--method ...] [--path ...] [--status-code <100..599>] [--delay-ms <0..30000>] [--set-header "K:V"]... [--unset-header K]... [--body <str\|@file>] [--description <text>] [--enabled\|--disabled] [-c <coll>] [--json]` — Read-Merge-Write (`FlagSet.Visit`); passing `--body ""` or `--description ""` clears that field. |
+| `hecto mock route delete` | `<id\|"METHOD /path"> [-c <coll>] [--json]` — Delete a route by UUID or `"METHOD /path"`. |
+
+> **Aliases:** Top-level `mocks` (`mock`); subcommands `serve` (`start`), `routes` (`route`); route verbs `ls` (`list`), `show` (`get`), `add` (`create`), `patch` (`update`), `rm` (`delete`); flags `--status` (`--status-code`), `--delay` (`--delay-ms`), `--desc` (`--description`), `-p` (`--port`).
+
+### 7.2. JSON Schemas (`mock-server.json`, `status`/`start`/`stop`, `route delete`)
+
+`<collection>/mock-server.json`:
+```json
+{
+  "port": 4010,
+  "routes": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "method": "GET",
+      "path": "/api/users/:id",
+      "status_code": 200,
+      "headers": [{ "key": "X-Mock", "value": "true", "enabled": true }],
+      "body": "{\"id\":42,\"name\":\"Alice\"}",
+      "delay_ms": 0,
+      "enabled": true,
+      "description": "Fetch mocked user"
+    }
+  ]
+}
+```
+
+`hecto mock start --daemon --json` / `hecto mock status --json` / `hecto mock config --json` / `hecto mock stop --json`:
+```json
+{
+  "success": true,
+  "data": {
+    "running": true,
+    "port": 4010,
+    "configured_port": 4020,
+    "base_url": "http://127.0.0.1:4010",
+    "routes": [],
+    "pid": 12345,
+    "collection_id": "default",
+    "coll_root": "/path/to/collections/default",
+    "started_at": "2026-11-18T14:00:00Z",
+    "active_daemon": { "pid": 12345, "port": 4010, "base_url": "...", "collection_id": "...", "coll_root": "...", "started_at": "..." },
+    "stopped": true
+  }
+}
+```
+- `configured_port` is included when `running: true` and `mock-server.json` has a different port than the running daemon.
+- `active_daemon` is included on `status` when `running: false` for the queried collection while another collection's daemon is active.
+- `stopped` (`true|false`) is included on `hecto mock stop`.
+
+`hecto mock route delete <id|"METHOD /path"> --json`:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_id": "550e8400-e29b-41d4-a716-446655440000",
+    "method": "GET",
+    "path": "/api/users/:id"
+  }
+}
+```
+
+### 7.3. End-to-End `--daemon` & `stop` Recipe
+```bash
+# 1. Configure port and create routes
+hecto mock config --port 4010 --json
+hecto mock route create --method GET --path "/api/users/:id" \
+  --status-code 200 --header "X-Source: mock" \
+  --body '{"id":42,"role":"admin"}' --json
+
+# 2. Start background daemon (waits until TCP ready before exiting 0)
+hecto mock start --daemon --json
+
+# 3. Call the mock server or add another route (hot-reloaded automatically!)
+curl -s http://127.0.0.1:4010/api/users/42
+hecto mock route create --method ANY --path "/api/ping" --body '{"pong":true}' --json
+
+# 4. Inspect status and stop the daemon
+hecto mock status --json
+hecto mock stop --json
+```
+
+
