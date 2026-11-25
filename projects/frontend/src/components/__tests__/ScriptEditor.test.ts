@@ -539,4 +539,67 @@ describe('ScriptEditor.vue', () => {
     await headersBtn.trigger('click')
     expect(reqStore.current.scripts?.post_response).toContain("ha.response.headers.get('content-type')")
   })
+
+  it('blocks shortcuts and snippet insertion when scripts are linked readonly', async () => {
+    const reqStore = useRequestStore()
+    const baseReq = createMockRequest({
+      id: 'req-script-lock',
+      method: 'GET',
+      url: 'https://api.example.com',
+      scripts: { pre_request: 'console.log("default")', post_response: '' },
+      examples: [
+        {
+          id: 'ex-s',
+          name: 'Ex',
+          method: 'GET',
+          url: 'https://api.example.com',
+          headers: [],
+          params: [],
+          body: { type: 'none', content: '' },
+          auth: { type: 'inherit' },
+          scripts: { pre_request: 'console.log("default")', post_response: '' },
+          sync_flags: {
+            url: true,
+            method: true,
+            auth: true,
+            scripts: true,
+            body: false,
+            params: false,
+            path_params: false,
+            headers: false,
+            variables: false
+          },
+          created_at: '',
+          updated_at: ''
+        }
+      ]
+    })
+    reqStore.original = JSON.parse(JSON.stringify(baseReq))
+    reqStore.draft = JSON.parse(JSON.stringify(baseReq))
+    reqStore.selectExample('ex-s')
+
+    const wrapper = mount(ScriptEditor)
+    await nextTick()
+
+    expect(wrapper.find('[data-test="scripts-linked-banner"]').exists()).toBe(true)
+    const preTa = wrapper.find('[data-test="pre-request-script-input"]')
+    expect((preTa.element as HTMLTextAreaElement).readOnly).toBe(true)
+
+    // Shortcuts (Tab, Ctrl+/) must not mutate linked script
+    await preTa.trigger('keydown', { key: 'Tab' })
+    await preTa.trigger('keydown', { key: '/', ctrlKey: true })
+    expect(reqStore.current?.scripts?.pre_request).toBe('console.log("default")')
+
+    // Snippet fieldset is disabled and clicking snippet button cannot mutate script
+    expect((wrapper.find('[data-test="script-hints-box"]').element as HTMLFieldSetElement).disabled).toBe(true)
+    const snippetBtn = wrapper.find('[data-test="snippet-pre-set-env"]')
+    await snippetBtn.trigger('click')
+    expect(reqStore.current?.scripts?.pre_request).toBe('console.log("default")')
+
+    // Clicking unlink unlocks script editing
+    await wrapper.find('[data-test="scripts-unlink-btn"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-test="scripts-linked-banner"]').exists()).toBe(false)
+    expect((preTa.element as HTMLTextAreaElement).readOnly).toBe(false)
+  })
 })

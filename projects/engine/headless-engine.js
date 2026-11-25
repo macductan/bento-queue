@@ -40,20 +40,29 @@
   // src/utils/headless-engine.ts
   var exports_headless_engine = {};
   __export(exports_headless_engine, {
+    EXAMPLE_SYNC_FLAG_KEYS: () => EXAMPLE_SYNC_FLAG_KEYS,
+    applyProjectionEditsToExample: () => applyProjectionEditsToExample,
     applyScriptUpdatesInMemory: () => applyScriptUpdatesInMemory,
     buildExecuteRequest: () => buildExecuteRequest,
+    cloneRequestToExample: () => cloneRequestToExample,
     countStepsInNodes: () => countStepsInNodes,
+    createDefaultSyncFlags: () => createDefaultSyncFlags,
+    detachExampleToRequestPayload: () => detachExampleToRequestPayload,
+    duplicateExample: () => duplicateExample,
     evaluateCustomBranchCondition: () => evaluateCustomBranchCondition,
     evaluateStepVerdict: () => evaluateStepVerdict,
     executeScript: () => executeScript,
     finalizeResponseExecution: () => finalizeResponseExecution,
+    findExampleBySelector: () => findExampleBySelector,
     generateCurlCommand: () => generateCurlCommand,
     getAuthArtifacts: () => getAuthArtifacts,
     getDefaultHeaders: () => getDefaultHeaders,
     getInheritedHeaders: () => getInheritedHeaders,
     isCurlCommand: () => isCurlCommand,
+    mergeBaseUrlPreservingExampleQuery: () => mergeBaseUrlPreservingExampleQuery,
     mergeHeaders: () => mergeHeaders,
     mergeParallelScriptUpdates: () => mergeParallelScriptUpdates,
+    normalizeSyncFlags: () => normalizeSyncFlags,
     parseCurlCommand: () => parseCurlCommand,
     parseUrl: () => parseUrl,
     parseVariables: () => parseVariables,
@@ -64,16 +73,21 @@
     reconcileUrlAndParams: () => reconcileUrlAndParams,
     resolveAuth: () => resolveAuth,
     resolveEffectiveAuth: () => resolveEffectiveAuth,
+    resolveEffectiveRequest: () => resolveEffectiveRequest,
     resolveHeaders: () => resolveHeaders,
     resolveHierarchyVariables: () => resolveHierarchyVariables,
     resolvePathParamsInUrl: () => resolvePathParamsInUrl,
+    resolveRequestForStepExecution: () => resolveRequestForStepExecution,
     resolveVariables: () => resolveVariables,
     runHeadlessPostResponse: () => runHeadlessPostResponse,
     runPostResponseScript: () => runPostResponseScript,
     runPreRequestScript: () => runPreRequestScript,
     selectMatchingBranch: () => selectMatchingBranch,
+    splitBaseUrlAndQuery: () => splitBaseUrlAndQuery,
     stripJsonComments: () => stripJsonComments,
     stripJsoncToJson: () => stripJsoncToJson,
+    syncAllExamplesFromDefault: () => syncAllExamplesFromDefault,
+    syncExampleFromDefault: () => syncExampleFromDefault,
     toBase64: () => toBase64,
     updateUrlWithParams: () => updateUrlWithParams
   });
@@ -775,12 +789,14 @@
     let envVars;
     let folders;
     let envId;
+    let reqVars;
     if (optionsOrCollVars && !Array.isArray(optionsOrCollVars) && typeof optionsOrCollVars === "object") {
       const opts = optionsOrCollVars;
       collVars = opts.collectionVariables;
       envVars = opts.activeEnvVariables;
       folders = opts.pathFolders;
       envId = opts.activeEnvId;
+      reqVars = opts.requestVariables;
     } else {
       collVars = optionsOrCollVars;
       envVars = activeEnvVariables;
@@ -832,6 +848,13 @@
               }
             }
           }
+        }
+      }
+    }
+    if (reqVars && Array.isArray(reqVars)) {
+      for (const v of reqVars) {
+        if (v && v.enabled && typeof v.key === "string" && v.key.trim() !== "") {
+          map.set(v.key.trim(), v.value ?? "");
         }
       }
     }
@@ -3654,6 +3677,14 @@ ${code}`);
         failureReason: "Request gốc đã bị xóa khỏi Collection"
       };
     }
+    if (input.exampleMissing === true) {
+      const reason = typeof input.exampleError === "string" && input.exampleError.trim() !== "" ? input.exampleError.trim() : "Example được chọn đã bị xóa khỏi Request gốc";
+      return {
+        passed: false,
+        failureCategory: "deleted_example",
+        failureReason: reason
+      };
+    }
     const netErr = typeof input.networkError === "string" ? input.networkError.trim() : "";
     if (netErr !== "") {
       return {
@@ -4424,6 +4455,395 @@ ${code}`);
     };
   }
 
+  // src/utils/requestExamples.ts
+  var EXAMPLE_SYNC_FLAG_KEYS = [
+    "url",
+    "method",
+    "auth",
+    "scripts",
+    "body",
+    "params",
+    "path_params",
+    "headers",
+    "variables"
+  ];
+  function createDefaultSyncFlags() {
+    return {
+      url: true,
+      method: true,
+      auth: true,
+      scripts: true,
+      body: false,
+      params: false,
+      path_params: false,
+      headers: false,
+      variables: false
+    };
+  }
+  function normalizeSyncFlags(flags) {
+    const defaults = createDefaultSyncFlags();
+    if (!flags || typeof flags !== "object") {
+      return defaults;
+    }
+    return {
+      url: typeof flags.url === "boolean" ? flags.url : defaults.url,
+      method: typeof flags.method === "boolean" ? flags.method : defaults.method,
+      auth: typeof flags.auth === "boolean" ? flags.auth : defaults.auth,
+      scripts: typeof flags.scripts === "boolean" ? flags.scripts : defaults.scripts,
+      body: typeof flags.body === "boolean" ? flags.body : defaults.body,
+      params: typeof flags.params === "boolean" ? flags.params : defaults.params,
+      path_params: typeof flags.path_params === "boolean" ? flags.path_params : defaults.path_params,
+      headers: typeof flags.headers === "boolean" ? flags.headers : defaults.headers,
+      variables: typeof flags.variables === "boolean" ? flags.variables : defaults.variables
+    };
+  }
+  var exampleSeq = 0;
+  function generateExampleId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `ex-${Date.now()}-${++exampleSeq}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+  function deepClone2(val) {
+    if (val === undefined || val === null)
+      return val;
+    return JSON.parse(JSON.stringify(val));
+  }
+  function cleanHeadersForSnapshot(headers) {
+    if (!Array.isArray(headers))
+      return [];
+    return headers.filter((h) => !(h && h._isAuto && h.enabled)).map((h) => {
+      const copy = { ...h };
+      delete copy._isAuto;
+      if (Array.isArray(h.options)) {
+        copy.options = [...h.options];
+      }
+      return copy;
+    });
+  }
+  function generateUniqueExampleName(baseName, existingExamples) {
+    const existingNames = new Set((existingExamples || []).map((ex) => (ex?.name || "").trim().toLowerCase()).filter(Boolean));
+    const trimmed = baseName.trim() || "Example";
+    if (!existingNames.has(trimmed.toLowerCase())) {
+      return trimmed;
+    }
+    let idx = 2;
+    while (existingNames.has(`${trimmed} ${idx}`.toLowerCase())) {
+      idx++;
+    }
+    return `${trimmed} ${idx}`;
+  }
+  function splitBaseUrlAndQuery(url) {
+    if (!url)
+      return { baseUrl: "", rawQuery: "", hash: "" };
+    const hashParts = splitPreservingVars(url, "#", 2);
+    const withoutHash = hashParts[0] ?? "";
+    const hash = hashParts.length > 1 ? `#${hashParts[1]}` : "";
+    const queryParts = splitPreservingVars(withoutHash, "?", 2);
+    const baseUrl = queryParts[0] ?? "";
+    const rawQuery = queryParts.length > 1 ? queryParts[1] ?? "" : "";
+    return { baseUrl, rawQuery, hash };
+  }
+  function mergeBaseUrlPreservingExampleQuery(defaultUrl, exampleUrl, exampleParams) {
+    const { baseUrl: defBase, hash: defHash } = splitBaseUrlAndQuery(defaultUrl || "");
+    const { rawQuery: exRawQuery, hash: exHash } = splitBaseUrlAndQuery(exampleUrl || "");
+    let qs = buildQueryString(exampleParams || []);
+    if (!qs && exampleParams == null && exRawQuery) {
+      qs = exRawQuery;
+    }
+    const hash = exHash || defHash;
+    if (!qs) {
+      return `${defBase}${hash}`;
+    }
+    return `${defBase}?${qs}${hash}`;
+  }
+  function cloneRequestToExample(req, options) {
+    const now = options?.now || new Date().toISOString();
+    const defaultBaseName = `Example ${(req.examples?.length || 0) + 1}`;
+    const name = options?.name?.trim() ? options.name.trim() : generateUniqueExampleName(defaultBaseName, req.examples);
+    return {
+      id: options?.id || generateExampleId(),
+      name,
+      method: req.method || "GET",
+      url: req.url || "",
+      headers: cleanHeadersForSnapshot(req.headers),
+      params: deepClone2(req.params || []),
+      path_params: deepClone2(req.path_params || []),
+      variables: deepClone2(req.variables || []),
+      body: deepClone2(req.body || { type: "none", content: "" }),
+      auth: deepClone2(req.auth || { type: "inherit" }),
+      ...req.auth_envs ? { auth_envs: deepClone2(req.auth_envs) } : {},
+      ...req.scripts ? { scripts: deepClone2(req.scripts) } : {},
+      sync_flags: normalizeSyncFlags(options?.syncFlags),
+      created_at: now,
+      updated_at: now
+    };
+  }
+  function duplicateExample(example, existingExamples, options) {
+    const now = options?.now || new Date().toISOString();
+    const copyBase = `${(example.name || "Example").trim()} (Copy)`;
+    const name = generateUniqueExampleName(copyBase, existingExamples);
+    const cloned = deepClone2(example);
+    return {
+      ...cloned,
+      id: options?.id || generateExampleId(),
+      name,
+      sync_flags: normalizeSyncFlags(cloned.sync_flags),
+      created_at: now,
+      updated_at: now
+    };
+  }
+  function resolveEffectiveRequest(defaultReq, exampleOrId) {
+    if (!exampleOrId) {
+      return deepClone2(defaultReq);
+    }
+    let example;
+    if (typeof exampleOrId === "string") {
+      example = (defaultReq.examples || []).find((ex) => ex && ex.id === exampleOrId);
+      if (!example) {
+        return deepClone2(defaultReq);
+      }
+    } else {
+      example = exampleOrId;
+    }
+    const flags = normalizeSyncFlags(example.sync_flags);
+    const method = flags.method ? defaultReq.method : example.method || defaultReq.method || "GET";
+    const params = flags.params ? deepClone2(defaultReq.params || []) : deepClone2(example.params || []);
+    let url = "";
+    if (flags.url && flags.params) {
+      url = defaultReq.url || "";
+    } else if (flags.url && !flags.params) {
+      url = mergeBaseUrlPreservingExampleQuery(defaultReq.url || "", example.url || "", params);
+    } else if (!flags.url && flags.params) {
+      url = updateUrlWithParams(example.url || "", params);
+    } else {
+      url = example.url || "";
+    }
+    let path_params;
+    if (flags.path_params) {
+      path_params = deepClone2(defaultReq.path_params || []);
+    } else if (flags.url) {
+      path_params = reconcilePathParamsFromUrl(url, deepClone2(example.path_params || []));
+    } else {
+      path_params = deepClone2(example.path_params || []);
+    }
+    const headers = flags.headers ? cleanHeadersForSnapshot(defaultReq.headers) : cleanHeadersForSnapshot(example.headers);
+    const variables = flags.variables ? deepClone2(defaultReq.variables || []) : deepClone2(example.variables || []);
+    const body = flags.body ? deepClone2(defaultReq.body || { type: "none", content: "" }) : deepClone2(example.body || { type: "none", content: "" });
+    const auth = flags.auth ? deepClone2(defaultReq.auth || { type: "inherit" }) : deepClone2(example.auth || { type: "inherit" });
+    const auth_envs = flags.auth ? deepClone2(defaultReq.auth_envs) : deepClone2(example.auth_envs);
+    const scripts = flags.scripts ? deepClone2(defaultReq.scripts) : deepClone2(example.scripts);
+    const effective = {
+      id: defaultReq.id,
+      name: defaultReq.name,
+      method,
+      url,
+      headers,
+      params,
+      path_params,
+      ...variables.length > 0 || defaultReq.variables !== undefined || example.variables !== undefined ? { variables } : {},
+      body,
+      auth,
+      ...auth_envs ? { auth_envs } : {},
+      ...scripts ? { scripts } : {},
+      ...defaultReq.examples ? { examples: deepClone2(defaultReq.examples) } : {},
+      created_at: defaultReq.created_at,
+      updated_at: defaultReq.updated_at
+    };
+    return effective;
+  }
+  function applyProjectionEditsToExample(example, projectedReq, options) {
+    const flags = normalizeSyncFlags(example.sync_flags);
+    const next = {
+      ...deepClone2(example),
+      sync_flags: flags
+    };
+    if (!flags.method) {
+      next.method = projectedReq.method;
+    }
+    if (!flags.params) {
+      next.params = deepClone2(projectedReq.params || []);
+    }
+    if (!flags.url) {
+      if (flags.params) {
+        const { baseUrl, hash } = splitBaseUrlAndQuery(projectedReq.url || "");
+        const { rawQuery: exRawQuery } = splitBaseUrlAndQuery(example.url || "");
+        next.url = exRawQuery ? `${baseUrl}?${exRawQuery}${hash}` : `${baseUrl}${hash}`;
+      } else {
+        next.url = projectedReq.url || "";
+      }
+    } else if (!flags.params) {
+      next.url = mergeBaseUrlPreservingExampleQuery(example.url || projectedReq.url || "", example.url || "", next.params || []);
+    }
+    if (!flags.path_params) {
+      next.path_params = deepClone2(projectedReq.path_params || []);
+    }
+    if (!flags.headers) {
+      next.headers = cleanHeadersForSnapshot(projectedReq.headers);
+    }
+    if (!flags.variables) {
+      next.variables = deepClone2(projectedReq.variables || []);
+    }
+    if (!flags.body) {
+      next.body = deepClone2(projectedReq.body || { type: "none", content: "" });
+    }
+    if (!flags.auth) {
+      next.auth = deepClone2(projectedReq.auth || { type: "inherit" });
+      if (projectedReq.auth_envs) {
+        next.auth_envs = deepClone2(projectedReq.auth_envs);
+      } else {
+        delete next.auth_envs;
+      }
+    }
+    if (!flags.scripts) {
+      if (projectedReq.scripts) {
+        next.scripts = deepClone2(projectedReq.scripts);
+      } else {
+        delete next.scripts;
+      }
+    }
+    next.updated_at = options?.now || new Date().toISOString();
+    return next;
+  }
+  function syncExampleFromDefault(defaultReq, example, groups, options) {
+    const flags = normalizeSyncFlags(example.sync_flags);
+    const groupSet = Array.isArray(groups) && groups.length > 0 ? new Set(groups) : null;
+    const shouldSync = (g) => groupSet ? groupSet.has(g) : flags[g];
+    const next = deepClone2(example);
+    next.sync_flags = flags;
+    const syncUrl = shouldSync("url");
+    const syncMethod = shouldSync("method");
+    const syncAuth = shouldSync("auth");
+    const syncScripts = shouldSync("scripts");
+    const syncBody = shouldSync("body");
+    const syncParams = shouldSync("params");
+    const syncPathParams = shouldSync("path_params");
+    const syncHeaders = shouldSync("headers");
+    const syncVariables = shouldSync("variables");
+    if (syncMethod) {
+      next.method = defaultReq.method;
+    }
+    if (syncParams) {
+      next.params = deepClone2(defaultReq.params || []);
+    }
+    if (syncUrl && syncParams) {
+      next.url = defaultReq.url || "";
+    } else if (syncUrl && !syncParams) {
+      next.url = mergeBaseUrlPreservingExampleQuery(defaultReq.url || "", next.url || "", next.params || []);
+    } else if (!syncUrl && syncParams) {
+      next.url = updateUrlWithParams(next.url || "", next.params || []);
+    }
+    if (syncPathParams) {
+      next.path_params = deepClone2(defaultReq.path_params || []);
+    } else if (syncUrl) {
+      next.path_params = reconcilePathParamsFromUrl(next.url || "", next.path_params || []);
+    }
+    if (syncHeaders) {
+      next.headers = cleanHeadersForSnapshot(defaultReq.headers);
+    }
+    if (syncVariables) {
+      next.variables = deepClone2(defaultReq.variables || []);
+    }
+    if (syncBody) {
+      next.body = deepClone2(defaultReq.body || { type: "none", content: "" });
+    }
+    if (syncAuth) {
+      next.auth = deepClone2(defaultReq.auth || { type: "inherit" });
+      if (defaultReq.auth_envs) {
+        next.auth_envs = deepClone2(defaultReq.auth_envs);
+      } else {
+        delete next.auth_envs;
+      }
+    }
+    if (syncScripts) {
+      if (defaultReq.scripts) {
+        next.scripts = deepClone2(defaultReq.scripts);
+      } else {
+        delete next.scripts;
+      }
+    }
+    next.updated_at = options?.now || new Date().toISOString();
+    return next;
+  }
+  function syncAllExamplesFromDefault(defaultReq, groups, options) {
+    if (!Array.isArray(defaultReq.examples) || defaultReq.examples.length === 0) {
+      return [];
+    }
+    return defaultReq.examples.map((ex) => syncExampleFromDefault(defaultReq, ex, groups, options));
+  }
+  function detachExampleToRequestPayload(defaultReq, exampleId, options) {
+    const examples = Array.isArray(defaultReq.examples) ? defaultReq.examples : [];
+    const idx = examples.findIndex((ex) => ex && ex.id === exampleId);
+    if (idx === -1)
+      return null;
+    const target = examples[idx];
+    const effective = resolveEffectiveRequest(defaultReq, target);
+    const detachedName = options?.newName?.trim() || (target.name?.trim() ? `${defaultReq.name} - ${target.name.trim()}` : `${defaultReq.name} (Example)`);
+    const { id: _id, created_at: _c, updated_at: _u, examples: _exs, ...rest } = effective;
+    const remainingExamples = examples.filter((_, i) => i !== idx);
+    return {
+      detachedFields: {
+        ...rest,
+        name: detachedName,
+        headers: cleanHeadersForSnapshot(rest.headers)
+      },
+      remainingExamples,
+      detachedExample: target
+    };
+  }
+  function findExampleBySelector(examples, selector, requestName) {
+    const sel = (selector || "").trim();
+    if (!sel) {
+      return { example: null, error: "Example selector is empty", code: "VALIDATION" };
+    }
+    const list = Array.isArray(examples) ? examples : [];
+    const exactId = list.find((ex) => ex && ex.id === sel);
+    if (exactId) {
+      return { example: exactId };
+    }
+    const lower = sel.toLowerCase();
+    const caseId = list.find((ex) => ex && (ex.id || "").toLowerCase() === lower);
+    if (caseId) {
+      return { example: caseId };
+    }
+    const nameMatches = list.filter((ex) => ex && (ex.name || "").trim().toLowerCase() === lower);
+    if (nameMatches.length === 1) {
+      return { example: nameMatches[0] };
+    }
+    if (nameMatches.length > 1) {
+      const ids = nameMatches.map((m) => m.id).join(", ");
+      return {
+        example: null,
+        code: "VALIDATION",
+        error: `Nhiều Example trùng tên "${sel}" trên Request${requestName ? ` "${requestName}"` : ""} (IDs: ${ids})`
+      };
+    }
+    return {
+      example: null,
+      code: "NOT_FOUND",
+      error: `Example "${sel}" không tồn tại trên Request${requestName ? ` "${requestName}"` : ""}`
+    };
+  }
+  function resolveRequestForStepExecution(defaultReq, exampleSelector) {
+    const sel = (exampleSelector || "").trim();
+    if (!sel) {
+      return { request: deepClone2(defaultReq), example: null };
+    }
+    const found = findExampleBySelector(defaultReq.examples, sel, defaultReq.name);
+    if (!found.example) {
+      return {
+        request: null,
+        example: null,
+        error: found.error || `Example "${sel}" không tồn tại`,
+        code: found.code || "NOT_FOUND"
+      };
+    }
+    return {
+      request: resolveEffectiveRequest(defaultReq, found.example),
+      example: found.example
+    };
+  }
+
   // src/utils/headless-engine.ts
   var stripJsonComments = stripJsoncToJson;
   var runPreRequestScript = executeScript;
@@ -4462,6 +4882,12 @@ ${code}`);
         if (ep._isAuto !== undefined) {
           mergedParams[matchIdx]._isAuto = ep._isAuto;
         }
+        if (ep.type !== undefined) {
+          mergedParams[matchIdx].type = ep.type;
+        }
+        if (Array.isArray(ep.options)) {
+          mergedParams[matchIdx].options = [...ep.options];
+        }
       } else {
         mergedParams.push({ ...ep, value: epVal });
       }
@@ -4474,7 +4900,7 @@ ${code}`);
       path_params: nextPathParams
     };
   }
-  function deepClone2(val) {
+  function deepClone3(val) {
     if (val === undefined || val === null)
       return val;
     return JSON.parse(JSON.stringify(val));
@@ -4601,7 +5027,7 @@ ${code}`);
     const authUpdates = scriptRes.scopedAuthUpdates;
     if (authUpdates) {
       if (authUpdates.collectionGlobal !== undefined && authUpdates.collectionGlobal) {
-        collection.auth = deepClone2(authUpdates.collectionGlobal);
+        collection.auth = deepClone3(authUpdates.collectionGlobal);
       }
       for (const item of authUpdates.collectionEnvs || []) {
         const targetEnvId = resolveEnvIdInMemory2(item.env, activeEnvId, environments);
@@ -4610,7 +5036,7 @@ ${code}`);
         if (!collection.auth_envs || typeof collection.auth_envs !== "object") {
           collection.auth_envs = {};
         }
-        collection.auth_envs[targetEnvId] = deepClone2(item.auth);
+        collection.auth_envs[targetEnvId] = deepClone3(item.auth);
       }
       for (const [folderSel, authCfg] of Object.entries(authUpdates.folderGlobals || {})) {
         if (!authCfg)
@@ -4619,7 +5045,7 @@ ${code}`);
         if (!fId)
           continue;
         syncFolderNodes(fId, (node) => {
-          node.auth = deepClone2(authCfg);
+          node.auth = deepClone3(authCfg);
         });
       }
       for (const item of authUpdates.folderEnvs || []) {
@@ -4633,18 +5059,19 @@ ${code}`);
           if (!node.auth_envs || typeof node.auth_envs !== "object") {
             node.auth_envs = {};
           }
-          node.auth_envs[targetEnvId] = deepClone2(item.auth);
+          node.auth_envs[targetEnvId] = deepClone3(item.auth);
         });
       }
     }
   }
-  function computeResolvedVariables(collection, environments, activeEnvId, pathFolders, cliVarOverrides) {
+  function computeResolvedVariables(collection, environments, activeEnvId, pathFolders, cliVarOverrides, requestVariables) {
     const activeEnv = activeEnvId ? environments.find((e) => e && e.id === activeEnvId) : undefined;
     const vars = resolveHierarchyVariables({
       collectionVariables: collection.variables || [],
       activeEnvVariables: activeEnv?.variables || [],
       pathFolders,
-      activeEnvId: activeEnvId || null
+      activeEnvId: activeEnvId || null,
+      requestVariables: requestVariables || null
     });
     if (cliVarOverrides) {
       for (const [k, v] of Object.entries(cliVarOverrides)) {
@@ -4656,17 +5083,17 @@ ${code}`);
     return vars;
   }
   function prepareHeadlessExecution(input) {
-    const effectiveReq = deepClone2(input.request);
-    const mutatedCollection = deepClone2(input.collection || { id: "default", name: "Default", variables: [] });
-    const mutatedEnvironments = deepClone2(input.environments || []);
-    const mutatedPathFolders = deepClone2(input.pathFolders || []);
-    const mutatedAllFolders = deepClone2(input.allFolders && input.allFolders.length > 0 ? input.allFolders : mutatedPathFolders);
+    const effectiveReq = deepClone3(input.request);
+    const mutatedCollection = deepClone3(input.collection || { id: "default", name: "Default", variables: [] });
+    const mutatedEnvironments = deepClone3(input.environments || []);
+    const mutatedPathFolders = deepClone3(input.pathFolders || []);
+    const mutatedAllFolders = deepClone3(input.allFolders && input.allFolders.length > 0 ? input.allFolders : mutatedPathFolders);
     const effectiveActiveEnvId = input.activeEnvId !== undefined ? input.activeEnvId : mutatedCollection.active_env_id || null;
     const reconciled = reconcileUrlAndParams(effectiveReq.url || "", effectiveReq.params || [], effectiveReq.path_params || []);
     effectiveReq.url = reconciled.url;
     effectiveReq.params = reconciled.params;
     effectiveReq.path_params = reconciled.path_params;
-    let vars = computeResolvedVariables(mutatedCollection, mutatedEnvironments, effectiveActiveEnvId, mutatedPathFolders, input.cliVarOverrides);
+    let vars = computeResolvedVariables(mutatedCollection, mutatedEnvironments, effectiveActiveEnvId, mutatedPathFolders, input.cliVarOverrides, effectiveReq.variables);
     let preScriptResult = null;
     const preScriptCode = effectiveReq.scripts?.pre_request?.trim() || "";
     if (preScriptCode !== "") {
@@ -4742,12 +5169,12 @@ ${code}`);
     if (postScriptCode === "") {
       return null;
     }
-    const mutatedCollection = deepClone2(input.collection || { id: "default", name: "Default", variables: [] });
-    const mutatedEnvironments = deepClone2(input.environments || []);
-    const mutatedPathFolders = deepClone2(input.pathFolders || []);
-    const mutatedAllFolders = deepClone2(input.allFolders && input.allFolders.length > 0 ? input.allFolders : mutatedPathFolders);
+    const mutatedCollection = deepClone3(input.collection || { id: "default", name: "Default", variables: [] });
+    const mutatedEnvironments = deepClone3(input.environments || []);
+    const mutatedPathFolders = deepClone3(input.pathFolders || []);
+    const mutatedAllFolders = deepClone3(input.allFolders && input.allFolders.length > 0 ? input.allFolders : mutatedPathFolders);
     const effectiveActiveEnvId = input.activeEnvId !== undefined ? input.activeEnvId : mutatedCollection.active_env_id || null;
-    const vars = input.resolvedVariables ? new Map(Object.entries(input.resolvedVariables)) : computeResolvedVariables(mutatedCollection, mutatedEnvironments, effectiveActiveEnvId, mutatedPathFolders, input.cliVarOverrides);
+    const vars = input.resolvedVariables ? new Map(Object.entries(input.resolvedVariables)) : computeResolvedVariables(mutatedCollection, mutatedEnvironments, effectiveActiveEnvId, mutatedPathFolders, input.cliVarOverrides, effectiveReq?.variables);
     return executeScript(postScriptCode, {
       variables: vars,
       response: {
@@ -4804,7 +5231,21 @@ ${code}`);
     evaluateStepVerdict,
     evaluateCustomBranchCondition,
     selectMatchingBranch,
-    mergeParallelScriptUpdates
+    mergeParallelScriptUpdates,
+    EXAMPLE_SYNC_FLAG_KEYS,
+    createDefaultSyncFlags,
+    normalizeSyncFlags,
+    cloneRequestToExample,
+    duplicateExample,
+    resolveEffectiveRequest,
+    applyProjectionEditsToExample,
+    syncExampleFromDefault,
+    syncAllExamplesFromDefault,
+    detachExampleToRequestPayload,
+    findExampleBySelector,
+    resolveRequestForStepExecution,
+    splitBaseUrlAndQuery,
+    mergeBaseUrlPreservingExampleQuery
   };
   if (typeof globalThis !== "undefined") {
     globalThis.HectoEngine = HeadlessBundleExports;

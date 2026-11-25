@@ -675,3 +675,225 @@ func TestExecuteFlow_CustomBranchPriority_NegativeTest_DeletedRequest_Timeout_An
 	}
 }
 
+func TestExecuteFlow_StepWithExampleID_And_DeletedExampleFailsExplicitly(t *testing.T) {
+	tmpDir := t.TempDir()
+	fs := storage.NewFileSystem()
+	logger := newTestLogger()
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(tmpDir)
+	cfg, err := cfgSvc.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	collSvc := service.NewCollectionService(fs, logger)
+	reqSvc := service.NewRequestService(fs, logger)
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var receivedModes []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedModes = append(receivedModes, r.URL.Query().Get("mode"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	node := collSvc.CreateRequest(collRoot, "").Data.(model.TreeNode)
+	req := reqSvc.Get(node.ID).Data.(model.Request)
+	req.Name = "Query Endpoint"
+	req.Method = "GET"
+	req.URL = ts.URL + "/check"
+	req.Examples = []model.RequestExample{
+		{
+			ID:        "ex-vip",
+			Name:      "VIP Check",
+			Method:    "GET",
+			URL:       ts.URL + "/check?mode=vip",
+			Params:    []model.KVPair{{Key: "mode", Value: "vip", Enabled: true}},
+			SyncFlags: model.DefaultExampleSyncFlags(),
+		},
+	}
+	if res := reqSvc.Save(req); !res.Success {
+		t.Fatalf("Save request failed: %+v", res.Error)
+	}
+
+	flowOK := model.Flow{
+		ID:   "flow-ex-ok",
+		Name: "Flow With Example",
+		Nodes: []model.FlowNode{
+			{
+				ID: "n1",
+				Steps: []model.FlowStep{
+					{ID: "s1", RequestID: req.ID, ExampleID: "ex-vip", Enabled: true},
+				},
+			},
+		},
+	}
+	outOK, err := ExecuteFlow(FlowRunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		RequestSvc:      reqSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Flow:            flowOK,
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteFlow failed: %v", err)
+	}
+	if outOK.Status != "passed" || len(receivedModes) != 1 || receivedModes[0] != "vip" {
+		t.Errorf("expected flow step to execute ex-vip (mode=vip), got status=%q modes=%v", outOK.Status, receivedModes)
+	}
+	if outOK.StepResults[0].ExampleID != "ex-vip" || outOK.StepResults[0].ExampleName != "VIP Check" {
+		t.Errorf("expected ExampleID/ExampleName populated on StepResult, got %+v", outOK.StepResults[0])
+	}
+
+	// Now delete example from request and run again -> must fail with deleted_example (NO Default fallback!)
+	req.Examples = nil
+	if res := reqSvc.Save(req); !res.Success {
+		t.Fatalf("Save after deleting example failed: %+v", res.Error)
+	}
+	outDeleted, err := ExecuteFlow(FlowRunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		RequestSvc:      reqSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Flow:            flowOK,
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteFlow deleted example returned error instead of failed flow verdict: %v", err)
+	}
+	if outDeleted.Status != "failed" || outDeleted.StepsFailed != 1 || outDeleted.StepResults[0].FailureCategory != "deleted_example" {
+		t.Errorf("expected failed step with deleted_example category, got status=%q step=%+v", outDeleted.Status, outDeleted.StepResults[0])
+	}
+	if len(receivedModes) != 1 {
+		t.Errorf("expected NO HTTP fallback request to Default when example is deleted, got modes=%v", receivedModes)
+	}
+}
+
+func TestExecuteFlow_ExampleSelectorOverride_And_DisabledNodeSkippedMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	fs := storage.NewFileSystem()
+	logger := newTestLogger()
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(tmpDir)
+	cfg, err := cfgSvc.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	collSvc := service.NewCollectionService(fs, logger)
+	reqSvc := service.NewRequestService(fs, logger)
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var observed []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed = append(observed, r.Method+":"+r.URL.Query().Get("tier"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	node := collSvc.CreateRequest(collRoot, "").Data.(model.TreeNode)
+	req := reqSvc.Get(node.ID).Data.(model.Request)
+	req.Name = "Tier API"
+	req.Method = "GET"
+	req.URL = ts.URL + "/tier"
+	flagsUnlinkedMethod := model.DefaultExampleSyncFlags()
+	flagsUnlinkedMethod.Method = false
+	req.Examples = []model.RequestExample{
+		{
+			ID:        "ex-std",
+			Name:      "Standard",
+			Method:    "GET",
+			URL:       ts.URL + "/tier?tier=std",
+			Params:    []model.KVPair{{Key: "tier", Value: "std", Enabled: true}},
+			SyncFlags: model.DefaultExampleSyncFlags(),
+		},
+		{
+			ID:        "ex-pro",
+			Name:      "Pro",
+			Method:    "PUT",
+			URL:       ts.URL + "/tier?tier=pro",
+			Params:    []model.KVPair{{Key: "tier", Value: "pro", Enabled: true}},
+			SyncFlags: flagsUnlinkedMethod,
+		},
+	}
+	if res := reqSvc.Save(req); !res.Success {
+		t.Fatalf("Save request failed: %+v", res.Error)
+	}
+
+	flow := model.Flow{
+		ID:   "flow-override",
+		Name: "Override Flow",
+		Nodes: []model.FlowNode{
+			{
+				ID: "n-active",
+				Steps: []model.FlowStep{
+					{ID: "s-active", RequestID: req.ID, ExampleID: "ex-std", Enabled: true},
+				},
+			},
+			{
+				ID: "n-disabled",
+				Steps: []model.FlowStep{
+					{ID: "s-disabled", RequestID: req.ID, ExampleID: "ex-pro", Enabled: false},
+				},
+			},
+		},
+	}
+
+	// Global ExampleSelector overrides step.ExampleID -> executes Pro (PUT:pro) and disabled node preserves Pro metadata
+	out, err := ExecuteFlow(FlowRunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		RequestSvc:      reqSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Flow:            flow,
+		ExampleSelector: "Pro",
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteFlow with ExampleSelector failed: %v", err)
+	}
+	if out.Status != "passed" || len(observed) != 1 || observed[0] != "PUT:pro" {
+		t.Errorf("expected PUT:pro executed via ExampleSelector override, got status=%q observed=%v", out.Status, observed)
+	}
+	if len(out.StepResults) != 2 {
+		t.Fatalf("expected 2 step results, got %d", len(out.StepResults))
+	}
+	if out.StepResults[1].Status != "skipped" || out.StepResults[1].ExampleID != "ex-pro" || out.StepResults[1].ExampleName != "Pro" || out.StepResults[1].Method != "PUT" {
+		t.Errorf("expected disabled-node skipped step to preserve ExampleID/ExampleName/Method, got %+v", out.StepResults[1])
+	}
+
+	// Missing global ExampleSelector fails with deleted_example without fallback
+	outMissing, err := ExecuteFlow(FlowRunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		RequestSvc:      reqSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Flow:            flow,
+		ExampleSelector: "MissingOverride",
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteFlow missing ExampleSelector returned err: %v", err)
+	}
+	if outMissing.Status != "failed" || outMissing.StepResults[0].FailureCategory != "deleted_example" {
+		t.Errorf("expected deleted_example failure for missing ExampleSelector, got %+v", outMissing.StepResults[0])
+	}
+}
+

@@ -150,6 +150,7 @@ type RunOptions struct {
 	CollectionRoot  string
 	Collection      model.Collection
 	Request         model.Request
+	ExampleSelector string
 	PathFolders     []model.TreeNode
 	AllFolders      []model.TreeNode
 	Environments    []model.Environment
@@ -959,8 +960,17 @@ func ExecuteRequestFlow(opts RunOptions) (*RunOutput, error) {
 		activeEnvPtr = &activeEnvID
 	}
 
+	effectiveReq := opts.Request
+	if strings.TrimSpace(opts.ExampleSelector) != "" {
+		_, ex, exErr := service.ResolveExampleSelector(effectiveReq, opts.ExampleSelector)
+		if exErr != nil {
+			return nil, exErr
+		}
+		effectiveReq = service.ResolveEffectiveRequestForExample(effectiveReq, ex)
+	}
+
 	preIn := headlessPreInput{
-		Request:         opts.Request,
+		Request:         effectiveReq,
 		Collection:      coll,
 		Environments:    envs,
 		ActiveEnvID:     activeEnvPtr,

@@ -5,6 +5,8 @@ import FolderEditor from '../FolderEditor.vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useRequestStore } from '@/stores/requestStore'
+import { useUiStore } from '@/stores/uiStore'
 import { nextTick } from 'vue'
 import {
   LoadFolder,
@@ -12,7 +14,8 @@ import {
   GetCollectionTree,
   UpdateCollection,
   SaveEnvironment,
-  ListEnvironments
+  ListEnvironments,
+  SaveRequest
 } from '../../../wailsjs/go/main/App'
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -22,7 +25,8 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   UpdateCollection: vi.fn().mockResolvedValue({ success: true, data: {} }),
   SaveEnvironment: vi.fn().mockResolvedValue({ success: true, data: {} }),
   ListEnvironments: vi.fn().mockResolvedValue({ success: true, data: [] }),
-  DeleteEnvironment: vi.fn().mockResolvedValue({ success: true })
+  DeleteEnvironment: vi.fn().mockResolvedValue({ success: true }),
+  SaveRequest: vi.fn().mockResolvedValue({ success: true, data: {} })
 }))
 
 describe('VariableHighlighter', () => {
@@ -719,6 +723,534 @@ describe('VariableHighlighter', () => {
       expect(varSpan.exists()).toBe(true)
       expect(varSpan.text()).toBe('{{user_name}}')
       expect(varSpan.classes()).toContain('text-variable-valid')
+    })
+
+    it('supports 1-click select, + Thêm lựa chọn... auto-save, out-of-list preservation, and 4-tier options inheritance in VariableHoverPopover', async () => {
+      vi.useFakeTimers()
+      useUiStore().setLocale('vi')
+      const { envStore, pathFolders } = setupHierarchyState()
+
+      envStore.environments = [
+        {
+          id: 'env-local',
+          name: 'Local',
+          variables: [
+            { key: 'role', value: 'admin', enabled: true, type: 'select', options: ['admin', 'user'] },
+            { key: 'otherSelect', value: 'keep', enabled: true, type: 'select', options: ['keep', 'other'] }
+          ]
+        } as any
+      ]
+
+      let storedFolderA: any = {
+        id: 'folder-a',
+        name: 'Folder A',
+        variables: [],
+        folder_envs: {},
+        headers: [],
+        auth: { type: 'inherit' }
+      }
+      vi.mocked(LoadFolder).mockImplementation(async () => ({
+        success: true,
+        data: JSON.parse(JSON.stringify(storedFolderA))
+      }) as any)
+      vi.mocked(UpdateFolder).mockImplementation(async (updated: any) => {
+        storedFolderA = JSON.parse(JSON.stringify(updated))
+        return { success: true, data: storedFolderA } as any
+      })
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          props: {
+            value: '{{role}}'
+          },
+          global: {
+            provide: {
+              variableHierarchyFolders: pathFolders
+            }
+          }
+        })
+      )
+
+      await wrapper.find('[data-var-name="role"]').trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      expect(popover).not.toBeNull()
+
+      // Winning scope is Global Env (Local), which is select ['admin', 'user']
+      const triggerBtn = popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement
+      expect(triggerBtn).not.toBeNull()
+      expect(triggerBtn.textContent).toContain('admin')
+
+      // 1-click select "user" -> saves immediately and preserves otherSelect's type/options
+      triggerBtn.click()
+      await nextTick()
+      ;(document.body.querySelector('[data-test="kvp-select-option-user"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(SaveEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'env-local',
+          variables: [
+            { key: 'role', value: 'user', enabled: true, type: 'select', options: ['admin', 'user'] },
+            { key: 'otherSelect', value: 'keep', enabled: true, type: 'select', options: ['keep', 'other'] }
+          ]
+        })
+      )
+
+      // Switch scope to Folder A (Dùng chung) which does NOT define 'role' yet -> inherits ['admin', 'user']
+      const selectEl = popover.querySelector('[data-test="variable-scope-select"]') as HTMLSelectElement
+      selectEl.value = 'folder-global:folder-a'
+      selectEl.dispatchEvent(new Event('change'))
+      await nextTick()
+
+      const folderTrigger = popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement
+      expect(folderTrigger).not.toBeNull()
+      folderTrigger.click()
+      await nextTick()
+
+      // Inherits 'admin' & 'user' in dropdown
+      expect(document.body.querySelector('[data-test="kvp-select-option-admin"]')).not.toBeNull()
+      expect(document.body.querySelector('[data-test="kvp-select-option-user"]')).not.toBeNull()
+
+      // Add "guest" via "+ Thêm lựa chọn..." -> saves type: 'select', options: ['admin', 'user', 'guest'] onto Folder A
+      ;(document.body.querySelector('[data-test="kvp-add-option-trigger"]') as HTMLButtonElement).click()
+      await nextTick()
+      const addInput = document.body.querySelector('[data-test="kvp-add-option-input"]') as HTMLInputElement
+      addInput.value = 'guest'
+      addInput.dispatchEvent(new Event('input'))
+      ;(document.body.querySelector('[data-test="kvp-add-option-confirm"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(UpdateFolder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'folder-a',
+          variables: [
+            { key: 'role', value: 'guest', enabled: true, type: 'select', options: ['admin', 'user', 'guest'] }
+          ]
+        })
+      )
+    })
+
+    it('shows out-of-list label in VariableHoverPopover without deleting value', async () => {
+      vi.useFakeTimers()
+      useUiStore().setLocale('vi')
+      const { envStore, pathFolders } = setupHierarchyState()
+      envStore.environments = [
+        {
+          id: 'env-local',
+          name: 'Local',
+          variables: [
+            { key: 'mode', value: 'x', enabled: true, type: 'select', options: ['a'] }
+          ]
+        } as any
+      ]
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          props: { value: '{{mode}}' },
+          global: {
+            provide: { variableHierarchyFolders: pathFolders }
+          }
+        })
+      )
+
+      await wrapper.find('[data-var-name="mode"]').trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      expect(popover.querySelector('[data-test="kvp-select-trigger"]')?.textContent).toContain('x')
+      expect(popover.querySelector('[data-test="kvp-out-of-list-badge"]')?.textContent).toContain('ngoài danh sách')
+    })
+
+    it('supports select :param in path_params with empty value and 1-click save, and retains popover when focus is inside teleported portal', async () => {
+      vi.useFakeTimers()
+      useUiStore().setLocale('vi')
+      const { pathFolders } = setupHierarchyState()
+      const reqStore = useRequestStore()
+      reqStore.current = {
+        id: 'req-p',
+        name: 'Path Select',
+        method: 'GET',
+        url: 'https://api.example.com/:ver/items',
+        headers: [],
+        params: [],
+        path_params: [{ key: 'ver', value: '', enabled: true, type: 'select', options: ['v1', 'v2'] }],
+        body: { type: 'none', content: '' },
+        created_at: '',
+        updated_at: ''
+      }
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          attachTo: document.body,
+          props: { value: 'https://api.example.com/:ver/items', enablePathParams: true },
+          global: {
+            provide: { variableHierarchyFolders: pathFolders }
+          }
+        })
+      )
+
+      const pathSpan = wrapper.find('[data-var-name="ver"][data-var-kind="path"]')
+      expect(pathSpan.exists()).toBe(true)
+      await pathSpan.trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      expect(popover).not.toBeNull()
+
+      const triggerBtn = popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement
+      expect(triggerBtn).not.toBeNull()
+      triggerBtn.click()
+      await nextTick()
+
+      // Open inline add input inside teleported portal and focus it
+      ;(document.body.querySelector('[data-test="kvp-add-option-trigger"]') as HTMLButtonElement).click()
+      await nextTick()
+      const inlineInput = document.body.querySelector('[data-test="kvp-add-option-input"]') as HTMLInputElement
+      expect(inlineInput).not.toBeNull()
+      inlineInput.focus()
+
+      // Trigger mouseleave + focusout on popover while focus is inside [data-kvp-portal="true"]
+      popover.dispatchEvent(new MouseEvent('mouseleave'))
+      popover.dispatchEvent(new FocusEvent('focusout'))
+      await vi.advanceTimersByTimeAsync(300)
+      await nextTick()
+
+      // Popover must still be open
+      expect(document.body.querySelector('[data-test="variable-hover-popover"]')).not.toBeNull()
+
+      // Cancel inline add and 1-click select 'v2'
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await nextTick()
+      ;(document.body.querySelector('[data-test="kvp-select-option-v2"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(reqStore.current.path_params?.[0]).toEqual({
+        key: 'ver',
+        value: 'v2',
+        enabled: true,
+        type: 'select',
+        options: ['v1', 'v2']
+      })
+    })
+
+    it('toggles select back to text without leaking inherited options and deletes options when emptied', async () => {
+      vi.useFakeTimers()
+      useUiStore().setLocale('vi')
+      const { envStore, pathFolders } = setupHierarchyState()
+      envStore.environments = [
+        {
+          id: 'env-local',
+          name: 'Local',
+          variables: [
+            { key: 'role', value: 'admin', enabled: true, type: 'select', options: ['admin', 'user'] }
+          ]
+        } as any
+      ]
+
+      let storedFolderA: any = {
+        id: 'folder-a',
+        name: 'Folder A',
+        variables: [],
+        folder_envs: {},
+        headers: [],
+        auth: { type: 'inherit' }
+      }
+      vi.mocked(LoadFolder).mockImplementation(async () => ({
+        success: true,
+        data: JSON.parse(JSON.stringify(storedFolderA))
+      }) as any)
+      vi.mocked(UpdateFolder).mockImplementation(async (updated: any) => {
+        storedFolderA = JSON.parse(JSON.stringify(updated))
+        return { success: true, data: storedFolderA } as any
+      })
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          props: { value: '{{role}}' },
+          global: {
+            provide: { variableHierarchyFolders: pathFolders }
+          }
+        })
+      )
+
+      await wrapper.find('[data-var-name="role"]').trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+
+      // 1. Switch to undefined Folder A (inherits select ['admin', 'user']), toggle to text, save -> must NOT leak options
+      const selectEl = popover.querySelector('[data-test="variable-scope-select"]') as HTMLSelectElement
+      selectEl.value = 'folder-global:folder-a'
+      selectEl.dispatchEvent(new Event('change'))
+      await nextTick()
+
+      expect(popover.querySelector('[data-test="variable-save-dirty-dot"]')).toBeNull()
+      ;(popover.querySelector('[data-test="kvp-mode-toggle-btn"]') as HTMLButtonElement).click()
+      await nextTick()
+      expect(popover.querySelector('[data-test="variable-save-dirty-dot"]')).not.toBeNull()
+
+      const valueInput = popover.querySelector('[data-test="variable-value-input"]') as HTMLInputElement
+      valueInput.value = 'plain-role'
+      valueInput.dispatchEvent(new Event('input'))
+      ;(popover.querySelector('[data-test="variable-save-btn"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(UpdateFolder).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: 'folder-a',
+          variables: [{ key: 'role', value: 'plain-role', enabled: true }]
+        })
+      )
+
+      // 2. Switch back to Global Env (existing select ['admin', 'user']), delete all options, toggle to text, save -> type: 'text' and options deleted
+      selectEl.value = 'global-env:env-local'
+      selectEl.dispatchEvent(new Event('change'))
+      await nextTick()
+
+      ;(popover.querySelector('[data-test="kvp-edit-options-btn"]') as HTMLButtonElement).click()
+      await nextTick()
+      ;(document.body.querySelector('[data-test="kvp-remove-option-btn-0"]') as HTMLButtonElement).click()
+      await nextTick()
+      ;(document.body.querySelector('[data-test="kvp-remove-option-btn-0"]') as HTMLButtonElement).click()
+      await nextTick()
+
+      ;(popover.querySelector('[data-test="kvp-mode-toggle-btn"]') as HTMLButtonElement).click()
+      await nextTick()
+      ;(popover.querySelector('[data-test="variable-save-btn"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(SaveEnvironment).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          id: 'env-local',
+          variables: [{ key: 'role', value: 'admin', enabled: true, type: 'text' }]
+        })
+      )
+    })
+
+    it('defaults select variable to Request scope so Request A selection does not affect Request B, syncs Env options, and supports resetting override', async () => {
+      vi.useFakeTimers()
+      useUiStore().setLocale('vi')
+      const { envStore, pathFolders } = setupHierarchyState()
+      envStore.environments = [
+        {
+          id: 'env-local',
+          name: 'Local',
+          variables: [
+            { key: 'role', value: 'admin', enabled: true, type: 'select', options: ['admin', 'user'] },
+            { key: 'host', value: 'https://dev.api', enabled: true, type: 'text' }
+          ]
+        } as any
+      ]
+
+      const reqStore = useRequestStore()
+      const reqA: any = {
+        id: 'req-a',
+        name: 'Request A',
+        method: 'GET',
+        url: 'https://api.example.com?role={{role}}&host={{host}}',
+        headers: [],
+        params: [],
+        variables: [],
+        body: { type: 'none', content: '' },
+        created_at: '',
+        updated_at: ''
+      }
+      const reqB: any = {
+        id: 'req-b',
+        name: 'Request B',
+        method: 'GET',
+        url: 'https://api.example.com?role={{role}}',
+        headers: [],
+        params: [],
+        variables: [],
+        body: { type: 'none', content: '' },
+        created_at: '',
+        updated_at: ''
+      }
+      reqStore.original = JSON.parse(JSON.stringify(reqA))
+      reqStore.current = reqA
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          props: { value: '{{role}} {{host}}' },
+          global: {
+            provide: {
+              variableHierarchyFolders: pathFolders,
+              variableScopeContext: 'request'
+            }
+          }
+        })
+      )
+
+      // 1. Hover {{role}} (select var) -> defaults to 'request' scope and shows effective value 'admin'
+      await wrapper.find('[data-var-name="role"]').trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      const scopeSelect = popover.querySelector('[data-test="variable-scope-select"]') as HTMLSelectElement
+      expect(scopeSelect.value).toBe('request')
+      expect(popover.querySelector('[data-test="kvp-select-trigger"]')?.textContent).toContain('admin')
+      expect(popover.querySelector('[data-test="variable-reset-request-override-btn"]')).toBeNull()
+
+      // 2. 1-click select 'user' on Request A -> saves pure value override to reqA.variables, does NOT modify Global Env
+      ;(popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement).click()
+      await nextTick()
+      ;(document.body.querySelector('[data-test="kvp-select-option-user"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(SaveEnvironment).not.toHaveBeenCalled()
+      expect(SaveRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'req-a',
+          variables: [{ key: 'role', value: 'user', enabled: true }]
+        })
+      )
+      expect(reqA.variables).toEqual([{ key: 'role', value: 'user', enabled: true }])
+      expect(reqB.variables).toEqual([])
+      expect(envStore.environments[0].variables[0].value).toBe('admin')
+      expect(popover.querySelector('[data-test="variable-reset-request-override-btn"]')).not.toBeNull()
+
+      // 3. Updating options on Global Env immediately reflects in Request A because Request A only stored a pure value override
+      envStore.environments[0].variables[0].options = ['admin', 'user', 'moderator']
+      await nextTick()
+      ;(popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement).click()
+      await nextTick()
+      expect(document.body.querySelector('[data-test="kvp-select-option-moderator"]')).not.toBeNull()
+      // Close dropdown
+      ;(popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement).click()
+      await nextTick()
+
+      // 4. Switch to Request B -> still sees Global Env value 'admin' (not polluted by Request A)
+      reqStore.original = JSON.parse(JSON.stringify(reqB))
+      reqStore.current = reqB
+      await nextTick()
+      expect(popover.querySelector('[data-test="kvp-select-trigger"]')?.textContent).toContain('admin')
+      expect(popover.querySelector('[data-test="variable-reset-request-override-btn"]')).toBeNull()
+
+      // 5. Switch back to Request A and click "Bỏ ghi đè" -> clears reqA override back to 'admin'
+      reqStore.original = JSON.parse(JSON.stringify(reqA))
+      reqStore.current = reqA
+      await nextTick()
+      ;(popover.querySelector('[data-test="variable-reset-request-override-btn"]') as HTMLButtonElement).click()
+      await flushPromises()
+      await nextTick()
+
+      expect(reqA.variables).toEqual([])
+      expect(popover.querySelector('[data-test="kvp-select-trigger"]')?.textContent).toContain('admin')
+
+      // 6. Normal text variable {{host}} still defaults to Global Env scope
+      await wrapper.find('[data-var-name="host"]').trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+      const hostPopover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      const hostScopeSelect = hostPopover.querySelector('[data-test="variable-scope-select"]') as HTMLSelectElement
+      expect(hostScopeSelect.value).toBe('global-env:env-local')
+    })
+
+    it('respects Example sync_flags.variables in VariableHoverPopover (readonly when linked, editable when unlinked)', async () => {
+      vi.useFakeTimers()
+      try {
+      const envStore = useEnvironmentStore()
+      const reqStore = useRequestStore()
+      const collectionStore = useCollectionStore()
+
+      collectionStore.collections = [
+        { id: 'c1', name: 'Default', description: '', variables: [] }
+      ] as any
+      collectionStore.activeCollectionId = 'c1'
+      envStore.environments = [
+        { id: 'env-local', name: 'Local', variables: [{ key: 'tier', value: 'free', enabled: true }], created_at: '', updated_at: '' } as any
+      ]
+      envStore.activeEnvId = 'env-local'
+
+      const baseReq: any = {
+        id: 'req-ex-var-lock',
+        name: 'Ex Var Lock',
+        method: 'GET',
+        url: 'https://api.example.com?tier={{tier}}',
+        headers: [],
+        params: [],
+        variables: [{ key: 'tier', value: 'pro', enabled: true, type: 'select', options: ['free', 'pro'] }],
+        body: { type: 'none', content: '' },
+        examples: [
+          {
+            id: 'ex-locked',
+            name: 'Locked Vars',
+            method: 'GET',
+            url: 'https://api.example.com?tier={{tier}}',
+            headers: [],
+            params: [],
+            variables: [{ key: 'tier', value: 'pro', enabled: true, type: 'select', options: ['free', 'pro'] }],
+            body: { type: 'none', content: '' },
+            auth: { type: 'inherit' },
+            sync_flags: {
+              url: true,
+              method: true,
+              auth: true,
+              scripts: true,
+              body: false,
+              params: false,
+              path_params: false,
+              headers: false,
+              variables: true
+            },
+            created_at: '',
+            updated_at: ''
+          }
+        ],
+        created_at: '',
+        updated_at: ''
+      }
+      reqStore.original = JSON.parse(JSON.stringify(baseReq))
+      reqStore.draft = JSON.parse(JSON.stringify(baseReq))
+      reqStore.selectExample('ex-locked')
+
+      const wrapper = trackWrapper(
+        mount(VariableHighlighter, {
+          props: { value: '{{tier}}' },
+          global: {
+            provide: {
+              variableHierarchyFolders: [],
+              variableScopeContext: 'request'
+            }
+          }
+        })
+      )
+
+      await wrapper.find('[data-var-name="tier"]').trigger('mousemove')
+      await vi.advanceTimersByTimeAsync(150)
+      await nextTick()
+
+      const popover = document.body.querySelector('[data-test="variable-hover-popover"]') as HTMLElement
+      const selectTrigger = popover.querySelector('[data-test="kvp-select-trigger"]') as HTMLButtonElement
+      const modeToggle = popover.querySelector('[data-test="kvp-mode-toggle-btn"]') as HTMLButtonElement | null
+      const saveBtn = popover.querySelector('[data-test="variable-save-btn"]') as HTMLButtonElement
+      expect(selectTrigger.disabled).toBe(true)
+      expect(modeToggle).toBeNull()
+      expect(saveBtn.disabled).toBe(true)
+
+      // Unlink variables flag -> select control & save button unlock
+      reqStore.setExampleSyncFlag('ex-locked', 'variables', false)
+      await nextTick()
+      expect(selectTrigger.disabled).toBe(false)
+      expect(popover.querySelector('[data-test="kvp-mode-toggle-btn"]')).not.toBeNull()
+      expect(saveBtn.disabled).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })

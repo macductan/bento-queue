@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -2460,5 +2461,472 @@ func TestFlowRun_Compact_Redact_And_MaxBody(t *testing.T) {
 	missingStep := edgeNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
 	if _, hasRunOut := missingStep["run_output"]; hasRunOut {
 		t.Fatalf("expected deleted request step to have nil/omitted run_output, got %+v", missingStep)
+	}
+}
+
+func TestUpsertKVPair_PreservesSelectTypeAndOptions(t *testing.T) {
+	list := []model.KVPair{
+		{
+			Key:         "REGION",
+			Value:       "us-east-1",
+			Enabled:     false,
+			Description: "AWS Region",
+			Type:        "select",
+			Options:     []string{"us-east-1", "ap-southeast-1"},
+		},
+	}
+
+	updated := upsertKVPair(list, "REGION", "eu-central-1") // value outside options
+	if len(updated) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(updated))
+	}
+	if updated[0].Value != "eu-central-1" || !updated[0].Enabled {
+		t.Errorf("expected Value='eu-central-1' and Enabled=true, got %+v", updated[0])
+	}
+	if updated[0].Type != "select" || !slices.Equal(updated[0].Options, []string{"us-east-1", "ap-southeast-1"}) || updated[0].Description != "AWS Region" {
+		t.Errorf("expected Type/Options/Description preserved, got %+v", updated[0])
+	}
+
+	appended := upsertKVPair(updated, "EXTRA", "1")
+	if len(appended) != 2 || appended[1].Key != "EXTRA" || appended[1].Type != "" || appended[1].Options != nil {
+		t.Errorf("expected appended item with default empty Type/Options, got %+v", appended)
+	}
+}
+
+func TestCLI_UpdatePreservesSelectTypeAndOptions(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Create env, folder, and request via CLI first
+	code, envCr, _ := execCLIJSON(t, dataDir, "env", "create", "--name", "Staging", "--var", "API_STAGE=dev", "--activate")
+	if code != 0 || !envCr.Success {
+		t.Fatalf("env create failed: %+v", envCr)
+	}
+	envID := envCr.Data.(map[string]interface{})["id"].(string)
+
+	code, fCr, _ := execCLIJSON(t, dataDir, "folder", "create", "--name", "Orders")
+	if code != 0 || !fCr.Success {
+		t.Fatalf("folder create failed: %+v", fCr)
+	}
+	folderID := fCr.Data.(map[string]interface{})["id"].(string)
+
+	code, rCr, _ := execCLIJSON(t, dataDir, "req", "create", "--folder", "Orders", "--name", "CreateOrder", "--method", "POST", "--url", "https://api.example.com/orders")
+	if code != 0 || !rCr.Success {
+		t.Fatalf("req create failed: %+v", rCr)
+	}
+	reqID := rCr.Data.(map[string]interface{})["id"].(string)
+
+	// Seed select Type & Options on disk via storage/service (simulating UI configuration)
+	fs := storage.NewFileSystem()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(dataDir)
+	cfg, err := cfgSvc.Initialize(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	collSvc := service.NewCollectionService(fs, logger)
+	envSvc := service.NewEnvironmentService(fs, logger)
+	reqSvc := service.NewRequestService(fs, logger)
+
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll.Variables = []model.KVPair{
+		{Key: "COLL_MODE", Value: "sandbox", Enabled: true, Type: "select", Options: []string{"sandbox", "live"}},
+	}
+	if res := collSvc.UpdateCollection(cfg.CollectionsRoot, coll); !res.Success {
+		t.Fatalf("UpdateCollection failed: %+v", res.Error)
+	}
+
+	envObj := envSvc.Get(collRoot, envID).Data.(model.Environment)
+	envObj.Variables = []model.KVPair{
+		{Key: "API_STAGE", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "stg", "prod"}},
+	}
+	if res := envSvc.Save(collRoot, envObj); !res.Success {
+		t.Fatalf("envSvc.Save failed: %+v", res.Error)
+	}
+
+	folder := collSvc.LoadFolder(folderID).Data.(model.Folder)
+	folder.Variables = []model.KVPair{
+		{Key: "FOLDER_TIER", Value: "gold", Enabled: true, Type: "select", Options: []string{"silver", "gold"}},
+	}
+	folder.FolderEnvs = map[string][]model.KVPair{
+		envID: {
+			{Key: "TENANT", Value: "acme", Enabled: true, Type: "select", Options: []string{"acme", "globex"}},
+		},
+	}
+	folder.Headers = []model.KVPair{
+		{Key: "X-Folder-Mode", Value: "strict", Enabled: true, Type: "select", Options: []string{"strict", "lenient"}},
+	}
+	if res := collSvc.UpdateFolder(folder); !res.Success {
+		t.Fatalf("UpdateFolder failed: %+v", res.Error)
+	}
+
+	req := reqSvc.Get(reqID).Data.(model.Request)
+	req.URL = "https://api.example.com/:version/orders?mode=fast"
+	req.Headers = []model.KVPair{
+		{Key: "X-Role", Value: "user", Enabled: true, Type: "select", Options: []string{"admin", "user"}},
+	}
+	req.Params = []model.KVPair{
+		{Key: "mode", Value: "fast", Enabled: true, Type: "select", Options: []string{"fast", "safe"}},
+	}
+	req.PathParams = []model.KVPair{
+		{Key: "version", Value: "v1", Enabled: true, Type: "select", Options: []string{"v1", "v2"}},
+	}
+	req.Body = model.Body{
+		Type: "formdata",
+		FormData: []model.KVPair{
+			{Key: "kind", Value: "fast", Enabled: true, Type: "select", Options: []string{"fast", "standard"}},
+		},
+		URLEncoded: []model.KVPair{
+			{Key: "scope", Value: "read", Enabled: true, Type: "select", Options: []string{"read", "write"}},
+		},
+	}
+	if res := reqSvc.Save(req); !res.Success {
+		t.Fatalf("reqSvc.Save failed: %+v", res.Error)
+	}
+
+	// Update values via CLI (including values outside options)
+	if code, res, _ := execCLIJSON(t, dataDir, "collection", "update", "--set-var", "COLL_MODE=custom-coll"); code != 0 || !res.Success {
+		t.Fatalf("collection update failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "env", "update", "Staging", "--set-var", "API_STAGE=canary"); code != 0 || !res.Success {
+		t.Fatalf("env update failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "folder", "update", "Orders",
+		"--set-var", "FOLDER_TIER=platinum",
+		"--set-env-var", "Staging:TENANT=globex",
+		"--set-header", "X-Folder-Mode: lenient",
+	); code != 0 || !res.Success {
+		t.Fatalf("folder update failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "update", "Orders/CreateOrder",
+		"--set-header", "X-Role: auditor",
+		"--set-param", "mode=safe",
+		"--set-path-param", "version=v2",
+		"--set-form", "kind=express",
+		"--set-urlencoded", "scope=write",
+	); code != 0 || !res.Success {
+		t.Fatalf("req update failed: %+v", res)
+	}
+
+	// Reload from disk and verify Type & Options were preserved on every entity
+	collAfter, _, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, coll.ID)
+	if err != nil {
+		t.Fatalf("ResolveCollectionSelector failed: %v", err)
+	}
+	if len(collAfter.Variables) != 1 || collAfter.Variables[0].Value != "custom-coll" ||
+		collAfter.Variables[0].Type != "select" || !slices.Equal(collAfter.Variables[0].Options, []string{"sandbox", "live"}) {
+		t.Errorf("expected collection variable select metadata preserved after CLI update, got %+v", collAfter.Variables)
+	}
+
+	envAfter := envSvc.Get(collRoot, envID).Data.(model.Environment)
+	if len(envAfter.Variables) != 1 || envAfter.Variables[0].Value != "canary" ||
+		envAfter.Variables[0].Type != "select" || !slices.Equal(envAfter.Variables[0].Options, []string{"dev", "stg", "prod"}) {
+		t.Errorf("expected env variable select metadata preserved after CLI update, got %+v", envAfter.Variables)
+	}
+
+	folderAfter := collSvc.LoadFolder(folderID).Data.(model.Folder)
+	if folderAfter.Variables[0].Value != "platinum" || folderAfter.Variables[0].Type != "select" ||
+		!slices.Equal(folderAfter.Variables[0].Options, []string{"silver", "gold"}) {
+		t.Errorf("expected folder variable select metadata preserved, got %+v", folderAfter.Variables)
+	}
+	if folderAfter.FolderEnvs[envID][0].Value != "globex" || folderAfter.FolderEnvs[envID][0].Type != "select" ||
+		!slices.Equal(folderAfter.FolderEnvs[envID][0].Options, []string{"acme", "globex"}) {
+		t.Errorf("expected folder_envs select metadata preserved, got %+v", folderAfter.FolderEnvs[envID])
+	}
+	if folderAfter.Headers[0].Value != "lenient" || folderAfter.Headers[0].Type != "select" ||
+		!slices.Equal(folderAfter.Headers[0].Options, []string{"strict", "lenient"}) {
+		t.Errorf("expected folder header select metadata preserved, got %+v", folderAfter.Headers)
+	}
+
+	reqAfter := reqSvc.Get(reqID).Data.(model.Request)
+	if reqAfter.Headers[0].Value != "auditor" || reqAfter.Headers[0].Type != "select" ||
+		!slices.Equal(reqAfter.Headers[0].Options, []string{"admin", "user"}) {
+		t.Errorf("expected req header select metadata preserved, got %+v", reqAfter.Headers)
+	}
+	if len(reqAfter.Params) != 1 || reqAfter.Params[0].Value != "safe" || reqAfter.Params[0].Type != "select" ||
+		!slices.Equal(reqAfter.Params[0].Options, []string{"fast", "safe"}) {
+		t.Errorf("expected req param select metadata preserved after --set-param, got %+v", reqAfter.Params)
+	}
+	if len(reqAfter.PathParams) != 1 || reqAfter.PathParams[0].Value != "v2" || reqAfter.PathParams[0].Type != "select" ||
+		!slices.Equal(reqAfter.PathParams[0].Options, []string{"v1", "v2"}) {
+		t.Errorf("expected req path_param select metadata preserved after --set-path-param, got %+v", reqAfter.PathParams)
+	}
+	if reqAfter.Body.FormData[0].Value != "express" || reqAfter.Body.FormData[0].Type != "select" ||
+		!slices.Equal(reqAfter.Body.FormData[0].Options, []string{"fast", "standard"}) {
+		t.Errorf("expected req form_data select metadata preserved, got %+v", reqAfter.Body.FormData)
+	}
+	if reqAfter.Body.URLEncoded[0].Value != "write" || reqAfter.Body.URLEncoded[0].Type != "select" ||
+		!slices.Equal(reqAfter.Body.URLEncoded[0].Options, []string{"read", "write"}) {
+		t.Errorf("expected req urlencoded select metadata preserved, got %+v", reqAfter.Body.URLEncoded)
+	}
+}
+
+func TestRedactKVPairs_RedactsSelectOptionsOnSensitiveKeys(t *testing.T) {
+	extraKeys := map[string]bool{"x-custom-secret": true}
+
+	headers := []model.KVPair{
+		{Key: "Authorization", Value: "Bearer secret-1", Enabled: true, Type: "select", Options: []string{"Bearer secret-1", "Bearer secret-2"}},
+		{Key: "X-Custom-Secret", Value: "s1", Enabled: true, Type: "select", Options: []string{"s1", "s2"}},
+		{Key: "X-Env", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "prod"}},
+		{Key: "X-Api-Key", Value: "plain-secret", Enabled: true},
+	}
+	redactHeaderKVPairs(headers, extraKeys)
+
+	if headers[0].Value != redactedSecretPlaceholder || !slices.Equal(headers[0].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected Authorization value and options redacted, got %+v", headers[0])
+	}
+	if headers[1].Value != redactedSecretPlaceholder || !slices.Equal(headers[1].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected X-Custom-Secret value and options redacted, got %+v", headers[1])
+	}
+	if headers[2].Value != "dev" || !slices.Equal(headers[2].Options, []string{"dev", "prod"}) {
+		t.Errorf("expected non-sensitive X-Env untouched, got %+v", headers[2])
+	}
+	if headers[3].Value != redactedSecretPlaceholder || headers[3].Options != nil {
+		t.Errorf("expected X-Api-Key with nil options to stay nil, got %+v", headers[3])
+	}
+
+	vars := []model.KVPair{
+		{Key: "API_TOKEN", Value: "tok-1", Enabled: true, Type: "select", Options: []string{"tok-1", "tok-2"}},
+		{Key: "x-custom-secret", Value: "v1", Enabled: true, Type: "select", Options: []string{"v1", "v2"}},
+		{Key: "APP_MODE", Value: "stg", Enabled: true, Type: "select", Options: []string{"dev", "stg"}},
+	}
+	redactVarKVPairs(vars, extraKeys)
+
+	if vars[0].Value != redactedSecretPlaceholder || !slices.Equal(vars[0].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected API_TOKEN value and options redacted, got %+v", vars[0])
+	}
+	if vars[1].Value != redactedSecretPlaceholder || !slices.Equal(vars[1].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected x-custom-secret value and options redacted, got %+v", vars[1])
+	}
+	if vars[2].Value != "stg" || !slices.Equal(vars[2].Options, []string{"dev", "stg"}) {
+		t.Errorf("expected non-sensitive APP_MODE untouched, got %+v", vars[2])
+	}
+}
+
+func TestCLI_RequestExamples_Lifecycle_Run_And_Flow(t *testing.T) {
+	dataDir := t.TempDir()
+
+	var observedPaths []string
+	var observedMethods []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observedMethods = append(observedMethods, r.Method)
+		observedPaths = append(observedPaths, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	// Create request
+	code, createRes, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--name", "SearchUsers",
+		"--method", "GET",
+		"--url", ts.URL+"/v1/users?role=member",
+	)
+	if code != 0 || !createRes.Success {
+		t.Fatalf("req create failed: %+v", createRes)
+	}
+	reqBytes, _ := json.Marshal(createRes.Data)
+	var createdReq model.Request
+	_ = json.Unmarshal(reqBytes, &createdReq)
+
+	// Create example & update its params and body
+	code, exCreateRes, _ := execCLIJSON(t, dataDir, "req", "example", "create", "SearchUsers", "--name", "AdminsOnly")
+	if code != 0 || !exCreateRes.Success {
+		t.Fatalf("req example create failed: %+v", exCreateRes)
+	}
+	code, exUpdRes, _ := execCLIJSON(t, dataDir, "req", "example", "update", "SearchUsers", "AdminsOnly",
+		"--set-param", "role=admin",
+		"--body-type", "json",
+		"--body", `{"scope":"admin"}`,
+	)
+	if code != 0 || !exUpdRes.Success {
+		t.Fatalf("req example update failed: %+v", exUpdRes)
+	}
+
+	// Update Default Base URL and verify Sync All preserves Example query & body
+	code, reqUpdRes, _ := execCLIJSON(t, dataDir, "req", "update", "SearchUsers", "--url", ts.URL+"/v2/users?role=member")
+	if code != 0 || !reqUpdRes.Success {
+		t.Fatalf("req update failed: %+v", reqUpdRes)
+	}
+	code, exEffRes, _ := execCLIJSON(t, dataDir, "req", "example", "get", "SearchUsers", "AdminsOnly", "--effective")
+	if code != 0 || !exEffRes.Success {
+		t.Fatalf("req example get --effective failed: %+v", exEffRes)
+	}
+	effBytes, _ := json.Marshal(exEffRes.Data)
+	var effReq model.Request
+	_ = json.Unmarshal(effBytes, &effReq)
+	if effReq.URL != ts.URL+"/v2/users?role=admin" || effReq.Body.Content != `{"scope":"admin"}` {
+		t.Errorf("unexpected effective example after Default Base URL update: url=%q body=%q", effReq.URL, effReq.Body.Content)
+	}
+
+	// Run CLI with --example
+	code, runRes, _ := execCLIJSON(t, dataDir, "run", "SearchUsers", "--example", "AdminsOnly")
+	if code != 0 || !runRes.Success {
+		t.Fatalf("hecto run --example failed: %+v", runRes)
+	}
+	if len(observedPaths) != 1 || observedPaths[0] != "/v2/users?role=admin" {
+		t.Errorf("expected /v2/users?role=admin executed, got %v", observedPaths)
+	}
+
+	// Create Flow referencing SearchUsers@AdminsOnly
+	code, flowCreateRes, _ := execCLIJSON(t, dataDir, "flow", "create", "--name", "AdminFlow", "--steps", "SearchUsers@AdminsOnly")
+	if code != 0 || !flowCreateRes.Success {
+		t.Fatalf("flow create with @example failed: %+v", flowCreateRes)
+	}
+	code, flowRunRes, _ := execCLIJSON(t, dataDir, "flow", "run", "AdminFlow")
+	if code != 0 || !flowRunRes.Success {
+		t.Fatalf("flow run failed: %+v", flowRunRes)
+	}
+	if len(observedPaths) != 2 || observedPaths[1] != "/v2/users?role=admin" {
+		t.Errorf("expected flow step to hit /v2/users?role=admin, got %v", observedPaths)
+	}
+
+	// Detach AdminsOnly to standalone request & verify flow now fails explicitly without fallback
+	code, detachRes, _ := execCLIJSON(t, dataDir, "req", "example", "detach", "SearchUsers", "AdminsOnly", "--name", "DetachedAdminSearch")
+	if code != 0 || !detachRes.Success {
+		t.Fatalf("req example detach failed: %+v", detachRes)
+	}
+	code, listExRes, _ := execCLIJSON(t, dataDir, "req", "example", "list", "SearchUsers")
+	if code != 0 || !listExRes.Success {
+		t.Fatalf("req example list failed: %+v", listExRes)
+	}
+	if listSlice, ok := listExRes.Data.([]interface{}); !ok || len(listSlice) != 0 {
+		t.Errorf("expected 0 remaining examples on SearchUsers after detach, got %+v", listExRes.Data)
+	}
+
+	// Running with deleted example selector must fail explicitly
+	code, missingRunRes, _ := execCLIJSON(t, dataDir, "run", "SearchUsers", "--example", "AdminsOnly")
+	if code == 0 || missingRunRes.Success {
+		t.Fatalf("expected error running deleted example, got code=%d res=%+v", code, missingRunRes)
+	}
+
+	// Flow run with detached/deleted example must report failed flow with deleted_example
+	code, flowAfterDetachRes, _ := execCLIJSON(t, dataDir, "flow", "run", "AdminFlow")
+	if code != 0 || !flowAfterDetachRes.Success {
+		t.Fatalf("expected JSON flow envelope even on step failure, got code=%d res=%+v", code, flowAfterDetachRes)
+	}
+	fBytes, _ := json.Marshal(flowAfterDetachRes.Data)
+	var fOut map[string]interface{}
+	_ = json.Unmarshal(fBytes, &fOut)
+	if fOut["status"] != "failed" {
+		t.Errorf("expected flow status=failed after referenced example detached, got %+v", fOut)
+	}
+}
+
+func TestCLI_RequestExamples_EdgeCases_Flags_FlowOverride_And_Redact(t *testing.T) {
+	dataDir := t.TempDir()
+
+	var capturedAPIKeys []string
+	var capturedQueries []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAPIKeys = append(capturedAPIKeys, r.Header.Get("X-Example-Key"))
+		capturedQueries = append(capturedQueries, r.URL.RawQuery)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	// Create request
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "create", "--name", "Orders", "--method", "POST", "--url", ts.URL+"/orders?base=1"); code != 0 || !res.Success {
+		t.Fatalf("req create failed: %+v", res)
+	}
+
+	// 1. Default naming avoids collision after deletion
+	_, ex1Res, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders")
+	_, ex2Res, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders")
+	if !ex1Res.Success || !ex2Res.Success {
+		t.Fatalf("example create failed")
+	}
+	if _, delRes, _ := execCLIJSON(t, dataDir, "req", "example", "delete", "Orders", "Example 1"); !delRes.Success {
+		t.Fatalf("example delete failed: %+v", delRes)
+	}
+	_, ex3Res, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders")
+	ex3Name := ex3Res.Data.(map[string]interface{})["name"].(string)
+	if ex3Name == "Example 2" {
+		t.Fatalf("expected non-colliding default name, got duplicate %q", ex3Name)
+	}
+
+	// 2. --from cloning + --sync + --url with query + --set-param + --set-var + unlinked apiKey auth
+	code, clonedRes, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders", "--name", "VipSecret", "--from", "Example 2")
+	if code != 0 || !clonedRes.Success {
+		t.Fatalf("req example create --from failed: %+v", clonedRes)
+	}
+	// Passing --url and --sync url=true must return validation error
+	if codeErr, resErr, _ := execCLIJSON(t, dataDir, "req", "example", "update", "Orders", "VipSecret", "--url", ts.URL+"/bad", "--sync", "url=true"); codeErr == 0 || resErr.Success {
+		t.Fatalf("expected validation error when passing --url with --sync url=true, got %+v", resErr)
+	}
+	// Passing --url with query + --set-param keeps both query parameters; custom apiKey auth + --set-var
+	code, updRes, _ := execCLIJSON(t, dataDir, "req", "example", "update", "Orders", "VipSecret",
+		"--url", ts.URL+"/orders?a=1",
+		"--set-param", "b=2",
+		"--set-var", "tier=vip",
+		"--auth-type", "apiKey",
+		"--auth-key", "X-Example-Key",
+		"--auth-val", "super-secret-ex-key",
+		"--auth-in", "header",
+	)
+	if code != 0 || !updRes.Success {
+		t.Fatalf("req example update failed: %+v (%+v)", updRes, updRes.Error)
+	}
+
+	// Verify req get --example [--effective]
+	code, getRawRes, _ := execCLIJSON(t, dataDir, "req", "get", "Orders", "--example", "VipSecret")
+	if code != 0 || !getRawRes.Success || getRawRes.Data.(map[string]interface{})["name"] != "VipSecret" {
+		t.Fatalf("req get --example failed: %+v", getRawRes)
+	}
+	code, getEffRes, _ := execCLIJSON(t, dataDir, "req", "get", "Orders", "--example", "VipSecret", "--effective")
+	if code != 0 || !getEffRes.Success {
+		t.Fatalf("req get --example --effective failed: %+v", getEffRes)
+	}
+	effURL := getEffRes.Data.(map[string]interface{})["url"].(string)
+	if !strings.Contains(effURL, "a=1") || !strings.Contains(effURL, "b=2") {
+		t.Errorf("expected both a=1 and b=2 preserved in effective URL, got %q", effURL)
+	}
+
+	// Re-link url via --sync url=true and verify req example sync --all
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "example", "update", "Orders", "VipSecret", "--sync", "url=true"); code != 0 || !res.Success {
+		t.Fatalf("req example update --sync url=true failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "example", "sync", "Orders", "--all"); code != 0 || !res.Success {
+		t.Fatalf("req example sync --all failed: %+v", res)
+	}
+
+	// 3. hecto run --example --redact & hecto flow create --nodes-json (with example_id) & hecto flow run --example --redact
+	code, runRedactRes, _ := execCLIJSON(t, dataDir, "run", "Orders", "--example", "VipSecret", "--redact")
+	if code != 0 || !runRedactRes.Success {
+		t.Fatalf("hecto run --example --redact failed: %+v", runRedactRes)
+	}
+	runJSON, _ := json.Marshal(runRedactRes.Data)
+	if strings.Contains(string(runJSON), "super-secret-ex-key") {
+		t.Errorf("expected example custom apiKey redacted in hecto run output, got %s", string(runJSON))
+	}
+
+	reqID := ""
+	if code, reqRes, _ := execCLIJSON(t, dataDir, "req", "get", "Orders"); code == 0 && reqRes.Success {
+		reqID = reqRes.Data.(map[string]interface{})["id"].(string)
+	}
+	ex2ID := ex2Res.Data.(map[string]interface{})["id"].(string)
+	nodesJSON := fmt.Sprintf(`[{"id":"n1","steps":[{"id":"s1","request_id":%q,"example_id":%q,"enabled":true}]}]`, reqID, ex2ID)
+	if code, fcRes, _ := execCLIJSON(t, dataDir, "flow", "create", "--name", "RedactFlow", "--nodes-json", nodesJSON); code != 0 || !fcRes.Success {
+		t.Fatalf("flow create --nodes-json with example_id failed: %+v", fcRes)
+	}
+	// Run flow overriding step example with VipSecret and --redact
+	code, frRes, _ := execCLIJSON(t, dataDir, "flow", "run", "RedactFlow", "--example", "VipSecret", "--redact")
+	if code != 0 || !frRes.Success {
+		t.Fatalf("flow run --example --redact failed: %+v", frRes)
+	}
+	frJSON, _ := json.Marshal(frRes.Data)
+	if strings.Contains(string(frJSON), "super-secret-ex-key") {
+		t.Errorf("expected example custom apiKey redacted in hecto flow run output, got %s", string(frJSON))
+	}
+	if len(capturedAPIKeys) != 2 || capturedAPIKeys[0] != "super-secret-ex-key" || capturedAPIKeys[1] != "super-secret-ex-key" {
+		t.Errorf("expected actual HTTP requests to carry unredacted secret, got %v", capturedAPIKeys)
+	}
+	if len(capturedQueries) != 2 || !strings.Contains(capturedQueries[1], "a=1") || !strings.Contains(capturedQueries[1], "b=2") {
+		t.Errorf("expected flow run --example override query params a=1&b=2, got %v", capturedQueries)
 	}
 }

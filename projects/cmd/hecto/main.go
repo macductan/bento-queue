@@ -200,6 +200,8 @@ var knownBooleanFlags = map[string]bool{
 	"list":        true,
 	"compact":     true,
 	"redact":      true,
+	"effective":   true,
+	"all":         true,
 }
 
 func extractGlobalFlags(args []string) (globalFlags, []string) {
@@ -330,7 +332,7 @@ func printMainUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  collection  list | get | create | update | delete | switch")
 	_, _ = fmt.Fprintln(w, "  env         list | get | create | update | delete | activate")
 	_, _ = fmt.Fprintln(w, "  folder      list | tree | get | create | update | delete | move")
-	_, _ = fmt.Fprintln(w, "  req         list | get | create | update | delete | move")
+	_, _ = fmt.Fprintln(w, "  req         list | get | create | update | delete | move | example")
 	_, _ = fmt.Fprintln(w, "  flow        list | tree | get | create | update | delete | move | folder | run")
 	_, _ = fmt.Fprintln(w, "  mock        status | config | start (serve) | stop | route <list|get|create|update|delete>")
 	_, _ = fmt.Fprintln(w, "")
@@ -1914,7 +1916,7 @@ func stripURLQuery(rawURL string) string {
 
 func (c *cliContext) handleReq(args []string) model.Result {
 	if len(args) == 0 {
-		return model.NewError(model.ErrValidation, "missing req verb (expected: list|get|create|update|delete|move)")
+		return model.NewError(model.ErrValidation, "missing req verb (expected: list|get|create|update|delete|move|example)")
 	}
 	verb := strings.ToLower(strings.TrimSpace(args[0]))
 	rest := args[1:]
@@ -1954,6 +1956,10 @@ func (c *cliContext) handleReq(args []string) model.Result {
 
 	case "get", "show":
 		fset := flag.NewFlagSet("req get", flag.ContinueOnError)
+		var exampleSel string
+		var effective bool
+		fset.StringVar(&exampleSel, "example", "", "Example <id|name> to inspect")
+		fset.BoolVar(&effective, "effective", false, "Return effective merged request when --example is set")
 		pos, err := parseSubcommandFlags(fset, rest)
 		if err != nil {
 			return model.NewError(model.ErrValidation, err.Error())
@@ -1964,6 +1970,16 @@ func (c *cliContext) handleReq(args []string) model.Result {
 		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
 		if err != nil {
 			return resultFromError(err)
+		}
+		if strings.TrimSpace(exampleSel) != "" {
+			_, ex, exErr := service.ResolveExampleSelector(req, exampleSel)
+			if exErr != nil {
+				return resultFromError(exErr)
+			}
+			if effective {
+				return model.NewSuccess(service.ResolveEffectiveRequestForExample(req, ex))
+			}
+			return model.NewSuccess(ex)
 		}
 		return model.NewSuccess(req)
 
@@ -2137,6 +2153,7 @@ func (c *cliContext) handleReq(args []string) model.Result {
 		if err := engine.ReconcileRequestURLAndParams(&req); err != nil {
 			return resultFromError(err)
 		}
+		service.SyncAllExamplesFromDefault(&req, nil)
 		if saveRes := c.reqSvc.Save(req); !saveRes.Success {
 			return saveRes
 		}
@@ -2334,6 +2351,7 @@ func (c *cliContext) handleReq(args []string) model.Result {
 			req.Scripts.PostResponse = s
 		}
 
+		service.SyncAllExamplesFromDefault(&req, nil)
 		if saveRes := c.reqSvc.Save(req); !saveRes.Success {
 			return saveRes
 		}
@@ -2391,8 +2409,547 @@ func (c *cliContext) handleReq(args []string) model.Result {
 		}
 		return c.collSvc.MoveRequest(collRoot, req.ID, targetFolderID)
 
+	case "example", "examples", "ex":
+		return c.handleReqExample(collRoot, rest)
+
 	default:
-		return model.NewError(model.ErrValidation, fmt.Sprintf("unknown req verb %q (expected: list|get|create|update|delete|move)", verb))
+		return model.NewError(model.ErrValidation, fmt.Sprintf("unknown req verb %q (expected: list|get|create|update|delete|move|example)", verb))
+	}
+}
+
+func setExampleSyncFlag(flags *model.ExampleSyncFlags, group string, val bool) error {
+	switch strings.ToLower(strings.TrimSpace(group)) {
+	case "url":
+		flags.URL = val
+	case "method":
+		flags.Method = val
+	case "auth":
+		flags.Auth = val
+	case "scripts":
+		flags.Scripts = val
+	case "body":
+		flags.Body = val
+	case "params":
+		flags.Params = val
+	case "path_params", "path-params":
+		flags.PathParams = val
+	case "headers":
+		flags.Headers = val
+	case "variables", "vars":
+		flags.Variables = val
+	default:
+		return fmt.Errorf("%s: unknown sync flag group %q (expected url|method|auth|scripts|body|params|path_params|headers|variables)", model.ErrValidation, group)
+	}
+	return nil
+}
+
+func (c *cliContext) handleReqExample(collRoot string, args []string) model.Result {
+	if len(args) == 0 {
+		return model.NewError(model.ErrValidation, "missing req example verb (expected: list|get|create|update|delete|sync|detach)")
+	}
+	verb := strings.ToLower(strings.TrimSpace(args[0]))
+	rest := args[1:]
+
+	switch verb {
+	case "list", "ls":
+		fset := flag.NewFlagSet("req example list", flag.ContinueOnError)
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "request selector <id|path> is required")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		examples := req.Examples
+		if examples == nil {
+			examples = []model.RequestExample{}
+		}
+		return model.NewSuccess(examples)
+
+	case "get", "show":
+		fset := flag.NewFlagSet("req example get", flag.ContinueOnError)
+		var effective bool
+		fset.BoolVar(&effective, "effective", false, "Return effective merged request")
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) < 2 {
+			return model.NewError(model.ErrValidation, "usage: hecto req example get <req-id|path> <example-id|name> [--effective]")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		_, ex, err := service.ResolveExampleSelector(req, pos[1])
+		if err != nil {
+			return resultFromError(err)
+		}
+		if effective {
+			return model.NewSuccess(service.ResolveEffectiveRequestForExample(req, ex))
+		}
+		return model.NewSuccess(ex)
+
+	case "create", "new", "add":
+		fset := flag.NewFlagSet("req example create", flag.ContinueOnError)
+		var name, fromSel string
+		fset.StringVar(&name, "name", "", "Example name")
+		fset.StringVar(&fromSel, "from", "", "Source example <id|name> to clone instead of Default")
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "request selector <id|path> is required")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		trimmedName := strings.TrimSpace(name)
+		if trimmedName == "" {
+			trimmedName = service.GenerateUniqueExampleName(fmt.Sprintf("Example %d", len(req.Examples)+1), req.Examples)
+		}
+		var ex model.RequestExample
+		if strings.TrimSpace(fromSel) != "" {
+			_, srcEx, exErr := service.ResolveExampleSelector(req, fromSel)
+			if exErr != nil {
+				return resultFromError(exErr)
+			}
+			eff := service.ResolveEffectiveRequestForExample(req, srcEx)
+			ex = service.CloneRequestToExample(eff, trimmedName)
+		} else {
+			ex = service.CloneRequestToExample(req, trimmedName)
+		}
+		req.Examples = append(req.Examples, ex)
+		req.UpdatedAt = time.Now()
+		if saveRes := c.reqSvc.Save(req); !saveRes.Success {
+			return saveRes
+		}
+		return model.NewSuccess(ex)
+
+	case "update", "patch":
+		fset := flag.NewFlagSet("req example update", flag.ContinueOnError)
+		var name, method, urlStr, bodyType, bodyRaw, preScriptRaw, postScriptRaw string
+		var setHeaders, unsetHeaders, setParams, unsetParams, setPathParams, unsetPathParams multiStringFlag
+		var setForms, unsetForms, setUrlencodeds, unsetUrlencodeds, envAuths, setVars, unsetVars, syncOpts multiStringFlag
+		var af authFlags
+
+		fset.StringVar(&name, "name", "", "Example name")
+		fset.StringVar(&method, "method", "", "HTTP method")
+		fset.StringVar(&urlStr, "url", "", "Request URL")
+		fset.Var(&setHeaders, "set-header", "Set header 'K: V'")
+		fset.Var(&unsetHeaders, "unset-header", "Unset header K")
+		fset.Var(&setParams, "set-param", "Set query param K=V")
+		fset.Var(&unsetParams, "unset-param", "Unset query param K")
+		fset.Var(&setPathParams, "set-path-param", "Set path param K=V")
+		fset.Var(&unsetPathParams, "unset-path-param", "Unset path param K")
+		fset.Var(&setVars, "set-var", "Set request variable K=V")
+		fset.Var(&unsetVars, "unset-var", "Unset request variable K")
+		fset.StringVar(&bodyType, "body-type", "", "Body type")
+		fset.StringVar(&bodyRaw, "body", "", "Body content or @filepath")
+		fset.Var(&setForms, "set-form", "Set form-data K=V")
+		fset.Var(&unsetForms, "unset-form", "Unset form-data K")
+		fset.Var(&setUrlencodeds, "set-urlencoded", "Set urlencoded K=V")
+		fset.Var(&unsetUrlencodeds, "unset-urlencoded", "Unset urlencoded K")
+		fset.Var(&envAuths, "env-auth", "Set request env auth <env>:<type>")
+		fset.StringVar(&preScriptRaw, "pre-script", "", "Pre-request script or @filepath")
+		fset.StringVar(&postScriptRaw, "post-script", "", "Post-response script or @filepath")
+		fset.Var(&syncOpts, "sync", "Set sync flag <group>=<true|false>")
+		registerAuthFlags(fset, &af)
+
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) < 2 {
+			return model.NewError(model.ErrValidation, "usage: hecto req example update <req-id|path> <example-id|name> [flags]")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		exIdx, ex, err := service.ResolveExampleSelector(req, pos[1])
+		if err != nil {
+			return resultFromError(err)
+		}
+		visited := visitedFlagsMap(fset)
+
+		explicitSync := map[string]bool{}
+		var resyncGroups []string
+		for _, spec := range syncOpts {
+			k, v, kvErr := parseKeyValueFlag(spec, "=")
+			if kvErr != nil {
+				return resultFromError(kvErr)
+			}
+			var boolVal bool
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "true", "1", "yes":
+				boolVal = true
+			case "false", "0", "no":
+				boolVal = false
+			default:
+				return model.NewError(model.ErrValidation, fmt.Sprintf("invalid boolean value %q in --sync %q", v, spec))
+			}
+			normGroup := strings.ToLower(strings.TrimSpace(k))
+			if normGroup == "path-params" {
+				normGroup = "path_params"
+			} else if normGroup == "vars" {
+				normGroup = "variables"
+			}
+			if setErr := setExampleSyncFlag(&ex.SyncFlags, normGroup, boolVal); setErr != nil {
+				return resultFromError(setErr)
+			}
+			explicitSync[normGroup] = boolVal
+			if boolVal {
+				resyncGroups = append(resyncGroups, normGroup)
+			}
+		}
+
+		if visited["name"] {
+			if strings.TrimSpace(name) == "" {
+				return model.NewError(model.ErrValidation, "example name cannot be empty")
+			}
+			ex.Name = strings.TrimSpace(name)
+		}
+		if visited["method"] {
+			if strings.TrimSpace(method) == "" {
+				return model.NewError(model.ErrValidation, "method cannot be empty")
+			}
+			normMethod, mErr := normalizeHTTPMethod(method)
+			if mErr != nil {
+				return resultFromError(mErr)
+			}
+			ex.Method = normMethod
+			if _, ok := explicitSync["method"]; !ok {
+				ex.SyncFlags.Method = false
+			}
+		}
+		if visited["url"] {
+			if strings.TrimSpace(urlStr) == "" {
+				return model.NewError(model.ErrValidation, "url cannot be empty")
+			}
+			if syncVal, hasExplicitURLSync := explicitSync["url"]; hasExplicitURLSync && syncVal {
+				return model.NewError(model.ErrValidation, "cannot pass --url while --sync url=true keeps URL linked to Default")
+			}
+			ex.URL = strings.TrimSpace(urlStr)
+			ex.Params = []model.KVPair{}
+			if _, ok := explicitSync["url"]; !ok {
+				ex.SyncFlags.URL = false
+			}
+			tmpURLReq := service.ResolveEffectiveRequestForExample(req, ex)
+			tmpURLReq.URL = ex.URL
+			tmpURLReq.Params = ex.Params
+			tmpURLReq.PathParams = ex.PathParams
+			if recErr := engine.ReconcileRequestURLAndParams(&tmpURLReq); recErr != nil {
+				return resultFromError(recErr)
+			}
+			ex.URL = tmpURLReq.URL
+			ex.Params = tmpURLReq.Params
+			if !ex.SyncFlags.PathParams {
+				ex.PathParams = tmpURLReq.PathParams
+			}
+			if len(ex.Params) > 0 {
+				if _, ok := explicitSync["params"]; !ok {
+					ex.SyncFlags.Params = false
+				}
+			}
+		}
+		for _, hRaw := range setHeaders {
+			k, v, hErr := parseHeaderFlag(hRaw)
+			if hErr != nil {
+				return resultFromError(hErr)
+			}
+			ex.Headers = upsertKVPair(ex.Headers, k, v)
+		}
+		for _, k := range unsetHeaders {
+			ex.Headers = removeKVPair(ex.Headers, strings.TrimSpace(k))
+		}
+		if len(setHeaders) > 0 || len(unsetHeaders) > 0 {
+			if _, ok := explicitSync["headers"]; !ok {
+				ex.SyncFlags.Headers = false
+			}
+		}
+		for _, pRaw := range setParams {
+			k, v, pErr := parseKeyValueFlag(pRaw, "=")
+			if pErr != nil {
+				return resultFromError(pErr)
+			}
+			ex.Params = upsertKVPair(ex.Params, k, v)
+		}
+		for _, k := range unsetParams {
+			ex.Params = removeKVPair(ex.Params, strings.TrimSpace(k))
+		}
+		if len(setParams) > 0 || len(unsetParams) > 0 {
+			if _, ok := explicitSync["params"]; !ok {
+				ex.SyncFlags.Params = false
+			}
+			ex.URL = stripURLQuery(ex.URL)
+		}
+		for _, ppRaw := range setPathParams {
+			k, v, ppErr := parseKeyValueFlag(ppRaw, "=")
+			if ppErr != nil {
+				return resultFromError(ppErr)
+			}
+			ex.PathParams = upsertKVPair(ex.PathParams, k, v)
+		}
+		for _, k := range unsetPathParams {
+			ex.PathParams = removeKVPair(ex.PathParams, strings.TrimSpace(k))
+		}
+		if len(setPathParams) > 0 || len(unsetPathParams) > 0 {
+			if _, ok := explicitSync["path_params"]; !ok {
+				ex.SyncFlags.PathParams = false
+			}
+		}
+		for _, vRaw := range setVars {
+			k, v, vErr := parseKeyValueFlag(vRaw, "=")
+			if vErr != nil {
+				return resultFromError(vErr)
+			}
+			ex.Variables = upsertKVPair(ex.Variables, k, v)
+		}
+		for _, k := range unsetVars {
+			ex.Variables = removeKVPair(ex.Variables, strings.TrimSpace(k))
+		}
+		if len(setVars) > 0 || len(unsetVars) > 0 {
+			if _, ok := explicitSync["variables"]; !ok {
+				ex.SyncFlags.Variables = false
+			}
+		}
+
+		if visited["url"] || len(setParams) > 0 || len(unsetParams) > 0 || len(setPathParams) > 0 || len(unsetPathParams) > 0 {
+			if ex.SyncFlags.URL {
+				ex.URL = service.UpdateURLWithParams(req.URL, ex.Params)
+				if !ex.SyncFlags.PathParams {
+					ex.PathParams = service.ReconcilePathParams(req.URL, ex.PathParams)
+				}
+			} else {
+				tmpReq := service.ResolveEffectiveRequestForExample(req, ex)
+				tmpReq.URL = ex.URL
+				tmpReq.Params = ex.Params
+				tmpReq.PathParams = ex.PathParams
+				if recErr := engine.ReconcileRequestURLAndParams(&tmpReq); recErr != nil {
+					return resultFromError(recErr)
+				}
+				ex.URL = tmpReq.URL
+				ex.Params = tmpReq.Params
+				if !ex.SyncFlags.PathParams {
+					ex.PathParams = tmpReq.PathParams
+				}
+			}
+		}
+
+		bodyTouched := false
+		if visited["body-type"] {
+			normBT, btErr := normalizeBodyType(bodyType)
+			if btErr != nil {
+				return resultFromError(btErr)
+			}
+			ex.Body.Type = normBT
+			bodyTouched = true
+		}
+		if visited["body"] {
+			content, bErr := readStringOrFileFlag(bodyRaw)
+			if bErr != nil {
+				return resultFromError(bErr)
+			}
+			ex.Body.Content = content
+			bodyTouched = true
+		}
+		for _, fRaw := range setForms {
+			k, v, fErr := parseKeyValueFlag(fRaw, "=")
+			if fErr != nil {
+				return resultFromError(fErr)
+			}
+			ex.Body.FormData = upsertKVPair(ex.Body.FormData, k, v)
+			bodyTouched = true
+		}
+		for _, k := range unsetForms {
+			ex.Body.FormData = removeKVPair(ex.Body.FormData, strings.TrimSpace(k))
+			bodyTouched = true
+		}
+		for _, uRaw := range setUrlencodeds {
+			k, v, uErr := parseKeyValueFlag(uRaw, "=")
+			if uErr != nil {
+				return resultFromError(uErr)
+			}
+			ex.Body.URLEncoded = upsertKVPair(ex.Body.URLEncoded, k, v)
+			bodyTouched = true
+		}
+		for _, k := range unsetUrlencodeds {
+			ex.Body.URLEncoded = removeKVPair(ex.Body.URLEncoded, strings.TrimSpace(k))
+			bodyTouched = true
+		}
+		if !visited["body-type"] && (ex.Body.Type == "" || ex.Body.Type == "none") {
+			switch {
+			case len(setForms) > 0:
+				ex.Body.Type = "formdata"
+			case len(setUrlencodeds) > 0:
+				ex.Body.Type = "urlencoded"
+			case visited["body"] && strings.TrimSpace(ex.Body.Content) != "":
+				ex.Body.Type = "json"
+			}
+		}
+		if bodyTouched {
+			if _, ok := explicitSync["body"]; !ok {
+				ex.SyncFlags.Body = false
+			}
+		}
+
+		authCfg, authChanged, err := applyAuthFlags(ex.Auth, af, visited, true, "inherit", len(envAuths) > 0)
+		if err != nil {
+			return resultFromError(err)
+		}
+		if authChanged {
+			ex.Auth = authCfg
+		}
+		if len(envAuths) > 0 {
+			if ex.AuthEnvs == nil {
+				ex.AuthEnvs = map[string]*model.AuthConfig{}
+			}
+			for _, spec := range envAuths {
+				envID, aCfg, aErr := c.parseEnvAuthSpec(collRoot, spec, af, true)
+				if aErr != nil {
+					return resultFromError(aErr)
+				}
+				ex.AuthEnvs[envID] = aCfg
+			}
+		}
+		if authChanged || len(envAuths) > 0 {
+			if _, ok := explicitSync["auth"]; !ok {
+				ex.SyncFlags.Auth = false
+			}
+		}
+
+		scriptsTouched := false
+		if visited["pre-script"] {
+			if ex.Scripts == nil {
+				ex.Scripts = &model.Scripts{}
+			}
+			s, sErr := readStringOrFileFlag(preScriptRaw)
+			if sErr != nil {
+				return resultFromError(sErr)
+			}
+			ex.Scripts.PreRequest = s
+			scriptsTouched = true
+		}
+		if visited["post-script"] {
+			if ex.Scripts == nil {
+				ex.Scripts = &model.Scripts{}
+			}
+			s, sErr := readStringOrFileFlag(postScriptRaw)
+			if sErr != nil {
+				return resultFromError(sErr)
+			}
+			ex.Scripts.PostResponse = s
+			scriptsTouched = true
+		}
+		if scriptsTouched {
+			if _, ok := explicitSync["scripts"]; !ok {
+				ex.SyncFlags.Scripts = false
+			}
+		}
+
+		if len(resyncGroups) > 0 {
+			ex = service.SyncExampleFromDefault(req, ex, resyncGroups)
+		}
+		ex.UpdatedAt = time.Now()
+		req.Examples[exIdx] = ex
+		req.UpdatedAt = ex.UpdatedAt
+		if saveRes := c.reqSvc.Save(req); !saveRes.Success {
+			return saveRes
+		}
+		return model.NewSuccess(ex)
+
+	case "delete", "rm":
+		fset := flag.NewFlagSet("req example delete", flag.ContinueOnError)
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) < 2 {
+			return model.NewError(model.ErrValidation, "usage: hecto req example delete <req-id|path> <example-id|name>")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		exIdx, ex, err := service.ResolveExampleSelector(req, pos[1])
+		if err != nil {
+			return resultFromError(err)
+		}
+		req.Examples = append(req.Examples[:exIdx], req.Examples[exIdx+1:]...)
+		req.UpdatedAt = time.Now()
+		if saveRes := c.reqSvc.Save(req); !saveRes.Success {
+			return saveRes
+		}
+		return model.NewSuccess(map[string]interface{}{
+			"deleted_id": ex.ID,
+			"name":       ex.Name,
+			"request_id": req.ID,
+		})
+
+	case "sync":
+		fset := flag.NewFlagSet("req example sync", flag.ContinueOnError)
+		var syncAll bool
+		fset.BoolVar(&syncAll, "all", false, "Sync all examples according to their sync_flags")
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) == 0 {
+			return model.NewError(model.ErrValidation, "request selector <id|path> is required")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		if syncAll {
+			service.SyncAllExamplesFromDefault(&req, nil)
+			req.UpdatedAt = time.Now()
+			if saveRes := c.reqSvc.Save(req); !saveRes.Success {
+				return saveRes
+			}
+			return model.NewSuccess(req.Examples)
+		}
+		if len(pos) < 2 {
+			return model.NewError(model.ErrValidation, "example selector <id|name> or --all is required")
+		}
+		exIdx, ex, err := service.ResolveExampleSelector(req, pos[1])
+		if err != nil {
+			return resultFromError(err)
+		}
+		ex = service.SyncExampleFromDefault(req, ex, nil)
+		req.Examples[exIdx] = ex
+		req.UpdatedAt = time.Now()
+		if saveRes := c.reqSvc.Save(req); !saveRes.Success {
+			return saveRes
+		}
+		return model.NewSuccess(ex)
+
+	case "detach", "promote":
+		fset := flag.NewFlagSet("req example detach", flag.ContinueOnError)
+		var newName string
+		fset.StringVar(&newName, "name", "", "Name for the new standalone request")
+		pos, err := parseSubcommandFlags(fset, rest)
+		if err != nil {
+			return model.NewError(model.ErrValidation, err.Error())
+		}
+		if len(pos) < 2 {
+			return model.NewError(model.ErrValidation, "usage: hecto req example detach <req-id|path> <example-id|name> [--name <new-name>]")
+		}
+		req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, pos[0])
+		if err != nil {
+			return resultFromError(err)
+		}
+		return c.reqSvc.DetachExample(req.ID, pos[1], newName)
+
+	default:
+		return model.NewError(model.ErrValidation, fmt.Sprintf("unknown req example verb %q (expected: list|get|create|update|delete|sync|detach)", verb))
 	}
 }
 
@@ -2439,6 +2996,8 @@ type compactFlowStepRunOutput struct {
 	StepID          string                `json:"step_id"`
 	NodeID          string                `json:"node_id"`
 	RequestID       string                `json:"request_id"`
+	ExampleID       string                `json:"example_id,omitempty"`
+	ExampleName     string                `json:"example_name,omitempty"`
 	RequestName     string                `json:"request_name,omitempty"`
 	Method          string                `json:"method,omitempty"`
 	Status          string                `json:"status"`
@@ -2568,6 +3127,10 @@ func collectFlowAPIKeyNames(collSvc *service.CollectionService, reqSvc *service.
 				if req, ok := res.Data.(model.Request); ok {
 					collectAPIKeyFromAuthConfig(req.Auth, out)
 					collectAPIKeyFromAuthMap(req.AuthEnvs, out)
+					for _, ex := range req.Examples {
+						collectAPIKeyFromAuthConfig(ex.Auth, out)
+						collectAPIKeyFromAuthMap(ex.AuthEnvs, out)
+					}
 				}
 			}
 		}
@@ -2575,10 +3138,17 @@ func collectFlowAPIKeyNames(collSvc *service.CollectionService, reqSvc *service.
 	return out
 }
 
+func redactKVPairSecrets(kv *model.KVPair) {
+	kv.Value = redactedSecretPlaceholder
+	if len(kv.Options) > 0 {
+		kv.Options = []string{redactedSecretPlaceholder}
+	}
+}
+
 func redactHeaderKVPairs(pairs []model.KVPair, extraKeys map[string]bool) {
 	for i := range pairs {
 		if isSensitiveHeaderKey(pairs[i].Key, extraKeys) {
-			pairs[i].Value = redactedSecretPlaceholder
+			redactKVPairSecrets(&pairs[i])
 		}
 	}
 }
@@ -2586,7 +3156,7 @@ func redactHeaderKVPairs(pairs []model.KVPair, extraKeys map[string]bool) {
 func redactVarKVPairs(pairs []model.KVPair, extraKeys map[string]bool) {
 	for i := range pairs {
 		if isSensitiveKeyWithExtra(pairs[i].Key, extraKeys) {
-			pairs[i].Value = redactedSecretPlaceholder
+			redactKVPairSecrets(&pairs[i])
 		}
 	}
 }
@@ -2901,6 +3471,8 @@ func toCompactFlowRunOutput(flowOut *engine.FlowRunOutput, showPassedBody bool, 
 				StepID:          sr.StepID,
 				NodeID:          sr.NodeID,
 				RequestID:       sr.RequestID,
+				ExampleID:       sr.ExampleID,
+				ExampleName:     sr.ExampleName,
 				RequestName:     sr.RequestName,
 				Method:          sr.Method,
 				Status:          sr.Status,
@@ -2932,12 +3504,13 @@ func toCompactFlowRunOutput(flowOut *engine.FlowRunOutput, showPassedBody bool, 
 
 func (c *cliContext) handleRun(args []string) model.Result {
 	fset := flag.NewFlagSet("run", flag.ContinueOnError)
-	var envSel string
+	var envSel, exampleSel string
 	var cliVars multiStringFlag
 	var timeoutSec, maxBody int
 	var noSaveEnv, compact, redact bool
 
 	fset.StringVar(&envSel, "env", "", "Environment override <id|name|none>")
+	fset.StringVar(&exampleSel, "example", "", "Example <id|name> to run")
 	fset.Var(&cliVars, "var", "Runtime variable override K=V")
 	fset.IntVar(&timeoutSec, "timeout", 0, "HTTP timeout in seconds")
 	fset.BoolVar(&noSaveEnv, "no-save-env", false, "Do not persist script variable/auth mutations to disk")
@@ -3009,6 +3582,7 @@ func (c *cliContext) handleRun(args []string) model.Result {
 		CollectionRoot:  collRoot,
 		Collection:      coll,
 		Request:         req,
+		ExampleSelector: exampleSel,
 		PathFolders:     pathFolders,
 		AllFolders:      allFolders,
 		ActiveEnvID:     activeEnvID,
@@ -3016,10 +3590,16 @@ func (c *cliContext) handleRun(args []string) model.Result {
 		TimeoutSec:      timeoutSec,
 		NoSaveEnv:       noSaveEnv,
 	})
+	effectiveReqForRedaction := req
+	if strings.TrimSpace(exampleSel) != "" {
+		if _, ex, exErr := service.ResolveExampleSelector(req, exampleSel); exErr == nil {
+			effectiveReqForRedaction = service.ResolveEffectiveRequestForExample(req, ex)
+		}
+	}
 	if err != nil {
 		errRes := resultFromError(err)
 		if (redact || compact) && errRes.Error != nil {
-			extraAPIKeys := collectRunAPIKeyNames(coll, pathFolders, req)
+			extraAPIKeys := collectRunAPIKeyNames(coll, pathFolders, effectiveReqForRedaction)
 			errRes.Error.Message = redactSensitiveErrorText(errRes.Error.Message, extraAPIKeys)
 		}
 		return errRes
@@ -3032,7 +3612,7 @@ func (c *cliContext) handleRun(args []string) model.Result {
 		effectiveMaxBody = defaultCompactMaxBody
 	}
 	if redact || compact {
-		extraAPIKeys := collectRunAPIKeyNames(coll, pathFolders, req)
+		extraAPIKeys := collectRunAPIKeyNames(coll, pathFolders, effectiveReqForRedaction)
 		redactRunOutput(runOut, extraAPIKeys)
 	}
 	if effectiveMaxBody >= 0 {
@@ -3251,12 +3831,34 @@ func (c *cliContext) parseFlowStepsFlag(collRoot, raw string) ([]model.FlowNode,
 				return nil, fmt.Errorf("%s: empty request selector in --steps %q", model.ErrValidation, raw)
 			}
 			req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, stepSel)
+			exampleID := ""
+			if err != nil {
+				if atIdx := strings.LastIndex(stepSel, "@"); atIdx > 0 {
+					reqPart := strings.TrimSpace(stepSel[:atIdx])
+					exPart := strings.TrimSpace(stepSel[atIdx+1:])
+					if reqPart != "" && exPart != "" {
+						var reqErr error
+						req, _, _, reqErr = c.collSvc.ResolveRequestSelector(collRoot, reqPart)
+						if reqErr == nil {
+							_, ex, exErr := service.ResolveExampleSelector(req, exPart)
+							if exErr != nil {
+								return nil, exErr
+							}
+							exampleID = ex.ID
+							err = nil
+						} else {
+							err = reqErr
+						}
+					}
+				}
+			}
 			if err != nil {
 				return nil, err
 			}
 			steps = append(steps, model.FlowStep{
 				ID:        uuid.NewString(),
 				RequestID: req.ID,
+				ExampleID: exampleID,
 				Enabled:   true,
 			})
 		}
@@ -3273,6 +3875,7 @@ func (c *cliContext) parseFlowStepsFlag(collRoot, raw string) ([]model.FlowNode,
 type rawFlowStepJSON struct {
 	ID        string `json:"id"`
 	RequestID string `json:"request_id"`
+	ExampleID string `json:"example_id,omitempty"`
 	Enabled   *bool  `json:"enabled"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
@@ -3310,10 +3913,22 @@ func (c *cliContext) convertRawFlowNodes(collRoot string, rawNodes []rawFlowNode
 				return nil, fmt.Errorf("%s: step in --nodes-json is missing request_id", model.ErrValidation)
 			}
 			resolvedReqID := reqSel
+			var resolvedReq model.Request
+			hasResolvedReq := false
 			if req, _, _, err := c.collSvc.ResolveRequestSelector(collRoot, reqSel); err == nil && req.ID != "" {
 				resolvedReqID = req.ID
+				resolvedReq = req
+				hasResolvedReq = true
 			} else if _, uuidErr := uuid.Parse(reqSel); uuidErr != nil {
 				return nil, err
+			}
+			resolvedExampleID := strings.TrimSpace(rs.ExampleID)
+			if resolvedExampleID != "" && hasResolvedReq {
+				if _, ex, exErr := service.ResolveExampleSelector(resolvedReq, resolvedExampleID); exErr == nil {
+					resolvedExampleID = ex.ID
+				} else if _, uuidErr := uuid.Parse(resolvedExampleID); uuidErr != nil {
+					return nil, exErr
+				}
 			}
 			stepID := strings.TrimSpace(rs.ID)
 			if stepID == "" {
@@ -3326,6 +3941,7 @@ func (c *cliContext) convertRawFlowNodes(collRoot string, rawNodes []rawFlowNode
 			steps = append(steps, model.FlowStep{
 				ID:        stepID,
 				RequestID: resolvedReqID,
+				ExampleID: resolvedExampleID,
 				Enabled:   enabled,
 				TimeoutMs: rs.TimeoutMs,
 			})
@@ -3861,12 +4477,13 @@ func (c *cliContext) handleFlow(args []string) model.Result {
 
 	case "run":
 		fset := flag.NewFlagSet("flow run", flag.ContinueOnError)
-		var envSel string
+		var envSel, exampleSel string
 		var cliVars multiStringFlag
 		var timeoutMs, maxBody int
 		var noSaveEnv, compact, redact bool
 
 		fset.StringVar(&envSel, "env", "", "Environment override <id|name|none>")
+		fset.StringVar(&exampleSel, "example", "", "Example <id|name> override")
 		fset.Var(&cliVars, "var", "Runtime variable override K=V")
 		fset.IntVar(&timeoutMs, "timeout-ms", 0, "Per-step HTTP timeout override in milliseconds")
 		fset.BoolVar(&noSaveEnv, "no-save-env", false, "Do not persist script variable/auth mutations to disk")
@@ -3934,6 +4551,7 @@ func (c *cliContext) handleFlow(args []string) model.Result {
 			CollectionRoot:  collRoot,
 			Collection:      coll,
 			Flow:            flow,
+			ExampleSelector: exampleSel,
 			ActiveEnvID:     activeEnvID,
 			CLIVarOverrides: overrides,
 			TimeoutMs:       timeoutMs,

@@ -60,6 +60,26 @@ import {
   type ParallelStepMutationItem,
   type MergedParallelState
 } from './flowRunner'
+import {
+  EXAMPLE_SYNC_FLAG_KEYS,
+  createDefaultSyncFlags,
+  normalizeSyncFlags,
+  cloneRequestToExample,
+  duplicateExample,
+  resolveEffectiveRequest,
+  applyProjectionEditsToExample,
+  syncExampleFromDefault,
+  syncAllExamplesFromDefault,
+  detachExampleToRequestPayload,
+  findExampleBySelector,
+  resolveRequestForStepExecution,
+  splitBaseUrlAndQuery,
+  mergeBaseUrlPreservingExampleQuery,
+  type ExampleSyncFlagKey,
+  type ExampleSyncFlags,
+  type RequestExample,
+  type FindExampleResult
+} from './requestExamples'
 
 export {
   resolveVariables,
@@ -86,7 +106,21 @@ export {
   evaluateStepVerdict,
   evaluateCustomBranchCondition,
   selectMatchingBranch,
-  mergeParallelScriptUpdates
+  mergeParallelScriptUpdates,
+  EXAMPLE_SYNC_FLAG_KEYS,
+  createDefaultSyncFlags,
+  normalizeSyncFlags,
+  cloneRequestToExample,
+  duplicateExample,
+  resolveEffectiveRequest,
+  applyProjectionEditsToExample,
+  syncExampleFromDefault,
+  syncAllExamplesFromDefault,
+  detachExampleToRequestPayload,
+  findExampleBySelector,
+  resolveRequestForStepExecution,
+  splitBaseUrlAndQuery,
+  mergeBaseUrlPreservingExampleQuery
 }
 
 export type {
@@ -121,7 +155,11 @@ export type {
   BranchSelectionResult,
   HeadlessMutableState,
   ParallelStepMutationItem,
-  MergedParallelState
+  MergedParallelState,
+  ExampleSyncFlagKey,
+  ExampleSyncFlags,
+  RequestExample,
+  FindExampleResult
 }
 
 export const stripJsonComments = stripJsoncToJson
@@ -181,6 +219,12 @@ export function reconcileUrlAndParams(
       }
       if (ep._isAuto !== undefined) {
         mergedParams[matchIdx]._isAuto = ep._isAuto
+      }
+      if (ep.type !== undefined) {
+        mergedParams[matchIdx].type = ep.type
+      }
+      if (Array.isArray(ep.options)) {
+        mergedParams[matchIdx].options = [...ep.options]
       }
     } else {
       mergedParams.push({ ...ep, value: epVal })
@@ -444,14 +488,16 @@ function computeResolvedVariables(
   environments: HeadlessEnvironmentModel[],
   activeEnvId: string | null | undefined,
   pathFolders: TreeNode[],
-  cliVarOverrides?: Record<string, string>
+  cliVarOverrides?: Record<string, string>,
+  requestVariables?: VariableKVPair[] | null
 ): Map<string, string> {
   const activeEnv = activeEnvId ? environments.find(e => e && e.id === activeEnvId) : undefined
   const vars = resolveHierarchyVariables({
     collectionVariables: collection.variables || [],
     activeEnvVariables: activeEnv?.variables || [],
     pathFolders,
-    activeEnvId: activeEnvId || null
+    activeEnvId: activeEnvId || null,
+    requestVariables: requestVariables || null
   })
   if (cliVarOverrides) {
     for (const [k, v] of Object.entries(cliVarOverrides)) {
@@ -486,13 +532,14 @@ export function prepareHeadlessExecution(input: HeadlessPreRequestInput): Headle
   effectiveReq.params = reconciled.params
   effectiveReq.path_params = reconciled.path_params
 
-  // Step 2: Resolve initial 4-tier variables + CLI overrides
+  // Step 2: Resolve initial 5-tier variables + CLI overrides
   let vars = computeResolvedVariables(
     mutatedCollection,
     mutatedEnvironments,
     effectiveActiveEnvId,
     mutatedPathFolders,
-    input.cliVarOverrides
+    input.cliVarOverrides,
+    effectiveReq.variables
   )
 
   // Step 3: Run Pre-request Script if present
@@ -608,7 +655,8 @@ export function runHeadlessPostResponse(input: HeadlessPostResponseInput): Scrip
         mutatedEnvironments,
         effectiveActiveEnvId,
         mutatedPathFolders,
-        input.cliVarOverrides
+        input.cliVarOverrides,
+        effectiveReq?.variables
       )
 
   return executeScript(postScriptCode, {
@@ -669,7 +717,21 @@ const HeadlessBundleExports = {
   evaluateStepVerdict,
   evaluateCustomBranchCondition,
   selectMatchingBranch,
-  mergeParallelScriptUpdates
+  mergeParallelScriptUpdates,
+  EXAMPLE_SYNC_FLAG_KEYS,
+  createDefaultSyncFlags,
+  normalizeSyncFlags,
+  cloneRequestToExample,
+  duplicateExample,
+  resolveEffectiveRequest,
+  applyProjectionEditsToExample,
+  syncExampleFromDefault,
+  syncAllExamplesFromDefault,
+  detachExampleToRequestPayload,
+  findExampleBySelector,
+  resolveRequestForStepExecution,
+  splitBaseUrlAndQuery,
+  mergeBaseUrlPreservingExampleQuery
 }
 
 if (typeof globalThis !== 'undefined') {

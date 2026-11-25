@@ -39,6 +39,7 @@ const props = withDefaults(
     pathNodes?: TreeNode[]
     isFolder?: boolean
     isCollection?: boolean
+    readonly?: boolean
   }>(),
   {
     modelValue: () => ({ type: 'inherit' }),
@@ -46,7 +47,8 @@ const props = withDefaults(
     envScope: undefined,
     pathNodes: () => [],
     isFolder: false,
-    isCollection: false
+    isCollection: false,
+    readonly: false
   }
 )
 
@@ -54,6 +56,7 @@ const emit = defineEmits<{
   (e: 'update:modelValue', val: AuthConfig): void
   (e: 'update:authEnvs', val: Record<string, AuthConfig>): void
   (e: 'update:envScope', val: string): void
+  (e: 'unlink'): void
 }>()
 
 const selectedEnvScope = computed({
@@ -318,6 +321,22 @@ const apiKeyAddToOptions: SelectOption[] = [
 
 <template>
   <div class="flex flex-col gap-4 max-w-2xl py-2">
+    <div
+      v-if="readonly"
+      data-test="auth-linked-banner"
+      class="px-2.5 py-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between gap-2"
+    >
+      <span>{{ t('examples.linkedBanner', { group: t('examples.groups.auth') }) }}</span>
+      <button
+        type="button"
+        data-test="auth-unlink-btn"
+        class="underline hover:text-amber-100 cursor-pointer shrink-0 font-medium"
+        @click="emit('unlink')"
+      >
+        {{ t('examples.unlink') }}
+      </button>
+    </div>
+
     <!-- Environment Scope Selector -->
     <div class="flex items-center justify-between bg-surface-raised/40 p-2.5 rounded-md border border-border-default">
       <div class="flex items-center gap-2">
@@ -330,6 +349,7 @@ const apiKeyAddToOptions: SelectOption[] = [
           :data-scope="selectedEnvScope"
           data-test="auth-env-scope-select"
           :options="envScopeOptions"
+          :disabled="readonly"
           size="sm"
         />
       </div>
@@ -350,6 +370,7 @@ const apiKeyAddToOptions: SelectOption[] = [
         :data-auth-type="authType"
         data-test="auth-type-select"
         :options="authTypeOptions"
+        :disabled="readonly"
         size="sm"
       />
     </div>
@@ -399,6 +420,7 @@ const apiKeyAddToOptions: SelectOption[] = [
             <input
               id="bearer-token-input"
               v-model="bearerToken"
+              :readonly="readonly"
               :type="isBearerVisible ? 'text' : 'password'"
               placeholder="Token or {{token}}"
               class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm font-mono focus:border-brand-primary outline-none"
@@ -441,6 +463,7 @@ const apiKeyAddToOptions: SelectOption[] = [
             <input
               id="basic-username-input"
               v-model="basicUsername"
+              :readonly="readonly"
               type="text"
               placeholder="Username or {{username}}"
               class="transparent-selection w-full bg-transparent border border-border-default rounded px-3 py-2 text-sm text-transparent caret-text-primary placeholder:text-text-muted focus:border-brand-primary outline-none"
@@ -467,6 +490,7 @@ const apiKeyAddToOptions: SelectOption[] = [
             <input
               id="basic-password-input"
               v-model="basicPassword"
+              :readonly="readonly"
               :type="isBasicPasswordVisible ? 'text' : 'password'"
               placeholder="Password or {{password}}"
               class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm focus:border-brand-primary outline-none"
@@ -501,6 +525,7 @@ const apiKeyAddToOptions: SelectOption[] = [
         <input
           id="api-key-name-input"
           v-model="apiKeyName"
+          :readonly="readonly"
           type="text"
           placeholder="Key (e.g. X-API-Key)"
           class="w-full bg-surface-raised border border-border-default rounded px-3 py-2 text-sm text-text-primary font-mono focus:border-brand-primary outline-none"
@@ -519,6 +544,7 @@ const apiKeyAddToOptions: SelectOption[] = [
             <input
               id="api-key-val-input"
               v-model="apiKeyValue"
+              :readonly="readonly"
               :type="isApiKeyValueVisible ? 'text' : 'password'"
               placeholder="Value or {{apiKey}}"
               class="w-full bg-transparent border border-border-default rounded px-3 py-2 pr-10 text-sm font-mono focus:border-brand-primary outline-none"
@@ -551,6 +577,7 @@ const apiKeyAddToOptions: SelectOption[] = [
           v-model="apiKeyAddTo"
           data-test="api-key-add-to-select"
           :options="apiKeyAddToOptions"
+          :disabled="readonly"
           full-width
           size="sm"
         />

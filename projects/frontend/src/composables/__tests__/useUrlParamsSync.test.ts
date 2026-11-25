@@ -235,4 +235,39 @@ describe('useUrlParamsSync', () => {
       { key: 'user_id', value: '', enabled: true }
     ])
   })
+
+  it('locks URL->Params sync when sync_flags.url is true while allowing Params->URL query updates when params is unlinked', async () => {
+    const req = ref<Request | null>(createMockRequest({
+      id: 'req-ex-sync',
+      url: 'https://api.example.com/v1/items?page=1',
+      params: [{ key: 'page', value: '1', enabled: true }],
+      path_params: []
+    }))
+    const syncFlags = ref({
+      url: true,
+      method: true,
+      auth: true,
+      scripts: true,
+      body: false,
+      params: false,
+      path_params: false,
+      headers: false,
+      variables: false
+    })
+    useUrlParamsSync(req, syncFlags)
+    await nextTick()
+
+    // Editing params updates the query string on displayed url while preserving Base URL
+    req.value!.params.push({ key: 'filter', value: 'active', enabled: true })
+    await nextTick()
+    expect(req.value!.url).toBe('https://api.example.com/v1/items?page=1&filter=active')
+
+    // Changing url while url is linked must not overwrite params
+    req.value!.url = 'https://other.example.com/v2/items?ignored=1'
+    await nextTick()
+    expect(req.value!.params).toEqual([
+      { key: 'page', value: '1', enabled: true },
+      { key: 'filter', value: 'active', enabled: true }
+    ])
+  })
 })

@@ -32,6 +32,32 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.22.0] - 2026-11-25
+
+### Added — Biến & KVPair dạng Select Box (Chọn nhanh 1-Click, Tầng Request độc lập & Kế thừa 5 tầng)
+- **Mở rộng Model `KVPair`, `Request.Variables` (Tầng 5), Git 3-way Merge & CLI (`projects/model/types.go`, `projects/service/git_merge.go`, `projects/cmd/hecto/main.go`, `projects/frontend/src/utils/headless-engine.ts`)**:
+  - Bổ sung trường tùy chọn `type?: "text" | "select"` và `options?: string[]` (`omitempty`, mặc định `"text"` tương thích ngược 100%) trên `KVPair`, áp dụng đồng bộ cho cả 4 tầng Variables (`Collection`, `Global Env`, `Folder Global`, `Folder Env`), `Request.Variables` lẫn Request `Params`, `PathParams`, `Headers`, `FormData`, `URLEncoded`.
+  - Bổ sung `Request.Variables` (`request.variables`, Tầng 5 cao nhất trước `--var` của CLI) vào mô hình `Request`, bộ giải `resolveHierarchyVariables`, `responseStore`, `ScriptEditor`, `flowStore` và `headless-engine.ts`/`headless-engine.js`, đảm bảo các Request khác nhau lưu giá trị biến `select` độc lập mà không ghi đè lẫn nhau.
+  - Cập nhật `kvEqual` (chuẩn hóa `""` ↔ `"text"` và so sánh `slices.Equal`), `kvToMap` trong `git_merge.go` và `formatConflictValue` trong `GitConflictResolverModal.vue` để bảo toàn và hiển thị khác biệt `type`/`options` khi merge Git.
+  - Bảo toàn `type`/`options` qua `reconcileUrlAndParams` (`projects/engine/headless-engine.js`) và CLI `upsertKVPair`, đồng thời mở rộng `redactKVPairSecrets` che cả `Options` khi chạy CLI với `--redact`/`--compact`.
+- **Giao diện Select Box 1-Click & Kế thừa 5 tầng (`KvpValueSelectControl.vue`, `KvpEditor.vue`, `EnvModal.vue`, `VariableHoverPopover.vue`, `VariableHighlighter.vue`, `resolveHierarchyVariables.ts`)**:
+  - Xây dựng component dùng chung `KvpValueSelectControl.vue` (`<Teleport to="body">`) với nút chuyển gọn `Text ↔ Select`, popover quản lý danh sách `options`, dropdown chọn 1-click kèm `+ Thêm lựa chọn...` tại chỗ và hiển thị nguyên vẹn giá trị ngoài danh sách kèm nhãn `"(ngoài danh sách)"`.
+  - Tích hợp vào `KvpEditor.vue` (ẩn hoàn toàn trên header tự sinh `_isAuto`), `EnvModal.vue` (kèm sửa dirty-check `closeAndSave`), `FolderEditor.vue`, `CollectionEnvModal.vue` và bản dịch i18n `kvp.*` (`en.ts`, `vi.ts`).
+  - Mở rộng `inspectVariableHierarchy` và `VariableHoverPopover.vue`: mặc định phạm vi lưu của biến `select` trong Request là **`Request này (Riêng Request)`** (chọn ở Request A không ảnh hưởng Request B, đồng thời lưu ghi đè thuần `value` để tự động đồng bộ `options` mới từ Env/Folder và có nút `Bỏ ghi đè`), còn biến `text` thường giữ nguyên mặc định phạm vi Env/Folder; hỗ trợ chọn 1-click tự lưu ngay, bảo toàn `type`/`options` trong `upsertVariable`, và kế thừa `options` theo thứ tự ưu tiên (`path-param` / `request` → `folder-env` → `folder-global` → `global-env` → `collection`) cho cả `{{var}}` lẫn `:param`, kèm bộ unit/component/Go tests đầy đủ.
+
+### Added — Example Request (Kịch bản đầu vào, Cờ đồng bộ theo nhóm trường & Parity Flow/CLI)
+- **Model `RequestExample`, `ExampleSyncFlags` & Services (`projects/model/types.go`, `projects/service/request_examples.go`, `projects/service/request.go`, `projects/service/collection.go`, `projects/service/git_merge.go`)**:
+  - Bổ sung `RequestExample` và `ExampleSyncFlags` theo 9 nhóm trường (`url`, `method`, `auth`, `scripts` mặc định bật; `body`, `params`, `path_params`, `headers`, `variables` mặc định tắt) nhúng trực tiếp trong mảng `Request.Examples` (`<req-uuid>.json`), cùng `TreeNode.Examples` và `FlowStep.ExampleID`.
+  - Hỗ trợ tách Base URL (trước `?`) + danh sách key `:path_param` khỏi `?query` (`Params`) khi `url` bật đồng bộ nhưng `params` độc lập; tự động tái sinh `example.id` khi `Duplicate` Request; hỗ trợ `DetachExample` (Move/Extract thành Request mới cùng thư mục và xóa Example khỏi Request gốc); và nâng cấp merge 3 chiều mảng `examples[]` theo `id` trong `git_merge.go` kèm hiển thị diff trong `GitConflictResolverModal.vue`.
+- **Giao diện Example Switcher, Linked/Read-only & Flow UI (`ExampleSwitcher.vue`, `RequestEditor.vue`, `UrlBar.vue`, `useUrlParamsSync.ts`, `requestExamples.ts`, `requestStore.ts`, `tabStore.ts`, `responseStore.ts`, `FlowStepCard.vue`, `StepInspectorPanel.vue`)**:
+  - Bổ sung `ExampleSwitcher.vue` ngay trong `RequestEditor.vue` (Request gốc đóng vai trò kịch bản `Default`), bảo vệ trạng thái Linked/Chỉ đọc cho các nhóm đang bật đồng bộ (bao gồm khóa toàn bộ `UrlBar` khi `url` đang link, cập nhật cURL Preview theo kịch bản Example đang chọn), hỗ trợ Sync chọn lọc / Sync All và Detach.
+  - Lưu `active_example_id` ở UI local (`localStorage`, không ghi xuống JSON gây Git diff rác), cache Response tạm theo từng cặp `(requestId, exampleId)` trong `tabStore.ts`/`responseStore.ts`, và cho phép chọn `example_id` trên từng bước Flow (`FlowStepCard.vue`, `StepInspectorPanel.vue`, `flowStore.ts`).
+- **Parity CLI & Headless Engine (`projects/engine/headless.go`, `projects/engine/flow.go`, `projects/cmd/hecto/main.go`, `projects/cmd/hecto/SKILL.md`, `projects/frontend/src/utils/headless-engine.ts`)**:
+  - Mở rộng CLI `hecto req example <list|get|create|update|delete|sync|detach>`, `hecto run --example <id|name>`, và `hecto flow run --example` / `--steps Req@Example` (báo lỗi tường minh khi `example_id` bị xóa thay vì âm thầm chạy `Default`).
+  - Cập nhật tài liệu nhúng `projects/cmd/hecto/SKILL.md` (`hecto agent-guide`), rebuild `projects/engine/headless-engine.js`, và bổ sung đầy đủ unit, component, Go và Playwright E2E tests.
+
+---
+
 ## [v1.21.0] - 2026-11-18
 
 ### Added — Tối ưu `hecto` CLI cho AI Agent: JIT `agent-guide` & Nén/Che Secret Output

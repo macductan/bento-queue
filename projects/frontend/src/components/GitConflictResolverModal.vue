@@ -150,6 +150,20 @@ function resolveKVPairListTarget(
 
   const beforeHash = fieldPath.slice(0, hashIdx)
 
+  if (beforeHash.startsWith('examples.')) {
+    const rest = beforeHash.slice('examples.'.length)
+    const dotIdx = rest.indexOf('.')
+    if (dotIdx === -1) return null
+    const exId = rest.slice(0, dotIdx)
+    const subBeforeHash = rest.slice(dotIdx + 1)
+    if (!Array.isArray(rootObj.examples)) {
+      rootObj.examples = []
+    }
+    const exObj = rootObj.examples.find((ex: any) => ex && ex.id === exId)
+    if (!exObj || typeof exObj !== 'object') return null
+    return resolveKVPairListTarget(exObj, `${subBeforeHash}#${occStr}`)
+  }
+
   if (beforeHash.startsWith('folder_envs.')) {
     const rest = beforeHash.slice('folder_envs.'.length)
     const dotIdx = rest.indexOf('.')
@@ -195,6 +209,36 @@ function applyFieldToMergedObject(
 ) {
   const chosenVal = cloneDeep(side === 'ours' ? field.ours_value : field.theirs_value)
   const fieldPath = field.field_path
+
+  // Case 0: Embedded RequestExample conflict (examples.<id> or examples.<id>.<subPath>)
+  if (fieldPath.startsWith('examples.')) {
+    const rest = fieldPath.slice('examples.'.length)
+    const dotIdx = rest.indexOf('.')
+    if (!Array.isArray(mergedObj.examples)) {
+      mergedObj.examples = []
+    }
+    if (dotIdx === -1) {
+      const exId = rest
+      const idx = mergedObj.examples.findIndex((ex: any) => ex && ex.id === exId)
+      if (chosenVal === null || chosenVal === undefined) {
+        if (idx !== -1) mergedObj.examples.splice(idx, 1)
+      } else if (idx !== -1) {
+        mergedObj.examples[idx] = chosenVal
+      } else {
+        mergedObj.examples.push(chosenVal)
+      }
+      return
+    }
+    const exId = rest.slice(0, dotIdx)
+    const subFieldPath = rest.slice(dotIdx + 1)
+    let exObj = mergedObj.examples.find((ex: any) => ex && ex.id === exId)
+    if (!exObj || typeof exObj !== 'object') {
+      exObj = { id: exId }
+      mergedObj.examples.push(exObj)
+    }
+    applyFieldToMergedObject(exObj, { ...field, field_path: subFieldPath }, side)
+    return
+  }
 
   // Case 1: Deep JSON body key (body.content.<subPath>)
   if (fieldPath.startsWith('body.content.')) {
@@ -371,8 +415,15 @@ function formatConflictValue(val: any): string {
   }
   if (typeof val === 'object' && !Array.isArray(val) && 'key' in val && 'value' in val) {
     const enabledBadge = val.enabled === false ? ' [Đang tắt / disabled]' : ''
+    const hasOptions = Array.isArray(val.options) && val.options.length > 0
+    const selectBadge =
+      val.type === 'select'
+        ? ` [select: ${hasOptions ? val.options.join(', ') : ''}]`
+        : hasOptions
+          ? ` [text | options: ${val.options.join(', ')}]`
+          : ''
     const desc = val.description ? ` // ${val.description}` : ''
-    return `${val.key}: ${val.value}${enabledBadge}${desc}`
+    return `${val.key}: ${val.value}${enabledBadge}${selectBadge}${desc}`
   }
   if (typeof val === 'string') {
     return val

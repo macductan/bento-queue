@@ -113,7 +113,15 @@ hecto folder move <id|path> --to <target-id|path|root> [-c <coll>] [--json]
 ### 3.4. `req`
 ```bash
 hecto req list [--folder <id|path>] [-c <coll>] [--json]
-hecto req get <id|path> [-c <coll>] [--json]
+hecto req get <id|path> [--example <id|name>] [--effective] [-c <coll>] [--json]
+hecto req example <list|get|create|update|delete|sync|detach> ...
+  hecto req example list <req-id|path> [-c <coll>] [--json]
+  hecto req example get <req-id|path> <ex-id|name> [--effective] [-c <coll>] [--json]
+  hecto req example create <req-id|path> [--name <name>] [--from <ex-id|name>] [-c <coll>] [--json]
+  hecto req example update <req-id|path> <ex-id|name> [--name ...] [--method ...] [--url ...] [--sync <group>=<true|false>]... [patch flags] [-c <coll>] [--json]
+  hecto req example delete <req-id|path> <ex-id|name> [-c <coll>] [--json]
+  hecto req example sync <req-id|path> [<ex-id|name> | --all] [-c <coll>] [--json]
+  hecto req example detach <req-id|path> <ex-id|name> [--name <new-req-name>] [-c <coll>] [--json]
 hecto req create --name <name> [--method <GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS>] --url <U> \
   [--folder <id|path>] [--header "K:V"]... [--param K=V]... [--path-param K=V]... \
   [--body-type <none|json|text|xml|urlencoded|formdata>] [--body <str|@file>] \
@@ -133,7 +141,7 @@ hecto req move <id|path> --to <target-id|path|root> [-c <coll>] [--json]
 
 ### 3.5. `run`, `import` & `agent-guide`
 ```bash
-hecto run <id|path> [-c <coll>] [--env <id|name|none>] [--var K=V]... [--timeout <sec>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]
+hecto run <id|path> [--example <id|name>] [-c <coll>] [--env <id|name|none>] [--var K=V]... [--timeout <sec>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]
 hecto import <file-or-curl> [-c <coll>] [--folder <id|path>] [--name <name>] [--json]
 hecto agent-guide [--toc | --list | --section <id|alias[,...]>] [--json]
 ```
@@ -221,10 +229,10 @@ Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scena
 | `hecto flow delete <id\|path>` | `[-c <coll>] [--json]` — Delete a flow file from `<collection>/flows/`. |
 | `hecto flow move <id\|path>` | `--to <folder-id\|path\|root> [-c <coll>] [--json]` — Move a flow to another FlowFolder or root. |
 | `hecto flow folder <verb>` | `create --name <name> [--parent <id\|path>]` \| `update <id\|path> --name <name>` \| `delete <id\|path>` \| `move <id\|path> --to <id\|path\|root>` \| `list` \| `tree` \| `get <id\|path>` |
-| `hecto flow run <id\|path>` | `[-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
+| `hecto flow run <id\|path>` | `[--example <id\|name>] [-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
 
 ### 6.2. Shorthand `--steps` vs Full `--nodes-json`
-- **`--steps` shorthand:** Comma `,` separates sequential `FlowNode` rows; `||` separates parallel `FlowStep` items within the same row. Each token is a Request UUID or `<Folder>/<Request>` path:
+- **`--steps` shorthand:** Comma `,` separates sequential `FlowNode` rows; `||` separates parallel `FlowStep` items within the same row. Each token is a Request UUID or `<Folder>/<Request>` path (optionally `<request_selector>@<example_selector>`):
   ```bash
   hecto flow create --name "Checkout E2E" --folder "E2E Suite" \
     --steps "AuthFlow/Login,Users/Get Profile||Catalog/Get Cart,Orders/Checkout" --json

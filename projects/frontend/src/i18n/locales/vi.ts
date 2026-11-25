@@ -241,6 +241,51 @@ export default {
     discard: 'Không lưu'
   },
   kvp: {
-    toggleRow: 'Bật/tắt dòng'
+    toggleRow: 'Bật/tắt dòng',
+    switchToSelect: 'Chuyển sang dạng Select box',
+    switchToText: 'Chuyển sang dạng nhập Text',
+    modeText: 'Text',
+    modeSelect: 'Select',
+    editOptions: 'Chỉnh sửa lựa chọn',
+    optionsTitle: 'Danh sách lựa chọn',
+    addOption: '+ Thêm lựa chọn...',
+    addOptionPlaceholder: 'Nhập lựa chọn mới...',
+    optionPlaceholder: 'Giá trị lựa chọn',
+    removeOption: 'Xóa lựa chọn',
+    noOptions: 'Chưa có lựa chọn nào',
+    selectValuePlaceholder: 'Chọn giá trị...',
+    outOfList: 'ngoài danh sách',
+    emptyOptionError: 'Lựa chọn không được để trống',
+    duplicateOption: 'Lựa chọn đã tồn tại'
+  },
+  examples: {
+    defaultLabel: 'Default',
+    newExample: 'Thêm Example',
+    rename: 'Đổi tên',
+    duplicate: 'Nhân bản',
+    delete: 'Xóa',
+    detach: 'Tách thành Request độc lập',
+    syncFromDefault: 'Đồng bộ từ Default',
+    syncAll: 'Đồng bộ tất cả Example',
+    syncAllTitle: 'Đồng bộ các trường đang liên kết tới tất cả Example từ Default',
+    syncConfigTitle: 'Liên kết trường (Sync với Default)',
+    linkedBadge: 'Linked',
+    unlink: 'Ngắt liên kết',
+    link: 'Liên kết lại Default',
+    linkedBanner: 'Mục này đang đồng bộ từ Default. Ngắt liên kết "{group}" ở cấu hình Sync để sửa riêng cho Example.',
+    urlLinkedHint: 'Base URL đang đồng bộ từ Default (sửa Base URL ở Default hoặc ngắt liên kết URL; sửa query ở tab Params).',
+    groups: {
+      url: 'Base URL',
+      method: 'Method',
+      auth: 'Auth',
+      scripts: 'Scripts',
+      body: 'Body',
+      params: 'Query Params',
+      path_params: 'Path Params',
+      headers: 'Headers',
+      variables: 'Variables'
+    },
+    flowExampleMissing: 'Example đã bị xóa hoặc không còn tồn tại',
+    flowExampleLabel: 'Kịch bản'
   }
 }

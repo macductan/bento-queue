@@ -38,6 +38,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { useTabStore, type TabEntityType } from './tabStore'
 import { useFlowStore } from './flowStore'
+import type { KVPair, RequestExample } from './requestStore'
 
 export interface AuthConfig {
   type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey'
@@ -59,11 +60,12 @@ export interface TreeNode {
     [key: string]: any
   }
   children?: TreeNode[]
-  variables?: { key: string; value: string; enabled: boolean }[]
-  folder_envs?: Record<string, { key: string; value: string; enabled: boolean }[]>
-  headers?: { key: string; value: string; enabled: boolean }[]
+  variables?: KVPair[]
+  folder_envs?: Record<string, KVPair[]>
+  headers?: KVPair[]
   auth?: AuthConfig
   auth_envs?: Record<string, AuthConfig>
+  examples?: RequestExample[]
   created_at: string
 }
 
@@ -790,10 +792,15 @@ const useBaseCollectionStore = defineStore('collection', {
       const prevActiveRequestId = this.activeRequestId
       const prevActiveFolderId = this.activeFolderId
       const prevRequestId = this.activeRequestId || (tabStore.activeTab?.type === 'request' ? tabStore.activeTab.entityId : null)
+      const prevActiveExampleId =
+        prevRequestId && prevRequestId === (reqStore.draft?.id || reqStore.current?.id)
+          ? reqStore.activeExampleId
+          : null
       if (prevRequestId && prevRequestId !== id) {
-        tabStore.saveResponseToCache(prevRequestId)
+        tabStore.saveResponseToCache(prevRequestId, prevActiveExampleId)
       }
       const prevOriginal = reqStore.original ? JSON.parse(JSON.stringify(reqStore.original)) : null
+      const prevDraft = reqStore.draft ? JSON.parse(JSON.stringify(reqStore.draft)) : null
       const prevCurrent = reqStore.current ? JSON.parse(JSON.stringify(reqStore.current)) : null
       const prevSaveStatus = reqStore.saveStatus
       const prevContentTypeAuto = reqStore.contentTypeAuto
@@ -808,7 +815,8 @@ const useBaseCollectionStore = defineStore('collection', {
         name: node?.name || id,
         method: node?.method || 'GET'
       })
-      tabStore.restoreResponseFromCache(id)
+      const targetSavedExId = reqStore.getSavedActiveExampleId?.(id) ?? null
+      tabStore.restoreResponseFromCache(id, targetSavedExId)
       
       this.activeRequestId = id
       this.activeFolderId = null
@@ -822,7 +830,7 @@ const useBaseCollectionStore = defineStore('collection', {
         const errMsg = reqStore.error
         if (!hadTabBefore) {
           tabStore.tabs = tabStore.tabs.filter(t => !(t.type === 'request' && t.entityId === id))
-          delete tabStore.responseCache[id]
+          tabStore.clearResponseCacheForRequest?.(id)
           tabStore.activeTabId = prevActiveTabId && tabStore.tabs.some(t => t.id === prevActiveTabId)
             ? prevActiveTabId
             : (tabStore.tabs[tabStore.tabs.length - 1]?.id ?? null)
@@ -830,10 +838,12 @@ const useBaseCollectionStore = defineStore('collection', {
         if (prevActiveRequestId && prevActiveRequestId !== id) {
           this.activeRequestId = prevActiveRequestId
           this.activeFolderId = null
-          tabStore.restoreResponseFromCache(prevActiveRequestId)
+          tabStore.restoreResponseFromCache(prevActiveRequestId, prevActiveExampleId)
           if (prevOriginal && prevCurrent && prevCurrent.id === prevActiveRequestId) {
             reqStore.original = prevOriginal
+            reqStore.draft = prevDraft || prevCurrent
             reqStore.current = prevCurrent
+            reqStore.activeExampleId = prevActiveExampleId
             reqStore.saveStatus = prevSaveStatus
             reqStore.contentTypeAuto = prevContentTypeAuto
           }
@@ -847,6 +857,9 @@ const useBaseCollectionStore = defineStore('collection', {
         }
         uiStore.showToast(errMsg)
         return
+      }
+      if ((reqStore.activeExampleId ?? null) !== targetSavedExId) {
+        tabStore.restoreResponseFromCache(id, reqStore.activeExampleId)
       }
 
       if (reqStore.current && reqStore.current.id === id) {
@@ -881,7 +894,11 @@ const useBaseCollectionStore = defineStore('collection', {
 
       const prevRequestId = this.activeRequestId || (tabStore.activeTab?.type === 'request' ? tabStore.activeTab.entityId : null)
       if (prevRequestId) {
-        tabStore.saveResponseToCache(prevRequestId)
+        const prevExId =
+          prevRequestId === (reqStore.draft?.id || reqStore.current?.id)
+            ? reqStore.activeExampleId
+            : null
+        tabStore.saveResponseToCache(prevRequestId, prevExId)
       }
       const { useResponseStore } = await import('./responseStore')
       useResponseStore().resetDisplay()
@@ -910,7 +927,7 @@ const useBaseCollectionStore = defineStore('collection', {
     },
     async updateCollectionVariables(
       id: string,
-      variables: { key: string; value: string; enabled: boolean }[],
+      variables: KVPair[],
       auth?: AuthConfig,
       authEnvs?: Record<string, AuthConfig>
     ): Promise<boolean> {

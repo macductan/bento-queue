@@ -2,13 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useRequestStore } from '../requestStore'
 import { useUiStore } from '../uiStore'
-import { SaveRequest, GetCollectionTree } from '../../../wailsjs/go/main/App'
+import { GetRequest, SaveRequest, CreateRequest, GetCollectionTree } from '../../../wailsjs/go/main/App'
 import { createMockRequest } from './utils'
 
 // Mock wails calls
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetRequest: vi.fn(),
   SaveRequest: vi.fn(),
+  CreateRequest: vi.fn(),
   GetCollectionTree: vi.fn().mockResolvedValue({ success: true, data: [] })
 }))
 
@@ -391,6 +392,187 @@ describe('requestStore', () => {
       expect(store.saveStatus).toBe('saved')
       expect(tabStore.tabs.find(t => t.entityId === 'req-a')?.isDirty).toBe(false)
       expect(tabStore.tabs.find(t => t.entityId === 'req-b')?.isDirty).toBe(false)
+    })
+
+    it('marks requestStore.isDirty as true when only KVPair type or options are modified', () => {
+      const store = useRequestStore()
+      const base = createMockRequest({
+        params: [{ key: 'env', value: 'dev', enabled: true }],
+        headers: [{ key: 'X-Mode', value: 'fast', enabled: true, type: 'select', options: ['fast', 'slow'] }]
+      })
+      store.original = JSON.parse(JSON.stringify(base))
+      store.current = JSON.parse(JSON.stringify(base))
+      expect(store.isDirty).toBe(false)
+
+      // Modify only type on param
+      store.current!.params[0].type = 'select'
+      expect(store.isDirty).toBe(true)
+
+      // Reset and modify only options on header
+      store.current = JSON.parse(JSON.stringify(base))
+      expect(store.isDirty).toBe(false)
+      store.current!.headers[0].options = ['fast', 'slow', 'turbo']
+      expect(store.isDirty).toBe(true)
+    })
+
+    it('manages Example Request lifecycle, local activeExampleId persistence, response cache isolation, and detach', async () => {
+      const { useTabStore } = await import('../tabStore')
+      const { useResponseStore } = await import('../responseStore')
+      const store = useRequestStore()
+      const tabStore = useTabStore()
+      const resStore = useResponseStore()
+
+      const base = createMockRequest({
+        id: 'req-ex-store',
+        name: 'Items',
+        method: 'GET',
+        url: 'https://api.example.com/items?page=1',
+        params: [{ key: 'page', value: '1', enabled: true }],
+        body: { type: 'none', content: '' }
+      })
+      vi.mocked(GetRequest).mockResolvedValueOnce({ success: true, data: base } as any)
+      vi.mocked(SaveRequest).mockResolvedValue({ success: true, data: {} } as any)
+
+      await store.loadRequest('req-ex-store')
+      expect(store.activeExampleId).toBeNull()
+
+      // Seed response for Default
+      resStore.response = {
+        status_code: 200,
+        status_text: '200 OK',
+        headers: {},
+        body: '{"from":"default"}',
+        time_ms: 10,
+        size_bytes: 18,
+        timestamp: '',
+        truncated: false,
+        is_binary: false
+      }
+
+      // Create Example 1 -> switches activeExampleId and isolates response cache
+      const ex1 = store.createExample({ name: 'Page 2' })
+      expect(ex1).not.toBeNull()
+      expect(store.activeExampleId).toBe(ex1!.id)
+      expect(resStore.response).toBeNull()
+
+      // Edit unlinked params & seed Example 1 response
+      store.current!.params = [{ key: 'page', value: '2', enabled: true }]
+      resStore.response = {
+        status_code: 201,
+        status_text: '201 Created',
+        headers: {},
+        body: '{"from":"example1"}',
+        time_ms: 12,
+        size_bytes: 19,
+        timestamp: '',
+        truncated: false,
+        is_binary: false
+      }
+
+      // Switch back to Default -> Default response restored & Default params intact
+      store.selectExample(null)
+      expect(store.activeExampleId).toBeNull()
+      expect(resStore.response?.body).toBe('{"from":"default"}')
+      expect(store.current!.params).toEqual([{ key: 'page', value: '1', enabled: true }])
+
+      // Switch back to Example 1 -> Example 1 response and edited params restored; active_example_id NOT written to disk
+      store.selectExample(ex1!.id)
+      expect(resStore.response?.body).toBe('{"from":"example1"}')
+      expect(store.current!.params).toEqual([{ key: 'page', value: '2', enabled: true }])
+
+      await store.saveCurrent({ silent: true })
+      const savedPayload = vi.mocked(SaveRequest).mock.calls.at(-1)?.[0] as any
+      expect(savedPayload.active_example_id).toBeUndefined()
+      expect(savedPayload.examples).toHaveLength(1)
+      expect(savedPayload.examples[0].params).toEqual([{ key: 'page', value: '2', enabled: true }])
+      expect(tabStore.responseCache['req-ex-store']).toBeDefined()
+      expect(tabStore.responseCache[`req-ex-store::${ex1!.id}`]).toBeDefined()
+
+      // Reload from disk restores activeExampleId from localStorage
+      vi.mocked(GetRequest).mockResolvedValueOnce({ success: true, data: savedPayload } as any)
+      await store.loadRequest('req-ex-store')
+      expect(store.activeExampleId).toBe(ex1!.id)
+
+      // Detach Example -> creates new Request & deletes example from source
+      vi.mocked(CreateRequest).mockResolvedValueOnce({
+        success: true,
+        data: { id: 'req-detached-new', created_at: '2026-01-02T00:00:00Z' }
+      } as any)
+      const detachedId = await store.detachExample(ex1!.id, { newName: 'Detached Page 2' })
+      expect(detachedId).toBe('req-detached-new')
+      expect(store.examples).toHaveLength(0)
+      expect(store.activeExampleId).toBeNull()
+    })
+
+    it('respects autoSaveEnabled=false, preserves unsaved Default URL on unlink, and syncs linked fields when saving from active Example', async () => {
+      const store = useRequestStore()
+      const uiStore = useUiStore()
+      const base = createMockRequest({
+        id: 'req-sync-edge',
+        name: 'Sync Edge',
+        method: 'GET',
+        url: 'https://v1.example.com/items?role=base',
+        params: [{ key: 'role', value: 'base', enabled: true }],
+        examples: [
+          {
+            id: 'ex-a',
+            name: 'A',
+            method: 'GET',
+            url: 'https://v1.example.com/items?role=ex',
+            params: [{ key: 'role', value: 'ex', enabled: true }],
+            path_params: [],
+            headers: [],
+            variables: [],
+            body: { type: 'none', content: '' },
+            auth: { type: 'inherit' },
+            sync_flags: {
+              url: true,
+              method: true,
+              auth: true,
+              scripts: true,
+              body: false,
+              params: false,
+              path_params: false,
+              headers: false,
+              variables: false
+            },
+            created_at: '',
+            updated_at: ''
+          }
+        ]
+      })
+      vi.mocked(GetRequest).mockResolvedValueOnce({ success: true, data: base } as any)
+      vi.mocked(SaveRequest).mockResolvedValue({ success: true, data: {} } as any)
+
+      await store.loadRequest('req-sync-edge')
+      uiStore.autoSaveEnabled = false
+
+      // Edit Default URL without saving
+      store.current!.url = 'https://v2.example.com/items?role=base'
+      store.selectExample('ex-a')
+      expect(store.current!.url).toBe('https://v2.example.com/items?role=ex')
+
+      // Save while Example A is active -> draft.examples[0].url must sync to v2
+      await store.saveCurrent({ silent: true })
+      const saved = vi.mocked(SaveRequest).mock.calls.at(-1)?.[0] as any
+      expect(saved.examples[0].url).toBe('https://v2.example.com/items?role=ex')
+
+      // Edit Default URL again without saving, switch to Example, then unlink URL -> keeps v3 (does not snap back to v2)
+      store.selectExample(null)
+      store.current!.url = 'https://v3.example.com/items?role=base'
+      store.selectExample('ex-a')
+      store.setExampleSyncFlag('ex-a', 'url', false)
+      expect(store.current!.url).toBe('https://v3.example.com/items?role=ex')
+      expect(store.autoSaveTimer).toBeNull()
+      expect(store.saveStatus).toBe('unsaved')
+
+      // Rename, duplicate, and delete operations respect autoSaveEnabled=false
+      expect(store.renameExample('ex-a', 'A Renamed')).toBe(true)
+      const dup = store.duplicateExample('ex-a')
+      expect(dup).not.toBeNull()
+      expect(store.autoSaveTimer).toBeNull()
+      expect(store.deleteExample(dup!.id)).toBe(true)
+      expect(store.examples).toHaveLength(1)
     })
   })
 })

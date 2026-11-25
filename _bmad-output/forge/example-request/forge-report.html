@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Forge Report — Example Request (hecto-api)</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #171a23;
+      --surface-2: #1e2330;
+      --border: #2a3042;
+      --text: #e6e9f2;
+      --muted: #9aa4bd;
+      --accent: #10b981;
+      --accent-soft: rgba(16, 185, 129, 0.14);
+      --warn: #f59e0b;
+      --warn-soft: rgba(245, 158, 11, 0.12);
+      --danger: #ef4444;
+      --danger-soft: rgba(239, 68, 68, 0.12);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 36px 20px 64px;
+      background: radial-gradient(circle at top right, #172334 0%, var(--bg) 45%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      line-height: 1.6;
+    }
+    .container { max-width: 960px; margin: 0 auto; }
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 32px;
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      box-shadow: 0 18px 45px rgba(0,0,0,0.35);
+    }
+    .hero-text { flex: 1 1 560px; }
+    .eyebrow {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    h1 { margin: 0 0 10px; font-size: 28px; line-height: 1.25; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 15px; }
+    .meta-row {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .pill {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-family: var(--mono);
+    }
+    .seal-box { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+    .section {
+      margin-top: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px 28px;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    ul { margin: 0; padding-left: 20px; }
+    li { margin-bottom: 10px; }
+    li:last-child { margin-bottom: 0; }
+    code {
+      font-family: var(--mono);
+      font-size: 0.88em;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: #c7d2fe;
+    }
+    .tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-right: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .tag-lock { background: var(--accent-soft); color: #34d399; border: 1px solid rgba(16,185,129,0.35); }
+    .tag-kill { background: var(--danger-soft); color: #f87171; border: 1px solid rgba(239,68,68,0.35); }
+    .tag-warn { background: var(--warn-soft); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); }
+    .persona-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 12px;
+    }
+    .persona-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .persona-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .persona-role { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+    .persona-voice { font-size: 13px; color: #cbd5e1; margin-top: 6px; }
+    .footer {
+      margin-top: 28px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="hero">
+      <div class="hero-text">
+        <div class="eyebrow">BMad Forge Idea — Biên bản rèn ý tưởng</div>
+        <h1>Example Request cho <code>hecto-api</code></h1>
+        <p class="subtitle">
+          Rèn bài toán, kiểm thử xung đột kỹ thuật trên codebase <code>v1.22.0</code> và chốt kiến trúc Snapshot + Cờ đồng bộ theo nhóm trường.
+        </p>
+        <div class="meta-row">
+          <span class="pill">Người chủ trì: tanmac</span>
+          <span class="pill">Trạng thái: HARDENED</span>
+          <span class="pill">Slug: example-request</span>
+        </div>
+      </div>
+      <div class="seal-box" aria-label="Dấu xác nhận HARDENED">
+        <svg width="144" height="144" viewBox="0 0 144 144" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="waxGrad" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stop-color="#34d399" />
+              <stop offset="65%" stop-color="#059669" />
+              <stop offset="100%" stop-color="#065f46" />
+            </radialGradient>
+          </defs>
+          <g transform="rotate(-10 72 72)">
+            <circle cx="72" cy="72" r="64" fill="url(#waxGrad)" stroke="#a7f3d0" stroke-width="2.5" stroke-dasharray="5 3" />
+            <circle cx="72" cy="72" r="53" fill="none" stroke="#ecfdf5" stroke-width="1.5" opacity="0.85" />
+            <text x="72" y="57" text-anchor="middle" fill="#ecfdf5" font-size="10" font-weight="700" letter-spacing="2" font-family="monospace">BMAD FORGE</text>
+            <text x="72" y="79" text-anchor="middle" fill="#ffffff" font-size="17" font-weight="900" letter-spacing="1.6" font-family="sans-serif">HARDENED</text>
+            <text x="72" y="97" text-anchor="middle" fill="#d1fae5" font-size="9.5" font-weight="600" letter-spacing="1.2" font-family="monospace">HECTO-API</text>
+          </g>
+        </svg>
+      </div>
+    </header>
+
+    <section class="section">
+      <h2>🔒 Các quyết định đã khóa (Locked Decisions)</h2>
+      <ul>
+        <li><span class="tag tag-lock">Core</span><strong>Bản chất thực thể:</strong> Example Request là kịch bản đầu vào (<code>Input Scenario / Variant</code>) gắn dưới Request gốc để chạy <code>Send</code> thật (giải quyết chuyển nhanh payload JSON/Params phức tạp mà <code>KVPair select</code> không xử lý được, không lưu Response mẫu kiểu Doc/Mock).</li>
+        <li><span class="tag tag-lock">Data</span><strong>Request gốc là <code>Default</code> + Nhúng <code>examples[]</code>:</strong> Request gốc luôn tự chạy được với vai trò kịch bản mặc định; danh sách Example lưu nhúng trong <code>&lt;req-uuid&gt;.json</code> (Move/Delete/Duplicate trọn bộ, cấp lại UUID cho Example khi Duplicate Request).</li>
+        <li><span class="tag tag-lock">Sync</span><strong>Snapshot đầy đủ + Cờ đồng bộ theo nhóm trường:</strong> Mỗi Example có bảng cờ theo dõi cho các nhóm (<code>url</code>, <code>method</code>, <code>auth</code>, <code>scripts</code>, <code>body</code>, <code>params</code>, <code>path_params</code>, <code>headers</code>, <code>variables</code>). Mặc định khi clone: <code>URL</code>, <code>Method</code>, <code>Auth/AuthEnvs</code>, <code>Scripts</code> bật đồng bộ; phần Input còn lại để độc lập. Bật/tắt tự do trên từng Example; thao tác <strong>Sync / Sync All</strong> chỉ đẩy các nhóm đang bật đồng bộ (hoặc chọn nhóm lúc Sync).</li>
+        <li><span class="tag tag-lock">URL</span><strong>Tách Base URL và Query Params:</strong> Khi <code>URL</code> đồng bộ mà <code>Params</code> độc lập, chỉ đồng bộ phần trước <code>?</code> (Base URL + cấu trúc <code>:path_param</code>, giữ nguyên value <code>:path_param</code> ở Example); <code>UrlBar</code> ghép động Base URL và Query của kịch bản đang chọn.</li>
+        <li><span class="tag tag-lock">UX</span><strong>Switcher trong Editor &amp; Bảo vệ sửa nhầm:</strong> Đặt Example Switcher ngay trong <code>RequestEditor</code> (không thêm node con ở Sidebar hay tab riêng ở <code>AppTabBar</code>). Nhóm đang bật đồng bộ hiển thị <strong>Linked / Chỉ đọc</strong>; muốn sửa riêng thì bỏ tích đồng bộ hoặc bấm <strong>"Tách thành Request độc lập"</strong>. Lưu <code>active_example_id</code> ở UI local (không làm bẩn Git diff) và cache Response theo cặp <code>(requestId, exampleId)</code>.</li>
+        <li><span class="tag tag-lock">Scope</span><strong>Hệ sinh thái đồng bộ:</strong> Mở rộng <code>git_merge.go</code> merge <code>examples[]</code> theo <code>id</code>; thêm <code>example_id?: string</code> tùy chọn vào <code>FlowStep</code> (lỗi rõ nếu Example bị xóa); hỗ trợ <code>--example</code> trên <code>hecto run</code> / <code>hecto flow</code> / <code>hecto req</code> (<code>SKILL.md</code>); không import Postman Examples.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>🚫 Phương án đã loại bỏ &amp; Lý do (Rejected Options)</h2>
+      <ul>
+        <li><span class="tag tag-kill">Rejected</span><strong>Lưu cặp Request+Response mẫu kiểu Postman Docs/Mock:</strong> Lệch khỏi nhu cầu chạy thử nhiều kịch bản đầu vào và trùng lặp với Mock Server có sẵn.</li>
+        <li><span class="tag tag-kill">Rejected</span><strong>Khóa cứng vĩnh viễn <code>URL/Method/Auth/Scripts</code>:</strong> Không đáp ứng được trường hợp kịch bản rẽ nhánh cần sửa riêng hoặc tách hẳn thành Request độc lập.</li>
+        <li><span class="tag tag-kill">Rejected</span><strong>Sync All ghi đè toàn bộ Request gốc xuống Example:</strong> Gây mất dữ liệu <code>Body</code> / <code>Params</code> / <code>Headers</code> của các kịch bản kiểm thử.</li>
+        <li><span class="tag tag-kill">Rejected</span><strong>Hiển thị Example dưới cây Sidebar / Tab riêng:</strong> Làm phình cây thư mục <code>TreeNodeRow.vue</code> và dễ dẫn đến sửa nhầm Request gốc qua nhiều tab trùng tên.</li>
+        <li><span class="tag tag-kill">Rejected</span><strong>Lưu <code>active_example_id</code> vào file JSON &amp; Import Postman Examples:</strong> Tránh Git diff nhiễu khi chỉ click xem và tránh gượng ép map Response snapshot của Postman.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>⚠️ Điểm yếu &amp; Bẫy kỹ thuật đã soi ra (Surviving Scrutiny &amp; Traps)</h2>
+      <ul>
+        <li><span class="tag tag-warn">Codebase Crack</span><code>useUrlParamsSync.ts</code> &amp; <code>requestStore.ts</code> đang đồng bộ 2 chiều <code>req.url</code> ↔ <code>req.params</code> — phải cắt ranh giới trước/sau <code>?</code> để tránh Example ghi đè query vào Base URL gốc.</li>
+        <li><span class="tag tag-warn">Git Merge</span><code>git_merge.go</code> chưa có bộ merge 3 chiều theo <code>id</code> cho mảng object lồng nhau — bắt buộc bổ sung để không conflict toàn mảng <code>examples</code>.</li>
+        <li><span class="tag tag-warn">Parity</span><code>RequestEditor.vue</code> (<code>resolvedCurlPreview</code>) phải sinh cURL theo đúng Example đang mở; <code>RequestService.Duplicate</code> phải sinh UUID mới cho các Example bên trong.</li>
+        <li><span class="tag tag-warn">Complexity</span>Mô hình Snapshot + Cờ đồng bộ từng nhóm phức tạp hơn khóa cứng — cần UI hiển thị trạng thái Linked/Unlinked thật rõ ràng để người dùng không nhầm lẫn.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>🎭 Hội đồng phản biện (Personas Credited)</h2>
+      <div class="persona-grid">
+        <div class="persona-card">
+          <div class="persona-head"><span>📋 John</span><span class="persona-role">Product Manager</span></div>
+          <div class="persona-voice">Chất vấn lý do tồn tại của Example trước Duplicate Request và Select Variable <code>v1.22.0</code>.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>⚡ Minh</span><span class="persona-role">API Power User</span></div>
+          <div class="persona-voice">Chỉ ra khoảng trống thực tế với JSON Body 40 dòng và nỗi đau phải sửa N bản Duplicate khi đổi endpoint.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🏗️ Winston</span><span class="persona-role">System Architect</span></div>
+          <div class="persona-voice">Cắt ranh giới trên <code>model.Request</code> và kiểm tra khớp nối 5 lớp của hệ thống.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🧪 Hùng</span><span class="persona-role">QA / API Test Engineer</span></div>
+          <div class="persona-voice">Soi điểm kẹt về <code>Scripts</code> assert khi chạy các kịch bản lỗi 400/422.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🎨 Sally</span><span class="persona-role">UX Designer</span></div>
+          <div class="persona-voice">Đề xuất Example Switcher gọn trong <code>RequestEditor</code> thay vì nhồi node con vào Sidebar.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🔀 Linh</span><span class="persona-role">Team Git-Sync Lead</span></div>
+          <div class="persona-voice">Cảnh báo bẫy <code>useAutoSave</code> và yêu cầu nâng cấp <code>git_merge.go</code> theo <code>id</code>.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>💻 Amelia</span><span class="persona-role">Senior Software Engineer</span></div>
+          <div class="persona-voice">Phát hiện xung đột đồng bộ 2 chiều trong <code>useUrlParamsSync.ts</code> (dòng 79–139).</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🔌 Quang</span><span class="persona-role">Backend/Frontend Integrator</span></div>
+          <div class="persona-voice">Bảo vệ nhu cầu đổi Query Params riêng cho các API <code>GET</code> nhiều bộ lọc.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🎯 Yui</span><span class="persona-role">The Craftsman</span></div>
+          <div class="persona-voice">Bóc tách mâu thuẫn giữa "khóa dùng chung 1 nguồn" và "clone kèm Sync / Sync All".</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>😤 Grumbal &amp; 📦 Hải</span><span class="persona-role">Adversary &amp; DevOps</span></div>
+          <div class="persona-voice">Tấn công lỗ hổng Sync All ghi đè mất payload test, ép ra cơ chế cờ đồng bộ theo nhóm trường.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🌶️ Boundary &amp; 🔍 Trang</span><span class="persona-role">Edge-Case &amp; Debugger</span></div>
+          <div class="persona-voice">Chống sửa nhầm Request gốc bằng trạng thái Linked/Khóa, tách Request độc lập và giữ sạch Git diff.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>🧪 Murat &amp; 🚢 Dana</span><span class="persona-role">Test Architect &amp; Pragmatist</span></div>
+          <div class="persona-voice">Chốt parity <code>hecto</code> CLI, giữ <code>FlowStep.example_id</code> và cắt bỏ Postman Import.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>📊 Mary &amp; 🔄 Cường</span><span class="persona-role">Analyst &amp; Flow Designer</span></div>
+          <div class="persona-voice">Giải thích mô hình Thin Pointer của <code>FlowStep</code> để chốt <code>example_id</code> trong API Flow.</div>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head"><span>📏 Level</span><span class="persona-role">Claim Checker</span></div>
+          <div class="persona-voice">Kiểm tra chéo cuối phiên: tái sinh UUID khi Duplicate Request và đồng bộ cURL Preview theo Example.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      Xuất bởi BMad Forge Idea • Đường dẫn workspace: <code>_bmad-output/forge/example-request/</code>
+    </div>
+  </div>
+</body>
+</html>

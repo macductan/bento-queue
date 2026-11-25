@@ -22,6 +22,8 @@ type FlowStepRunOutput struct {
 	StepID          string     `json:"step_id"`
 	NodeID          string     `json:"node_id"`
 	RequestID       string     `json:"request_id"`
+	ExampleID       string     `json:"example_id,omitempty"`
+	ExampleName     string     `json:"example_name,omitempty"`
 	RequestName     string     `json:"request_name,omitempty"`
 	Method          string     `json:"method,omitempty"`
 	Status          string     `json:"status"` // "passed" | "failed" | "skipped"
@@ -65,6 +67,7 @@ type FlowRunOptions struct {
 	CollectionRoot  string
 	Collection      model.Collection
 	Flow            model.Flow
+	ExampleSelector string
 	Environments    []model.Environment
 	ActiveEnvID     string
 	CLIVarOverrides map[string]string
@@ -74,6 +77,8 @@ type FlowRunOptions struct {
 
 type stepVerdictJSInput struct {
 	RequestMissing bool               `json:"requestMissing,omitempty"`
+	ExampleMissing bool               `json:"exampleMissing,omitempty"`
+	ExampleError   string             `json:"exampleError,omitempty"`
 	NetworkError   string             `json:"networkError,omitempty"`
 	ScriptError    string             `json:"scriptError,omitempty"`
 	ScriptTests    []ScriptTestResult `json:"scriptTests,omitempty"`
@@ -528,25 +533,44 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 	halted := false
 	unhandledFailure := false
 
+	buildSkippedStepOutput := func(nodeID string, step model.FlowStep) FlowStepRunOutput {
+		reqName := ""
+		method := ""
+		exampleID := strings.TrimSpace(step.ExampleID)
+		if strings.TrimSpace(opts.ExampleSelector) != "" {
+			exampleID = strings.TrimSpace(opts.ExampleSelector)
+		}
+		exampleName := ""
+		if entry, ok := reqCatalog[strings.TrimSpace(step.RequestID)]; ok {
+			reqName = entry.request.Name
+			method = entry.request.Method
+			if exampleID != "" {
+				if _, ex, exErr := service.ResolveExampleSelector(entry.request, exampleID); exErr == nil {
+					eff := service.ResolveEffectiveRequestForExample(entry.request, ex)
+					method = eff.Method
+					exampleID = ex.ID
+					exampleName = ex.Name
+				}
+			}
+		}
+		return FlowStepRunOutput{
+			StepID:      step.ID,
+			NodeID:      nodeID,
+			RequestID:   step.RequestID,
+			ExampleID:   exampleID,
+			ExampleName: exampleName,
+			RequestName: reqName,
+			Method:      method,
+			Status:      "skipped",
+		}
+	}
+
 	var markNodesSkipped func(nodes []model.FlowNode)
 	markNodesSkipped = func(nodes []model.FlowNode) {
 		for _, node := range nodes {
 			stepResList := make([]FlowStepRunOutput, 0, len(node.Steps))
 			for _, step := range node.Steps {
-				reqName := ""
-				method := ""
-				if entry, ok := reqCatalog[strings.TrimSpace(step.RequestID)]; ok {
-					reqName = entry.request.Name
-					method = entry.request.Method
-				}
-				sr := FlowStepRunOutput{
-					StepID:      step.ID,
-					NodeID:      node.ID,
-					RequestID:   step.RequestID,
-					RequestName: reqName,
-					Method:      method,
-					Status:      "skipped",
-				}
+				sr := buildSkippedStepOutput(node.ID, step)
 				stepResList = append(stepResList, sr)
 				out.StepResults = append(out.StepResults, sr)
 				out.StepsSkipped++
@@ -565,12 +589,16 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 	}
 
 	type rawExecutedStep struct {
-		stepIdx     int
-		step        model.FlowStep
-		req         model.Request
-		pathFolders []model.TreeNode
-		missing     bool
-		runOut      *RunOutput
+		stepIdx        int
+		step           model.FlowStep
+		req            model.Request
+		exampleID      string
+		exampleName    string
+		pathFolders    []model.TreeNode
+		missing        bool
+		exampleMissing bool
+		exampleError   string
+		runOut         *RunOutput
 	}
 
 	buildBranchCtxForStep := func(st *rawExecutedStep) branchEvalJSContext {
@@ -608,20 +636,7 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 			if len(enabledIndices) == 0 {
 				stepResList := make([]FlowStepRunOutput, 0, len(node.Steps))
 				for _, step := range node.Steps {
-					reqName := ""
-					method := ""
-					if entry, ok := reqCatalog[strings.TrimSpace(step.RequestID)]; ok {
-						reqName = entry.request.Name
-						method = entry.request.Method
-					}
-					sr := FlowStepRunOutput{
-						StepID:      step.ID,
-						NodeID:      node.ID,
-						RequestID:   step.RequestID,
-						RequestName: reqName,
-						Method:      method,
-						Status:      "skipped",
-					}
+					sr := buildSkippedStepOutput(node.ID, step)
 					stepResList = append(stepResList, sr)
 					out.StepResults = append(out.StepResults, sr)
 					out.StepsSkipped++
@@ -664,19 +679,42 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 				for _, folderNode := range pf {
 					accumulatedFolderIDs = appendOrderedFolderID(accumulatedFolderIDs, folderNode.ID)
 				}
+				effExampleSel := strings.TrimSpace(st.ExampleID)
+				if strings.TrimSpace(opts.ExampleSelector) != "" {
+					effExampleSel = strings.TrimSpace(opts.ExampleSelector)
+				}
+				exampleID := effExampleSel
+				exampleName := ""
+				exampleMissing := false
+				exampleError := ""
+				if found && effExampleSel != "" {
+					_, ex, exErr := service.ResolveExampleSelector(req, effExampleSel)
+					if exErr != nil {
+						exampleMissing = true
+						exampleError = exErr.Error()
+					} else {
+						req = service.ResolveEffectiveRequestForExample(req, ex)
+						exampleID = ex.ID
+						exampleName = ex.Name
+					}
+				}
 				preparedSteps[k] = rawExecutedStep{
-					stepIdx:     stepIdx,
-					step:        st,
-					req:         req,
-					pathFolders: pf,
-					missing:     !found,
+					stepIdx:        stepIdx,
+					step:           st,
+					req:            req,
+					exampleID:      exampleID,
+					exampleName:    exampleName,
+					pathFolders:    pf,
+					missing:        !found,
+					exampleMissing: exampleMissing,
+					exampleError:   exampleError,
 				}
 			}
 
 			// Execute either sequentially (1 step) or concurrently via goroutines (>= 2 steps)
 			if len(preparedSteps) == 1 {
 				ps := &preparedSteps[0]
-				if !ps.missing {
+				if !ps.missing && !ps.exampleMissing {
 					effTimeoutMs := ps.step.TimeoutMs
 					if effTimeoutMs <= 0 {
 						effTimeoutMs = flowTimeoutMs
@@ -732,7 +770,7 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 
 				var wg sync.WaitGroup
 				for k := range preparedSteps {
-					if preparedSteps[k].missing {
+					if preparedSteps[k].missing || preparedSteps[k].exampleMissing {
 						continue
 					}
 					wg.Add(1)
@@ -765,7 +803,7 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 			// Merge script updates in declaration order via goja and persist to disk once
 			mutationItems := make([]parallelStepMutationJSItem, 0, len(preparedSteps))
 			for _, ps := range preparedSteps {
-				if ps.missing || ps.runOut == nil {
+				if ps.missing || ps.exampleMissing || ps.runOut == nil {
 					mutationItems = append(mutationItems, parallelStepMutationJSItem{
 						StepID:      ps.step.ID,
 						RequestID:   ps.step.RequestID,
@@ -840,9 +878,11 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 				lastExecutedStep = ps
 				out.StepsExecuted++
 
-				if ps.missing {
+				if ps.missing || ps.exampleMissing {
 					verdict, err := callEvaluateStepVerdict(vm, stepVerdictJSInput{
-						RequestMissing: true,
+						RequestMissing: ps.missing,
+						ExampleMissing: ps.exampleMissing,
+						ExampleError:   ps.exampleError,
 					})
 					if err != nil {
 						return err
@@ -851,6 +891,10 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 						StepID:          ps.step.ID,
 						NodeID:          node.ID,
 						RequestID:       ps.step.RequestID,
+						ExampleID:       ps.exampleID,
+						ExampleName:     ps.exampleName,
+						RequestName:     ps.req.Name,
+						Method:          ps.req.Method,
 						Status:          "failed",
 						FailureCategory: verdict.FailureCategory,
 						FailureReason:   verdict.FailureReason,
@@ -905,6 +949,8 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 					StepID:          ps.step.ID,
 					NodeID:          node.ID,
 					RequestID:       ps.step.RequestID,
+					ExampleID:       ps.exampleID,
+					ExampleName:     ps.exampleName,
 					RequestName:     ps.req.Name,
 					Method:          ps.req.Method,
 					Status:          status,
@@ -920,20 +966,7 @@ func ExecuteFlow(opts FlowRunOptions) (*FlowRunOutput, error) {
 					nodeStepResults = append(nodeStepResults, sr)
 					out.StepResults = append(out.StepResults, sr)
 				} else {
-					reqName := ""
-					method := ""
-					if entry, ok := reqCatalog[strings.TrimSpace(st.RequestID)]; ok {
-						reqName = entry.request.Name
-						method = entry.request.Method
-					}
-					sr := FlowStepRunOutput{
-						StepID:      st.ID,
-						NodeID:      node.ID,
-						RequestID:   st.RequestID,
-						RequestName: reqName,
-						Method:      method,
-						Status:      "skipped",
-					}
+					sr := buildSkippedStepOutput(node.ID, st)
 					nodeStepResults = append(nodeStepResults, sr)
 					out.StepResults = append(out.StepResults, sr)
 					out.StepsSkipped++

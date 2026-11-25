@@ -2,12 +2,18 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import type { KVPair } from '@/stores/requestStore'
+import KvpValueSelectControl from '@/components/KvpValueSelectControl.vue'
 import { model } from '../../../wailsjs/go/models'
+
+type LocalEnvironment = Omit<model.Environment, 'variables'> & {
+  variables: KVPair[]
+}
 
 const uiStore = useUiStore()
 const envStore = useEnvironmentStore()
 
-const localEnvs = ref<model.Environment[]>([])
+const localEnvs = ref<LocalEnvironment[]>([])
 const selectedIndex = ref<number>(-1)
 
 const selectedEnv = computed(() => {
@@ -39,8 +45,9 @@ function ensureEmptyRow() {
     env.variables = []
   }
   const vars = env.variables
-  if (vars.length === 0 || vars[vars.length - 1].key !== '' || vars[vars.length - 1].value !== '') {
-    vars.push(new model.KVPair({ key: '', value: '', enabled: true }))
+  const last = vars[vars.length - 1]
+  if (vars.length === 0 || last.key !== '' || last.value !== '' || last.type === 'select') {
+    vars.push(new model.KVPair({ key: '', value: '', enabled: true }) as KVPair)
   }
 }
 
@@ -60,7 +67,7 @@ function createEnv() {
     id: '',
     name: 'Tạo Môi trường',
     variables: [new model.KVPair({ key: '', value: '', enabled: true })]
-  })
+  }) as unknown as LocalEnvironment
   localEnvs.value.push(newEnv)
   selectedIndex.value = localEnvs.value.length - 1
 }
@@ -80,6 +87,16 @@ async function deleteEnv(index: number) {
   }
 }
 
+function normalizeVarForCompare(v: KVPair) {
+  return {
+    key: v.key,
+    value: v.value,
+    enabled: v.enabled,
+    type: v.type === 'select' ? 'select' : 'text',
+    options: Array.isArray(v.options) ? v.options : []
+  }
+}
+
 async function closeAndSave() {
   const envsToSave = [...localEnvs.value]
   for (const env of envsToSave) {
@@ -87,25 +104,25 @@ async function closeAndSave() {
     
     // If it's a new environment, save it
     if (!originalEnv || !env.id) {
-      await envStore.save(env)
+      await envStore.save(env as unknown as model.Environment)
       continue
     }
 
     // Compare name and variables (ignoring empty rows)
     const currentVars = (env.variables || []).filter(v => v.key.trim() !== '' || v.value.trim() !== '')
-    const originalVars = (originalEnv.variables || []).filter(v => v.key.trim() !== '' || v.value.trim() !== '')
+    const originalVars = ((originalEnv.variables || []) as KVPair[]).filter(v => v.key.trim() !== '' || v.value.trim() !== '')
 
     const currentObj = { 
       name: env.name, 
-      variables: currentVars.map(v => ({ key: v.key, value: v.value, enabled: v.enabled })) 
+      variables: currentVars.map(normalizeVarForCompare) 
     }
     const originalObj = { 
       name: originalEnv.name, 
-      variables: originalVars.map(v => ({ key: v.key, value: v.value, enabled: v.enabled })) 
+      variables: originalVars.map(normalizeVarForCompare) 
     }
 
     if (JSON.stringify(currentObj) !== JSON.stringify(originalObj)) {
-      await envStore.save(env)
+      await envStore.save(env as unknown as model.Environment)
     }
   }
   await envStore.loadAll()
@@ -225,13 +242,22 @@ onUnmounted(() => {
                       />
                     </td>
                     <td class="p-0">
-                      <input 
-                        v-model="vr.value" 
-                        @input="handleInput"
-                        type="text" 
-                        class="w-full bg-transparent px-3 py-2 text-text-primary focus:outline-none focus:bg-surface-input"
-                        placeholder="Value"
-                      />
+                      <KvpValueSelectControl
+                        :model-value="vr.value"
+                        :type="vr.type"
+                        :options="vr.options"
+                        @update:model-value="val => { vr.value = val; handleInput() }"
+                        @update:type="nextType => { vr.type = nextType; handleInput() }"
+                        @update:options="nextOpts => { vr.options = nextOpts; handleInput() }"
+                      >
+                        <input 
+                          v-model="vr.value" 
+                          @input="handleInput"
+                          type="text" 
+                          class="w-full bg-transparent px-3 py-2 text-text-primary focus:outline-none focus:bg-surface-input"
+                          placeholder="Value"
+                        />
+                      </KvpValueSelectControl>
                     </td>
                     <td class="w-10 px-3 py-2 text-center">
                       <button 

@@ -23,6 +23,7 @@ import { useI18n } from '@/i18n'
 const { t } = useI18n()
 const requestStore = useRequestStore()
 const uiStore = useUiStore()
+const isReadonly = computed(() => Boolean(requestStore.activeSyncFlags?.body))
 
 const bodyType = computed(() => requestStore.current?.body?.type || 'none')
 const bodyContent = computed({
@@ -66,6 +67,7 @@ const jsonValidation = computed(() => {
 })
 
 const formatJson = () => {
+  if (isReadonly.value) return
   if (bodyType.value !== 'json' || !bodyContent.value.trim()) return
   const check = validateJsonWithPlaceholders(bodyContent.value)
   if (!check.valid) {
@@ -95,6 +97,7 @@ const xmlValidation = computed(() => {
 })
 
 const formatXml = () => {
+  if (isReadonly.value) return
   if (bodyType.value !== 'xml' || !bodyContent.value.trim()) return
   const check = validateXmlWithPlaceholders(bodyContent.value)
   if (!check.valid) {
@@ -133,6 +136,7 @@ const preRef = ref<HTMLElement | null>(null)
 const highlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 
 const handleTextareaInput = (e: Event) => {
+  if (isReadonly.value) return
   const el = e.target as HTMLTextAreaElement
   if ((e as InputEvent).isComposing) {
     bodyContent.value = el.value
@@ -150,6 +154,7 @@ const handleScroll = (e: Event) => {
 }
 
 const handleTab = (e: KeyboardEvent) => {
+  if (isReadonly.value) return
   e.preventDefault()
   if (!textareaRef.value) return
   const el = textareaRef.value
@@ -165,6 +170,7 @@ const handleTab = (e: KeyboardEvent) => {
 }
 
 const handleKeydown = (e: KeyboardEvent) => {
+  if (isReadonly.value) return
   if (e.key === 'Tab' || e.key === 'tab') {
     return
   }
@@ -195,17 +201,33 @@ const handleKeydown = (e: KeyboardEvent) => {
 
 <template>
   <div class="flex-1 flex flex-col h-full min-h-0">
+    <div
+      v-if="isReadonly"
+      data-test="body-linked-banner"
+      class="mx-3 mb-2 px-2.5 py-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between gap-2 shrink-0"
+    >
+      <span>{{ t('examples.linkedBanner', { group: t('examples.groups.body') }) }}</span>
+      <button
+        type="button"
+        data-test="body-unlink-btn"
+        class="underline hover:text-amber-100 cursor-pointer shrink-0 font-medium"
+        @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'body', false)"
+      >
+        {{ t('examples.unlink') }}
+      </button>
+    </div>
+
     <!-- Body content -->
     <div v-if="bodyType === 'none' || !['none', 'json', 'text', 'xml', 'urlencoded', 'formdata'].includes(bodyType)" class="flex-1 p-3 text-text-secondary ui-sm">
       {{ t('bodyEditor.noBody') }}
     </div>
 
     <div v-else-if="bodyType === 'urlencoded'" data-test="body-urlencoded-editor" class="flex-1 p-3 pt-0">
-      <KvpEditor v-model="urlencodedRows" />
+      <KvpEditor v-model="urlencodedRows" :readonly="isReadonly" />
     </div>
 
     <div v-else-if="bodyType === 'formdata'" data-test="body-formdata-editor" class="flex-1 p-3 pt-0">
-      <KvpEditor v-model="formDataRows" />
+      <KvpEditor v-model="formDataRows" :readonly="isReadonly" />
     </div>
     
     <div v-else class="flex-1 h-full px-3 pt-0 pb-0 flex flex-col min-h-0 gap-1.5">
@@ -240,8 +262,9 @@ const handleKeydown = (e: KeyboardEvent) => {
         <button
           type="button"
           data-test="prettify-json-btn"
+          :disabled="isReadonly"
           :title="t('bodyEditor.formatJsonTitle')"
-          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
+          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           @click="formatJson"
         >
           {{ t('bodyEditor.formatJson') }}
@@ -271,8 +294,9 @@ const handleKeydown = (e: KeyboardEvent) => {
         <button
           type="button"
           data-test="prettify-xml-btn"
+          :disabled="isReadonly"
           :title="t('bodyEditor.formatXmlTitle')"
-          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0"
+          class="px-2.5 py-1 rounded bg-surface-overlay border border-border-default text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           @click="formatXml"
         >
           {{ t('bodyEditor.formatXml') }}
@@ -304,12 +328,15 @@ const handleKeydown = (e: KeyboardEvent) => {
           <textarea 
             ref="textareaRef"
             :value="bodyContent"
+            :readonly="isReadonly"
             @input="handleTextareaInput"
             @compositionend="handleTextareaInput"
             @scroll="handleScroll"
             @keydown.tab="handleTab"
             @keydown="handleKeydown"
-            class="flex-1 w-full h-full min-h-0 bg-transparent border-none outline-none resize-none p-2 pb-2 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto" style="line-height: 21px; font-size: 13px;"
+            class="flex-1 w-full h-full min-h-0 bg-transparent border-none outline-none resize-none p-2 pb-2 mono-base text-transparent caret-text-primary whitespace-pre overflow-auto"
+            :class="{ 'opacity-75 cursor-not-allowed': isReadonly }"
+            style="line-height: 21px; font-size: 13px;"
             spellcheck="false"
             autocomplete="off"
             autocorrect="off"

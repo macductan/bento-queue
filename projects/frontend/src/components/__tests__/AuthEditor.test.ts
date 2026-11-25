@@ -476,6 +476,19 @@ describe('AuthEditor.vue', () => {
     expect(selectEl.value).toBe('env-local')
     expect((wrapper.find('input#bearer-token-input').element as HTMLInputElement).value).toBe('local-token')
   })
+
+  it('displays linked banner, disables controls, and emits unlink when readonly is true', async () => {
+    const wrapper = mount(AuthEditor, {
+      props: {
+        modelValue: { type: 'bearer', bearer: { token: 'secret' } },
+        readonly: true
+      }
+    })
+    expect(wrapper.find('[data-test="auth-linked-banner"]').exists()).toBe(true)
+    expect((wrapper.find('input#bearer-token-input').element as HTMLInputElement).readOnly).toBe(true)
+    await wrapper.find('[data-test="auth-unlink-btn"]').trigger('click')
+    expect(wrapper.emitted('unlink')).toBeTruthy()
+  })
 })
 
 

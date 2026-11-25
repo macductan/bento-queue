@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
+import type { KVPair } from '@/stores/requestStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUiStore } from '@/stores/uiStore'
 import KvpEditor from './KvpEditor.vue'
@@ -25,7 +26,7 @@ const targetCollection = computed(() => {
 })
 
 const activeTab = ref<'variables' | 'auth'>('variables')
-const variables = ref<{ key: string; value: string; enabled: boolean }[]>([])
+const variables = ref<KVPair[]>([])
 const collectionAuth = ref<AuthConfig>({ type: 'none' })
 const collectionAuthEnvs = ref<Record<string, AuthConfig>>({})
 

@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -257,5 +258,207 @@ func TestTreeNode_FolderEnvs_Serialization(t *testing.T) {
 	}
 	if decoded.FolderEnvs["env-staging"][0].Value != "staging-pool" {
 		t.Errorf("expected 'staging-pool', got %q", decoded.FolderEnvs["env-staging"][0].Value)
+	}
+}
+
+func TestKVPair_SelectTypeAndOptions_Serialization(t *testing.T) {
+	req := Request{
+		ID:     "req-select-1",
+		Name:   "Select Test",
+		Method: "POST",
+		URL:    "https://api.example.com/:version/items",
+		Headers: []KVPair{
+			{
+				Key:         "X-Env",
+				Value:       "dev",
+				Enabled:     true,
+				Description: "Target environment",
+				Type:        "select",
+				Options:     []string{"dev", "stg", "prod"},
+			},
+			{
+				Key:     "X-Plain",
+				Value:   "plain",
+				Enabled: true,
+			},
+		},
+		Params: []KVPair{
+			{
+				Key:     "mode",
+				Value:   "fast",
+				Enabled: true,
+				Type:    "select",
+				Options: []string{"fast", "safe"},
+			},
+		},
+		PathParams: []KVPair{
+			{
+				Key:     "version",
+				Value:   "v2",
+				Enabled: true,
+				Type:    "select",
+				Options: []string{"v1", "v2"},
+			},
+		},
+		Body: Body{
+			Type: "urlencoded",
+			FormData: []KVPair{
+				{Key: "role", Value: "admin", Enabled: true, Type: "select", Options: []string{"admin", "user"}},
+			},
+			URLEncoded: []KVPair{
+				{Key: "grant_type", Value: "password", Enabled: true, Type: "select", Options: []string{"password", "refresh_token"}},
+			},
+		},
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal Request with select KVPairs: %v", err)
+	}
+
+	jsonStr := string(data)
+	if !strings.Contains(jsonStr, `"type":"select"`) {
+		t.Errorf("expected json to contain '\"type\":\"select\"', got: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"options":["dev","stg","prod"]`) {
+		t.Errorf("expected json to contain options array, got: %s", jsonStr)
+	}
+
+	// Verify omitempty on plain text KVPair without Type/Options
+	plainBytes, err := json.Marshal(KVPair{Key: "k", Value: "v", Enabled: true, Options: []string{}})
+	if err != nil {
+		t.Fatalf("failed to marshal plain KVPair: %v", err)
+	}
+	plainStr := string(plainBytes)
+	if strings.Contains(plainStr, `"type"`) || strings.Contains(plainStr, `"options"`) {
+		t.Errorf("expected empty type and options to be omitted via omitempty, got: %s", plainStr)
+	}
+
+	var decoded Request
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal Request: %v", err)
+	}
+	if decoded.Headers[0].Type != "select" || !slices.Equal(decoded.Headers[0].Options, []string{"dev", "stg", "prod"}) {
+		t.Errorf("expected Headers[0] select metadata preserved, got %+v", decoded.Headers[0])
+	}
+	if decoded.Headers[1].Type != "" || decoded.Headers[1].Options != nil {
+		t.Errorf("expected Headers[1] empty Type/Options, got %+v", decoded.Headers[1])
+	}
+	if decoded.Params[0].Type != "select" || !slices.Equal(decoded.Params[0].Options, []string{"fast", "safe"}) {
+		t.Errorf("expected Params[0] select metadata preserved, got %+v", decoded.Params[0])
+	}
+	if decoded.PathParams[0].Type != "select" || !slices.Equal(decoded.PathParams[0].Options, []string{"v1", "v2"}) {
+		t.Errorf("expected PathParams[0] select metadata preserved, got %+v", decoded.PathParams[0])
+	}
+	if decoded.Body.FormData[0].Type != "select" || !slices.Equal(decoded.Body.FormData[0].Options, []string{"admin", "user"}) {
+		t.Errorf("expected FormData[0] select metadata preserved, got %+v", decoded.Body.FormData[0])
+	}
+	if decoded.Body.URLEncoded[0].Type != "select" || !slices.Equal(decoded.Body.URLEncoded[0].Options, []string{"password", "refresh_token"}) {
+		t.Errorf("expected URLEncoded[0] select metadata preserved, got %+v", decoded.Body.URLEncoded[0])
+	}
+}
+
+func TestKVPair_BackwardCompatibility_NoTypeOrOptions(t *testing.T) {
+	legacyEnvJSON := `{"id":"env-1","name":"Legacy","variables":[{"key":"host","value":"localhost","enabled":true}]}`
+	var env Environment
+	if err := json.Unmarshal([]byte(legacyEnvJSON), &env); err != nil {
+		t.Fatalf("failed to unmarshal legacy Environment: %v", err)
+	}
+	if len(env.Variables) != 1 {
+		t.Fatalf("expected 1 variable, got %d", len(env.Variables))
+	}
+	kv := env.Variables[0]
+	if kv.Key != "host" || kv.Value != "localhost" || !kv.Enabled || kv.Type != "" || kv.Options != nil {
+		t.Errorf("unexpected legacy KVPair decoded: %+v", kv)
+	}
+}
+
+func TestRequest_Variables_Serialization(t *testing.T) {
+	req := Request{
+		ID:     "req-vars-1",
+		Name:   "With Variables",
+		Method: "GET",
+		URL:    "https://api.example.com",
+		Variables: []KVPair{
+			{Key: "role", Value: "user", Enabled: true},
+			{Key: "mode", Value: "fast", Enabled: true, Type: "select", Options: []string{"fast", "safe"}},
+		},
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal Request with Variables: %v", err)
+	}
+	if !strings.Contains(string(data), `"variables"`) {
+		t.Fatalf("expected json to contain variables field, got: %s", string(data))
+	}
+
+	var decoded Request
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal Request with Variables: %v", err)
+	}
+	if len(decoded.Variables) != 2 || decoded.Variables[0].Value != "user" || decoded.Variables[1].Type != "select" || !slices.Equal(decoded.Variables[1].Options, []string{"fast", "safe"}) {
+		t.Errorf("unexpected decoded Request.Variables: %+v", decoded.Variables)
+	}
+
+	plainReq, err := json.Marshal(Request{ID: "req-plain", Name: "Plain", Method: "GET", URL: "https://api.example.com"})
+	if err != nil {
+		t.Fatalf("failed to marshal plain Request: %v", err)
+	}
+	if strings.Contains(string(plainReq), `"variables"`) {
+		t.Errorf("expected empty Variables to be omitted via omitempty, got: %s", string(plainReq))
+	}
+}
+
+func TestRequest_Examples_And_FlowStep_ExampleID_Serialization(t *testing.T) {
+	// Backward compatibility: legacy JSON without examples decodes cleanly
+	legacyJSON := `{"id":"req-legacy","name":"Legacy","method":"GET","url":"https://api.example.com"}`
+	var legacyReq Request
+	if err := json.Unmarshal([]byte(legacyJSON), &legacyReq); err != nil {
+		t.Fatalf("failed to unmarshal legacy request: %v", err)
+	}
+	if len(legacyReq.Examples) != 0 {
+		t.Errorf("expected empty Examples on legacy request, got %+v", legacyReq.Examples)
+	}
+
+	flags := DefaultExampleSyncFlags()
+	if !flags.URL || !flags.Method || !flags.Auth || !flags.Scripts ||
+		flags.Body || flags.Params || flags.PathParams || flags.Headers || flags.Variables {
+		t.Fatalf("unexpected DefaultExampleSyncFlags: %+v", flags)
+	}
+
+	req := Request{
+		ID:     "req-with-ex",
+		Name:   "Users",
+		Method: "POST",
+		URL:    "https://api.example.com/users",
+		Examples: []RequestExample{
+			{
+				ID:        "ex-1",
+				Name:      "Admin",
+				Method:    "POST",
+				URL:       "https://api.example.com/users?role=admin",
+				SyncFlags: flags,
+			},
+		},
+	}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request with examples failed: %v", err)
+	}
+	var decoded Request
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal request with examples failed: %v", err)
+	}
+	if len(decoded.Examples) != 1 || decoded.Examples[0].ID != "ex-1" || !decoded.Examples[0].SyncFlags.URL || decoded.Examples[0].SyncFlags.Body {
+		t.Errorf("unexpected decoded examples: %+v", decoded.Examples)
+	}
+
+	stepWithoutEx, err := json.Marshal(FlowStep{ID: "s1", RequestID: "r1", Enabled: true})
+	if err != nil {
+		t.Fatalf("marshal FlowStep failed: %v", err)
+	}
+	if strings.Contains(string(stepWithoutEx), `"example_id"`) {
+		t.Errorf("expected empty FlowStep.ExampleID omitted, got %s", string(stepWithoutEx))
 	}
 }

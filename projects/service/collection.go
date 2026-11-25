@@ -202,6 +202,7 @@ func (s *CollectionService) buildRequestNode(fullPath string) (model.TreeNode, b
 		Path:      fullPath,
 		Auth:      req.Auth,
 		AuthEnvs:  req.AuthEnvs,
+		Examples:  req.Examples,
 		CreatedAt: req.CreatedAt,
 	}, true
 }

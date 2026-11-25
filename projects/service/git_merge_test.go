@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -760,6 +761,271 @@ func TestDetectEntityMeta_And_MergeJSONObjects_FlowAndFlowFolder(t *testing.T) {
 	mockType, mockName := detectEntityMeta("mock-server.json", nil, nil, nil)
 	if mockType != "mock_server" || mockName != "Mock Server" {
 		t.Errorf("expected mock_server / Mock Server for mock-server.json, got %q / %q", mockType, mockName)
+	}
+}
+
+func TestKVEqual_And_KVToMap_SelectMetadata(t *testing.T) {
+	// Empty type and "text" type are equivalent; nil and empty options are equivalent.
+	a := model.KVPair{Key: "env", Value: "dev", Enabled: true}
+	b := model.KVPair{Key: "env", Value: "dev", Enabled: true, Type: "text", Options: []string{}}
+	if !kvEqual(a, b) {
+		t.Errorf("expected empty Type and 'text' Type to be kvEqual")
+	}
+
+	// Differing Type is detected
+	c := model.KVPair{Key: "env", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "prod"}}
+	if kvEqual(a, c) || kvEqual(b, c) {
+		t.Errorf("expected 'select' vs 'text'/'' not to be kvEqual")
+	}
+
+	// Differing Options (value or order) is detected
+	d := model.KVPair{Key: "env", Value: "dev", Enabled: true, Type: "select", Options: []string{"prod", "dev"}}
+	if kvEqual(c, d) {
+		t.Errorf("expected different Options order not to be kvEqual")
+	}
+	e := model.KVPair{Key: "env", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "prod"}}
+	if !kvEqual(c, e) {
+		t.Errorf("expected identical select KVPairs to be kvEqual")
+	}
+
+	// kvToMap preserves type/options when present and omits when empty
+	plainMap := kvToMap(a)
+	if _, hasType := plainMap["type"]; hasType {
+		t.Errorf("expected plain kvToMap to omit 'type', got %+v", plainMap)
+	}
+	if _, hasOpts := plainMap["options"]; hasOpts {
+		t.Errorf("expected plain kvToMap to omit 'options', got %+v", plainMap)
+	}
+
+	selMap := kvToMap(c)
+	if selMap["type"] != "select" {
+		t.Errorf("expected selMap['type'] == 'select', got %+v", selMap)
+	}
+	opts, ok := selMap["options"].([]string)
+	if !ok || !slices.Equal(opts, []string{"dev", "prod"}) {
+		t.Errorf("expected selMap['options'] == ['dev', 'prod'], got %+v", selMap["options"])
+	}
+}
+
+func TestMergeJSONObjects_SelectTypeAndOptions(t *testing.T) {
+	// 1. Non-overlapping edits: Ours converts variable to select+options; Theirs updates another variable and body.urlencoded
+	baseObj := map[string]interface{}{
+		"id":   "req-sel-1",
+		"name": "Select Merge",
+		"headers": []interface{}{
+			map[string]interface{}{"key": "X-Mode", "value": "fast", "enabled": true},
+			map[string]interface{}{"key": "X-Other", "value": "1", "enabled": true},
+		},
+		"body": map[string]interface{}{
+			"type": "urlencoded",
+			"urlencoded": []interface{}{
+				map[string]interface{}{"key": "grant", "value": "code", "enabled": true, "type": "select", "options": []interface{}{"code", "token"}},
+			},
+		},
+	}
+
+	oursObj := cloneJSONMap(baseObj)
+	oursObj["headers"] = []interface{}{
+		map[string]interface{}{"key": "X-Mode", "value": "fast", "enabled": true, "type": "select", "options": []interface{}{"fast", "safe"}},
+		map[string]interface{}{"key": "X-Other", "value": "1", "enabled": true},
+	}
+
+	theirsObj := cloneJSONMap(baseObj)
+	theirsObj["headers"] = []interface{}{
+		map[string]interface{}{"key": "X-Mode", "value": "fast", "enabled": true},
+		map[string]interface{}{"key": "X-Other", "value": "2", "enabled": true},
+	}
+	theirsObj["body"] = map[string]interface{}{
+		"type": "urlencoded",
+		"urlencoded": []interface{}{
+			map[string]interface{}{"key": "grant", "value": "token", "enabled": true, "type": "select", "options": []interface{}{"code", "token", "client_credentials"}},
+		},
+	}
+
+	merged, conflicts := MergeJSONObjects("req-sel-1.json", baseObj, oursObj, theirsObj)
+	if len(conflicts) != 0 {
+		t.Fatalf("expected 0 conflicts for non-overlapping select metadata changes, got %+v", conflicts)
+	}
+
+	mergedHeaders := parseKVPairs(merged["headers"])
+	if len(mergedHeaders) != 2 {
+		t.Fatalf("expected 2 merged headers, got %+v", mergedHeaders)
+	}
+	if mergedHeaders[0].Type != "select" || !slices.Equal(mergedHeaders[0].Options, []string{"fast", "safe"}) {
+		t.Errorf("expected X-Mode to preserve select metadata from Ours, got %+v", mergedHeaders[0])
+	}
+	if mergedHeaders[1].Value != "2" {
+		t.Errorf("expected X-Other value=2 from Theirs, got %+v", mergedHeaders[1])
+	}
+
+	mergedBody := merged["body"].(map[string]interface{})
+	mergedURLEnc := parseKVPairs(mergedBody["urlencoded"])
+	if len(mergedURLEnc) != 1 || mergedURLEnc[0].Value != "token" || mergedURLEnc[0].Type != "select" ||
+		!slices.Equal(mergedURLEnc[0].Options, []string{"code", "token", "client_credentials"}) {
+		t.Errorf("expected body.urlencoded select metadata merged from Theirs, got %+v", mergedURLEnc)
+	}
+
+	// 2. Equivalence of "" and "text": Base omits type, Ours explicitly sets type="text", Theirs changes value -> no false conflict
+	baseEnv := map[string]interface{}{
+		"id":   "env-1",
+		"name": "Dev",
+		"variables": []interface{}{
+			map[string]interface{}{"key": "HOST", "value": "localhost", "enabled": true},
+		},
+	}
+	oursEnv := map[string]interface{}{
+		"id":   "env-1",
+		"name": "Dev",
+		"variables": []interface{}{
+			map[string]interface{}{"key": "HOST", "value": "localhost", "enabled": true, "type": "text"},
+		},
+	}
+	theirsEnv := map[string]interface{}{
+		"id":   "env-1",
+		"name": "Dev",
+		"variables": []interface{}{
+			map[string]interface{}{"key": "HOST", "value": "127.0.0.1", "enabled": true},
+		},
+	}
+	mergedEnv, envConflicts := MergeJSONObjects("environments/dev.json", baseEnv, oursEnv, theirsEnv)
+	if len(envConflicts) != 0 {
+		t.Fatalf("expected 0 conflicts when Ours only sets type='text' equivalent to '', got %+v", envConflicts)
+	}
+	mergedEnvVars := parseKVPairs(mergedEnv["variables"])
+	if len(mergedEnvVars) != 1 || mergedEnvVars[0].Value != "127.0.0.1" {
+		t.Errorf("expected Theirs value '127.0.0.1' to win cleanly, got %+v", mergedEnvVars)
+	}
+
+	// 3. Conflicting options edits on the same variable -> reports conflict preserving type/options in OursValue & TheirsValue
+	oursConflictEnv := map[string]interface{}{
+		"id":   "env-1",
+		"name": "Dev",
+		"variables": []interface{}{
+			map[string]interface{}{"key": "HOST", "value": "localhost", "enabled": true, "type": "select", "options": []interface{}{"localhost", "dev.local"}},
+		},
+	}
+	theirsConflictEnv := map[string]interface{}{
+		"id":   "env-1",
+		"name": "Dev",
+		"variables": []interface{}{
+			map[string]interface{}{"key": "HOST", "value": "localhost", "enabled": true, "type": "select", "options": []interface{}{"localhost", "stg.local"}},
+		},
+	}
+	mergedConflictEnv, conflictList := MergeJSONObjects("environments/dev.json", baseEnv, oursConflictEnv, theirsConflictEnv)
+	if len(conflictList) != 1 || conflictList[0].FieldPath != "variables.HOST#0" {
+		t.Fatalf("expected 1 conflict on variables.HOST#0 when both sides change type/options differently, got %+v", conflictList)
+	}
+	oursMap, ok1 := conflictList[0].OursValue.(map[string]interface{})
+	theirsMap, ok2 := conflictList[0].TheirsValue.(map[string]interface{})
+	if !ok1 || !ok2 || oursMap["type"] != "select" || theirsMap["type"] != "select" {
+		t.Fatalf("expected conflict OursValue/TheirsValue to retain type='select', got ours=%+v theirs=%+v", conflictList[0].OursValue, conflictList[0].TheirsValue)
+	}
+	if !slices.Equal(oursMap["options"].([]string), []string{"localhost", "dev.local"}) {
+		t.Errorf("expected OursValue options preserved, got %+v", oursMap["options"])
+	}
+	if !slices.Equal(theirsMap["options"].([]string), []string{"localhost", "stg.local"}) {
+		t.Errorf("expected TheirsValue options preserved, got %+v", theirsMap["options"])
+	}
+	previewVars := parseKVPairs(mergedConflictEnv["variables"])
+	if len(previewVars) != 1 || previewVars[0].Type != "select" || !slices.Equal(previewVars[0].Options, []string{"localhost", "dev.local"}) {
+		t.Errorf("expected MergedPreview to keep Ours select metadata, got %+v", previewVars)
+	}
+
+	// 4. Request.variables non-overlapping merge & conflict detection
+	baseReqVars := map[string]interface{}{
+		"id":     "req-vars-merge",
+		"name":   "Req Merge",
+		"method": "GET",
+		"url":    "https://api.example.com",
+		"variables": []interface{}{
+			map[string]interface{}{"key": "role", "value": "admin", "enabled": true},
+		},
+	}
+	oursReqVars := cloneJSONMap(baseReqVars)
+	oursReqVars["variables"] = []interface{}{
+		map[string]interface{}{"key": "role", "value": "user", "enabled": true},
+	}
+	theirsReqVars := cloneJSONMap(baseReqVars)
+	theirsReqVars["variables"] = []interface{}{
+		map[string]interface{}{"key": "role", "value": "admin", "enabled": true},
+		map[string]interface{}{"key": "tenant", "value": "acme", "enabled": true},
+	}
+	mergedReqVarsObj, reqVarConflicts := MergeJSONObjects("req-vars-merge.json", baseReqVars, oursReqVars, theirsReqVars)
+	if len(reqVarConflicts) != 0 {
+		t.Fatalf("expected 0 conflicts merging non-overlapping request.variables, got %+v", reqVarConflicts)
+	}
+	mergedReqVars := parseKVPairs(mergedReqVarsObj["variables"])
+	if len(mergedReqVars) != 2 || mergedReqVars[0].Value != "user" || mergedReqVars[1].Key != "tenant" || mergedReqVars[1].Value != "acme" {
+		t.Errorf("expected merged request.variables to combine Ours role=user and Theirs tenant=acme, got %+v", mergedReqVars)
+	}
+
+	// 5. Request.examples 3-way merge by ID & conflict detection
+	baseEx := map[string]interface{}{
+		"id":     "req-ex-merge",
+		"name":   "Orders",
+		"method": "POST",
+		"url":    "https://api.example.com/orders",
+		"examples": []interface{}{
+			map[string]interface{}{
+				"id":     "ex-1",
+				"name":   "Valid",
+				"method": "POST",
+				"url":    "https://api.example.com/orders?mode=a",
+				"params": []interface{}{
+					map[string]interface{}{"key": "mode", "value": "a", "enabled": true},
+				},
+				"body": map[string]interface{}{
+					"type":    "json",
+					"content": `{"qty":1}`,
+				},
+			},
+		},
+	}
+	oursEx := cloneJSONMap(baseEx)
+	oursEx["examples"].([]interface{})[0].(map[string]interface{})["params"] = []interface{}{
+		map[string]interface{}{"key": "mode", "value": "b", "enabled": true},
+	}
+	theirsEx := cloneJSONMap(baseEx)
+	theirsEx["examples"].([]interface{})[0].(map[string]interface{})["body"] = map[string]interface{}{
+		"type":    "json",
+		"content": `{"qty":2}`,
+	}
+	theirsEx["examples"] = append(theirsEx["examples"].([]interface{}), map[string]interface{}{
+		"id":     "ex-2",
+		"name":   "Added Remote",
+		"method": "POST",
+		"url":    "https://api.example.com/orders",
+	})
+	mergedExObj, exConflicts := MergeJSONObjects("req-ex-merge.json", baseEx, oursEx, theirsEx)
+	if len(exConflicts) != 0 {
+		t.Fatalf("expected 0 conflicts merging non-overlapping example groups + remote append, got %+v", exConflicts)
+	}
+	mergedExList := mergedExObj["examples"].([]interface{})
+	if len(mergedExList) != 2 {
+		t.Fatalf("expected 2 merged examples, got %d", len(mergedExList))
+	}
+	firstMergedEx := mergedExList[0].(map[string]interface{})
+	if firstMergedEx["body"].(map[string]interface{})["content"] != `{"qty":2}` {
+		t.Errorf("expected theirs body merged into ex-1, got %+v", firstMergedEx["body"])
+	}
+	if parseKVPairs(firstMergedEx["params"])[0].Value != "b" {
+		t.Errorf("expected ours params merged into ex-1, got %+v", firstMergedEx["params"])
+	}
+
+	// Conflicting edit on same example body field
+	oursConflictEx := cloneJSONMap(baseEx)
+	oursConflictEx["examples"].([]interface{})[0].(map[string]interface{})["body"] = map[string]interface{}{
+		"type":    "json",
+		"content": `{"qty":10}`,
+	}
+	theirsConflictEx := cloneJSONMap(baseEx)
+	theirsConflictEx["examples"].([]interface{})[0].(map[string]interface{})["body"] = map[string]interface{}{
+		"type":    "json",
+		"content": `{"qty":20}`,
+	}
+	_, exConflictList := MergeJSONObjects("req-ex-merge.json", baseEx, oursConflictEx, theirsConflictEx)
+	if len(exConflictList) != 1 || !strings.Contains(exConflictList[0].FieldPath, "examples.ex-1.body") {
+		t.Errorf("expected conflict on examples.ex-1.body, got %+v", exConflictList)
 	}
 }
 

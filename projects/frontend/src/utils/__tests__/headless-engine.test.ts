@@ -276,4 +276,92 @@ describe('headless-engine', () => {
     const curlHidden = generateCurlCommand(authReq, { hideAuth: true })
     expect(curlHidden).toBe("curl -X GET 'https://example.com/items?page=1' -H 'X-Keep: ok'")
   })
+
+  it('preserves select type and options during reconcileUrlAndParams and resolves {{var}} inside select option values', () => {
+    const synced = reconcileUrlAndParams(
+      'https://example.com/:env?mode=fast',
+      [{ key: 'mode', value: 'fast', enabled: true, type: 'select', options: ['fast', 'slow'] }],
+      [{ key: 'env', value: '{{target_env}}', enabled: true, type: 'select', options: ['{{target_env}}', 'prod'] }]
+    )
+    expect(synced.params[0]).toEqual({
+      key: 'mode',
+      value: 'fast',
+      enabled: true,
+      type: 'select',
+      options: ['fast', 'slow']
+    })
+    expect(synced.path_params[0]).toEqual({
+      key: 'env',
+      value: '{{target_env}}',
+      enabled: true,
+      type: 'select',
+      options: ['{{target_env}}', 'prod']
+    })
+
+    const out = prepareHeadlessExecution({
+      request: {
+        id: 'req-sel',
+        name: 'Select Test',
+        method: 'GET',
+        url: 'https://api.example.com/:env',
+        headers: [{ key: 'X-Role', value: '{{role_var}}', enabled: true, type: 'select', options: ['{{role_var}}'] }],
+        params: [{ key: 'tier', value: '{{tier_var}}', enabled: true, type: 'select', options: ['{{tier_var}}'] }],
+        path_params: [{ key: 'env', value: '{{target_env}}', enabled: true, type: 'select', options: ['{{target_env}}'] }],
+        body: { type: 'none', content: '' },
+        created_at: '',
+        updated_at: ''
+      },
+      collection: {
+        id: 'c1',
+        name: 'Coll',
+        variables: [
+          { key: 'target_env', value: 'staging', enabled: true, type: 'select', options: ['staging', 'prod'] },
+          { key: 'role_var', value: 'admin', enabled: true },
+          { key: 'tier_var', value: 'gold', enabled: true }
+        ]
+      }
+    })
+
+    expect(out.executeRequest.url).toBe('https://api.example.com/staging?tier=gold')
+    expect(out.executeRequest.headers).toEqual([{ key: 'X-Role', value: 'admin', enabled: true }])
+  })
+
+  it('resolves Tier 5 request.variables independently per request while keeping cliVarOverrides highest', () => {
+    const sharedEnv = [
+      { id: 'env-1', name: 'Dev', variables: [{ key: 'role', value: 'admin', enabled: true, type: 'select', options: ['admin', 'user', 'guest'] }] }
+    ]
+    const makeReq = (id: string, variables: any[]): Request => ({
+      id,
+      name: id,
+      method: 'GET',
+      url: 'https://api.example.com/items?role={{role}}',
+      headers: [],
+      params: [{ key: 'role', value: '{{role}}', enabled: true }],
+      variables,
+      body: { type: 'none', content: '' },
+      created_at: '',
+      updated_at: ''
+    })
+
+    const outA = prepareHeadlessExecution({
+      request: makeReq('req-a', [{ key: 'role', value: 'user', enabled: true }]),
+      environments: sharedEnv,
+      activeEnvId: 'env-1'
+    })
+    const outB = prepareHeadlessExecution({
+      request: makeReq('req-b', []),
+      environments: sharedEnv,
+      activeEnvId: 'env-1'
+    })
+    const outCliOverride = prepareHeadlessExecution({
+      request: makeReq('req-a', [{ key: 'role', value: 'user', enabled: true }]),
+      environments: sharedEnv,
+      activeEnvId: 'env-1',
+      cliVarOverrides: { role: 'guest' }
+    })
+
+    expect(outA.executeRequest.url).toBe('https://api.example.com/items?role=user')
+    expect(outB.executeRequest.url).toBe('https://api.example.com/items?role=admin')
+    expect(outCliOverride.executeRequest.url).toBe('https://api.example.com/items?role=guest')
+  })
 })

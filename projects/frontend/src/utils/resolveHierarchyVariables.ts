@@ -4,6 +4,8 @@ export interface VariableKVPair {
   key: string
   value: string
   enabled?: boolean
+  type?: string
+  options?: string[]
 }
 
 export interface FolderNodeLike {
@@ -20,9 +22,10 @@ export interface ResolveHierarchyOptions {
   activeEnvVariables?: VariableKVPair[] | Map<string, string> | null
   pathFolders?: FolderNodeLike[] | null
   activeEnvId?: string | null
+  requestVariables?: VariableKVPair[] | null
 }
 
-export type VariableScopeKind = 'path-param' | 'collection' | 'global-env' | 'folder-global' | 'folder-env'
+export type VariableScopeKind = 'path-param' | 'request' | 'collection' | 'global-env' | 'folder-global' | 'folder-env'
 
 export interface VariableScopeOption {
   id: string
@@ -34,6 +37,8 @@ export interface VariableScopeOption {
   envName?: string
   value?: string
   hasVariable?: boolean
+  type?: 'text' | 'select'
+  options?: string[]
 }
 
 export interface InspectVariableOptions extends ResolveHierarchyOptions {
@@ -43,6 +48,8 @@ export interface InspectVariableOptions extends ResolveHierarchyOptions {
   allFolders?: FolderNodeLike[] | null
   isPathParam?: boolean
   pathParamValue?: string
+  pathParams?: VariableKVPair[] | null
+  hasActiveRequest?: boolean
 }
 
 export interface VariableInspectionResult {
@@ -56,6 +63,10 @@ export interface VariableInspectionResult {
   defaultOption: VariableScopeOption
   options: VariableScopeOption[]
   valuesByScopeId: Record<string, string>
+  inheritedType: 'text' | 'select'
+  inheritedOptions: string[]
+  parentInheritedType: 'text' | 'select'
+  parentInheritedOptions: string[]
 }
 
 function resolveActiveEnvContext(params?: InspectVariableOptions | null): {
@@ -106,27 +117,39 @@ function resolveActiveEnvContext(params?: InspectVariableOptions | null): {
   }
 }
 
-function findEnabledVariableValue(
+interface MatchedVariableMeta {
+  value: string
+  type: 'text' | 'select'
+  explicitType?: 'text' | 'select'
+  options?: string[]
+}
+
+function findEnabledVariable(
   source: VariableKVPair[] | Map<string, string> | null | undefined,
   trimmedKey: string
-): string | undefined {
+): MatchedVariableMeta | undefined {
   if (!source || !trimmedKey) return undefined
 
   if (source instanceof Map) {
-    let found: string | undefined = undefined
+    let found: MatchedVariableMeta | undefined = undefined
     for (const [k, v] of source.entries()) {
       if (typeof k === 'string' && k.trim() === trimmedKey) {
-        found = v ?? ''
+        found = { value: v ?? '', type: 'text' }
       }
     }
     return found
   }
 
   if (Array.isArray(source)) {
-    let found: string | undefined = undefined
+    let found: MatchedVariableMeta | undefined = undefined
     for (const v of source) {
       if (v && v.enabled && typeof v.key === 'string' && v.key.trim() === trimmedKey) {
-        found = v.value ?? ''
+        found = {
+          value: v.value ?? '',
+          type: v.type === 'select' ? 'select' : 'text',
+          explicitType: v.type === 'select' ? 'select' : v.type === 'text' ? 'text' : undefined,
+          options: Array.isArray(v.options) ? [...v.options] : undefined
+        }
       }
     }
     return found
@@ -156,6 +179,12 @@ export function buildVariableScopeOptions(params?: InspectVariableOptions | null
       id: 'path-param',
       kind: 'path-param',
       label: 'Biến Path (:param - Request này)'
+    })
+  } else if (params?.hasActiveRequest || Array.isArray(params?.requestVariables)) {
+    options.push({
+      id: 'request',
+      kind: 'request',
+      label: 'Request này (Riêng Request)'
     })
   }
 
@@ -279,24 +308,28 @@ export function inspectVariableHierarchy(
   const baseOptions = buildVariableScopeOptions(params)
 
   const valuesByScopeId: Record<string, string> = {}
+  const metaByScopeId: Record<string, { type: 'text' | 'select'; options?: string[] }> = {}
   let winningScopeId: string | null = null
   let effectiveValue: string | undefined = undefined
 
   // Level 1: Collection Env (lowest precedence)
-  const collVal = findEnabledVariableValue(params.collectionVariables, trimmedKey)
-  if (collVal !== undefined) {
-    valuesByScopeId['collection'] = collVal
+  const collMatch = findEnabledVariable(params.collectionVariables, trimmedKey)
+  if (collMatch !== undefined) {
+    valuesByScopeId['collection'] = collMatch.value
+    metaByScopeId['collection'] = { type: collMatch.type, options: collMatch.options }
     winningScopeId = 'collection'
-    effectiveValue = collVal
+    effectiveValue = collMatch.value
   }
 
   // Populate non-active Global Envs when includeAllEnvs is true
   if (params.includeAllEnvs && Array.isArray(params.environments)) {
     for (const env of params.environments) {
       if (!env || !env.id || env.id === activeEnvId) continue
-      const val = findEnabledVariableValue(env.variables, trimmedKey)
-      if (val !== undefined) {
-        valuesByScopeId[`global-env:${env.id}`] = val
+      const match = findEnabledVariable(env.variables, trimmedKey)
+      if (match !== undefined) {
+        const sId = `global-env:${env.id}`
+        valuesByScopeId[sId] = match.value
+        metaByScopeId[sId] = { type: match.type, options: match.options }
       }
     }
   }
@@ -304,11 +337,12 @@ export function inspectVariableHierarchy(
   // Level 2: Global Env (Active Environment)
   if (activeEnvId) {
     const globalScopeId = `global-env:${activeEnvId}`
-    const globalVal = findEnabledVariableValue(activeEnvVariables, trimmedKey)
-    if (globalVal !== undefined) {
-      valuesByScopeId[globalScopeId] = globalVal
+    const globalMatch = findEnabledVariable(activeEnvVariables, trimmedKey)
+    if (globalMatch !== undefined) {
+      valuesByScopeId[globalScopeId] = globalMatch.value
+      metaByScopeId[globalScopeId] = { type: globalMatch.type, options: globalMatch.options }
       winningScopeId = globalScopeId
-      effectiveValue = globalVal
+      effectiveValue = globalMatch.value
     }
   }
 
@@ -316,15 +350,19 @@ export function inspectVariableHierarchy(
   if (params.includeAllEnvs && Array.isArray(params.allFolders)) {
     for (const folder of params.allFolders) {
       if (!folder || !folder.id) continue
-      const fVal = findEnabledVariableValue(folder.variables, trimmedKey)
-      if (fVal !== undefined) {
-        valuesByScopeId[`folder-global:${folder.id}`] = fVal
+      const fMatch = findEnabledVariable(folder.variables, trimmedKey)
+      if (fMatch !== undefined) {
+        const sId = `folder-global:${folder.id}`
+        valuesByScopeId[sId] = fMatch.value
+        metaByScopeId[sId] = { type: fMatch.type, options: fMatch.options }
       }
       if (folder.folder_envs && typeof folder.folder_envs === 'object') {
         for (const [eId, eVars] of Object.entries(folder.folder_envs)) {
-          const evVal = findEnabledVariableValue(eVars, trimmedKey)
-          if (evVal !== undefined) {
-            valuesByScopeId[`folder-env:${folder.id}:${eId}`] = evVal
+          const evMatch = findEnabledVariable(eVars, trimmedKey)
+          if (evMatch !== undefined) {
+            const sId = `folder-env:${folder.id}:${eId}`
+            valuesByScopeId[sId] = evMatch.value
+            metaByScopeId[sId] = { type: evMatch.type, options: evMatch.options }
           }
         }
       }
@@ -337,18 +375,21 @@ export function inspectVariableHierarchy(
     if (!folder) continue
     const folderId = folder.id || `folder-${i}`
     const scopeId = `folder-global:${folderId}`
-    const val = findEnabledVariableValue(folder.variables, trimmedKey)
-    if (val !== undefined) {
-      valuesByScopeId[scopeId] = val
+    const match = findEnabledVariable(folder.variables, trimmedKey)
+    if (match !== undefined) {
+      valuesByScopeId[scopeId] = match.value
+      metaByScopeId[scopeId] = { type: match.type, options: match.options }
       winningScopeId = scopeId
-      effectiveValue = val
+      effectiveValue = match.value
     }
     if (params.includeAllEnvs && folder.folder_envs && typeof folder.folder_envs === 'object') {
       for (const [eId, eVars] of Object.entries(folder.folder_envs)) {
         if (eId === activeEnvId) continue
-        const evVal = findEnabledVariableValue(eVars, trimmedKey)
-        if (evVal !== undefined) {
-          valuesByScopeId[`folder-env:${folderId}:${eId}`] = evVal
+        const evMatch = findEnabledVariable(eVars, trimmedKey)
+        if (evMatch !== undefined) {
+          const sId = `folder-env:${folderId}:${eId}`
+          valuesByScopeId[sId] = evMatch.value
+          metaByScopeId[sId] = { type: evMatch.type, options: evMatch.options }
         }
       }
     }
@@ -365,39 +406,133 @@ export function inspectVariableHierarchy(
         folder.folder_envs && typeof folder.folder_envs === 'object'
           ? folder.folder_envs[activeEnvId]
           : undefined
-      const val = findEnabledVariableValue(specificVars, trimmedKey)
-      if (val !== undefined) {
-        valuesByScopeId[scopeId] = val
+      const match = findEnabledVariable(specificVars, trimmedKey)
+      if (match !== undefined) {
+        valuesByScopeId[scopeId] = match.value
+        metaByScopeId[scopeId] = { type: match.type, options: match.options }
         winningScopeId = scopeId
-        effectiveValue = val
+        effectiveValue = match.value
       }
     }
   }
 
-  // Level 5 (for :param path variables): Request Path Param overrides if set
-  if (params.isPathParam && params.pathParamValue !== undefined && params.pathParamValue !== '') {
-    valuesByScopeId['path-param'] = params.pathParamValue
-    winningScopeId = 'path-param'
-    effectiveValue = params.pathParamValue
+  // Level 5: Request-level variable overrides (non-path vars)
+  if (!params.isPathParam && Array.isArray(params.requestVariables)) {
+    const reqMatch = findEnabledVariable(params.requestVariables, trimmedKey)
+    if (reqMatch !== undefined) {
+      valuesByScopeId['request'] = reqMatch.value
+      winningScopeId = 'request'
+      effectiveValue = reqMatch.value
+      if (
+        reqMatch.explicitType !== undefined ||
+        (Array.isArray(reqMatch.options) && reqMatch.options.length > 0)
+      ) {
+        metaByScopeId['request'] = { type: reqMatch.type, options: reqMatch.options }
+      }
+    }
+  }
+
+  // Level 5/6 (for :param path variables): Request Path Param overrides if set
+  if (params.isPathParam) {
+    const pathMatch = findEnabledVariable(params.pathParams, trimmedKey)
+    const resolvedPathVal =
+      params.pathParamValue !== undefined ? params.pathParamValue : pathMatch?.value
+    if (pathMatch && (pathMatch.type === 'select' || (resolvedPathVal !== undefined && resolvedPathVal !== ''))) {
+      metaByScopeId['path-param'] = { type: pathMatch.type, options: pathMatch.options }
+    }
+    if (resolvedPathVal !== undefined && resolvedPathVal !== '') {
+      valuesByScopeId['path-param'] = resolvedPathVal
+      if (!metaByScopeId['path-param']) {
+        metaByScopeId['path-param'] = { type: 'text' }
+      }
+      winningScopeId = 'path-param'
+      effectiveValue = resolvedPathVal
+    }
   }
 
   const options: VariableScopeOption[] = baseOptions.map(opt => {
     const hasVariable = Object.prototype.hasOwnProperty.call(valuesByScopeId, opt.id)
+    const meta = metaByScopeId[opt.id]
     return {
       ...opt,
       hasVariable,
-      value: hasVariable ? valuesByScopeId[opt.id] : undefined
+      value: hasVariable ? valuesByScopeId[opt.id] : undefined,
+      ...(meta
+        ? {
+            type: meta.type,
+            ...(meta.options !== undefined ? { options: [...meta.options] } : {})
+          }
+        : {})
     }
   })
+
+  // Parent inheritance order (excluding path-param / request): folder-env -> folder-global -> global-env -> collection
+  const parentFallbackOrder: string[] = []
+  if (activeEnvId) {
+    for (let i = folders.length - 1; i >= 0; i--) {
+      const folder = folders[i]
+      if (!folder) continue
+      const folderId = folder.id || `folder-${i}`
+      parentFallbackOrder.push(`folder-env:${folderId}:${activeEnvId}`)
+    }
+  }
+  for (let i = folders.length - 1; i >= 0; i--) {
+    const folder = folders[i]
+    if (!folder) continue
+    const folderId = folder.id || `folder-${i}`
+    parentFallbackOrder.push(`folder-global:${folderId}`)
+  }
+  if (activeEnvId) {
+    parentFallbackOrder.push(`global-env:${activeEnvId}`)
+  }
+  parentFallbackOrder.push('collection')
+
+  let parentInheritedType: 'text' | 'select' = 'text'
+  let parentInheritedOptions: string[] = []
+  for (const scopeId of parentFallbackOrder) {
+    const meta = metaByScopeId[scopeId]
+    if (meta) {
+      if (meta.type === 'select') {
+        parentInheritedType = 'select'
+        parentInheritedOptions = Array.isArray(meta.options) ? [...meta.options] : []
+      }
+      break
+    }
+  }
+
+  const hasRequestScope =
+    !params.isPathParam &&
+    (Boolean(params.hasActiveRequest) || Array.isArray(params.requestVariables))
+
+  const fallbackScopeOrder: string[] = params.isPathParam
+    ? ['path-param', ...parentFallbackOrder]
+    : hasRequestScope
+      ? ['request', ...parentFallbackOrder]
+      : parentFallbackOrder
+
+  let inheritedType: 'text' | 'select' = 'text'
+  let inheritedOptions: string[] = []
+  for (const scopeId of fallbackScopeOrder) {
+    const meta = metaByScopeId[scopeId]
+    if (meta) {
+      if (meta.type === 'select') {
+        inheritedType = 'select'
+        inheritedOptions = Array.isArray(meta.options) ? [...meta.options] : []
+      }
+      break
+    }
+  }
 
   const isResolved = winningScopeId !== null
   const defaultScopeId = params.isPathParam
     ? 'path-param'
-    : isResolved
-      ? winningScopeId!
-      : activeEnvId
-        ? `global-env:${activeEnvId}`
-        : 'collection'
+    : hasRequestScope && (winningScopeId === 'request' || inheritedType === 'select')
+      ? 'request'
+      : isResolved
+        ? winningScopeId!
+        : activeEnvId
+          ? `global-env:${activeEnvId}`
+          : 'collection'
 
   const winningOption = winningScopeId ? options.find(o => o.id === winningScopeId) || null : null
   const defaultOption = options.find(o => o.id === defaultScopeId) || options[options.length - 1]
@@ -412,7 +547,11 @@ export function inspectVariableHierarchy(
     defaultScopeId,
     defaultOption,
     options,
-    valuesByScopeId
+    valuesByScopeId,
+    inheritedType,
+    inheritedOptions,
+    parentInheritedType,
+    parentInheritedOptions
   }
 }
 
@@ -435,6 +574,7 @@ export function resolveHierarchyVariables(
   let envVars: VariableKVPair[] | Map<string, string> | null | undefined
   let folders: FolderNodeLike[] | null | undefined
   let envId: string | null | undefined
+  let reqVars: VariableKVPair[] | null | undefined
 
   if (
     optionsOrCollVars &&
@@ -446,6 +586,7 @@ export function resolveHierarchyVariables(
     envVars = opts.activeEnvVariables
     folders = opts.pathFolders
     envId = opts.activeEnvId
+    reqVars = opts.requestVariables
   } else {
     collVars = optionsOrCollVars as VariableKVPair[] | null | undefined
     envVars = activeEnvVariables
@@ -506,6 +647,15 @@ export function resolveHierarchyVariables(
             }
           }
         }
+      }
+    }
+  }
+
+  // Level 5: Request-level variable overrides (highest precedence before CLI overrides)
+  if (reqVars && Array.isArray(reqVars)) {
+    for (const v of reqVars) {
+      if (v && v.enabled && typeof v.key === 'string' && v.key.trim() !== '') {
+        map.set(v.key.trim(), v.value ?? '')
       }
     }
   }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import EnvModal from '../environment/EnvModal.vue'
 import EnvSelector from '../environment/EnvSelector.vue'
@@ -7,8 +7,28 @@ import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUiStore } from '@/stores/uiStore'
 
 describe('EnvModal', () => {
+  const wrappers: any[] = []
+  const track = <T>(w: T): T => {
+    wrappers.push(w)
+    return w
+  }
+
   beforeEach(() => {
     setActivePinia(createPinia())
+    useUiStore().setLocale('vi')
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    for (const w of wrappers) {
+      try {
+        w.unmount()
+      } catch {
+        // ignore
+      }
+    }
+    wrappers.length = 0
+    document.body.innerHTML = ''
   })
 
   it('does not call envStore.save when closed without changes', async () => {
@@ -91,6 +111,84 @@ describe('EnvModal', () => {
 
     expect(saveSpy).toHaveBeenCalledTimes(1)
     expect(saveSpy.mock.calls[0][0].variables[0].value).toBe('127.0.0.1')
+  })
+
+  it('calls envStore.save when only type or options are modified in EnvModal', async () => {
+    const envStore = useEnvironmentStore()
+    const uiStore = useUiStore()
+    const saveSpy = vi.spyOn(envStore, 'save').mockResolvedValue(true)
+
+    envStore.environments = [
+      { id: '1', name: 'Env 1', variables: [{ key: 'role', value: 'dev', enabled: true }], created_at: '', updated_at: '' } as any
+    ]
+    uiStore.envModalOpen = false
+
+    const wrapper = track(mount(EnvModal))
+    uiStore.envModalOpen = true
+    await wrapper.vm.$nextTick()
+
+    // Toggle row 0 to select -> seeds ['dev']
+    const toggleBtns = wrapper.findAll('[data-test="kvp-mode-toggle-btn"]')
+    await toggleBtns[0].trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // Open dropdown and add "prod"
+    await wrapper.find('[data-test="kvp-select-trigger"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    ;(document.body.querySelector('[data-test="kvp-add-option-trigger"]') as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+    const addInput = document.body.querySelector('[data-test="kvp-add-option-input"]') as HTMLInputElement
+    addInput.value = 'prod'
+    addInput.dispatchEvent(new Event('input'))
+    ;(document.body.querySelector('[data-test="kvp-add-option-confirm"]') as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+
+    // Trigger closeAndSave via backdrop
+    const bg = wrapper.find('.fixed.inset-0')
+    await bg.trigger('mousedown')
+
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(saveSpy.mock.calls[0][0].variables[0]).toMatchObject({
+      key: 'role',
+      value: 'prod',
+      enabled: true,
+      type: 'select',
+      options: ['dev', 'prod']
+    })
+  })
+
+  it('pressing Escape while KvpValueSelectControl portal is open closes only the portal and keeps EnvModal open', async () => {
+    const envStore = useEnvironmentStore()
+    const uiStore = useUiStore()
+    const saveSpy = vi.spyOn(envStore, 'save').mockResolvedValue(true)
+
+    envStore.environments = [
+      {
+        id: '1',
+        name: 'Env 1',
+        variables: [{ key: 'role', value: 'dev', enabled: true, type: 'select', options: ['dev', 'prod'] }],
+        created_at: '',
+        updated_at: ''
+      } as any
+    ]
+    uiStore.envModalOpen = false
+
+    const wrapper = track(mount(EnvModal, { attachTo: document.body }))
+    uiStore.envModalOpen = true
+    await wrapper.vm.$nextTick()
+
+    // Open dropdown portal
+    await wrapper.find('[data-test="kvp-select-trigger"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(document.body.querySelector('[data-test="kvp-select-dropdown"]')).not.toBeNull()
+
+    // Press Escape -> closes dropdown only, keeps EnvModal open
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(document.body.querySelector('[data-test="kvp-select-dropdown"]')).toBeNull()
+    expect(uiStore.envModalOpen).toBe(true)
+    expect(saveSpy).not.toHaveBeenCalled()
   })
 })
 

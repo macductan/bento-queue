@@ -350,5 +350,203 @@ describe('buildVariableScopeOptions & inspectVariableHierarchy', () => {
     ])
     expect(result.defaultScopeId).toBe('collection')
   })
+
+  it('returns per-scope select metadata and falls back in order path-param -> folder-env -> folder-global -> global-env -> collection', () => {
+    const envsWithSelect = [
+      {
+        id: 'env-local',
+        name: 'Local',
+        variables: [
+          {
+            key: 'role',
+            value: 'admin',
+            enabled: true,
+            type: 'select' as const,
+            options: ['admin', 'user']
+          }
+        ]
+      }
+    ]
+    const collVars = [
+      {
+        key: 'role',
+        value: 'viewer',
+        enabled: true,
+        type: 'select' as const,
+        options: ['viewer']
+      }
+    ]
+
+    // 1. Folder does not have 'role' -> inherits from Global Env (['admin', 'user']) rather than Collection (['viewer'])
+    const fromGlobal = inspectVariableHierarchy('role', {
+      collectionVariables: collVars,
+      pathFolders: [{ id: 'f1', name: 'F1', variables: [], folder_envs: {} }],
+      activeEnvId: 'env-local',
+      environments: envsWithSelect
+    })
+    expect(fromGlobal.inheritedType).toBe('select')
+    expect(fromGlobal.inheritedOptions).toEqual(['admin', 'user'])
+    expect(fromGlobal.options.find(o => o.id === 'global-env:env-local')).toMatchObject({
+      hasVariable: true,
+      type: 'select',
+      options: ['admin', 'user']
+    })
+    expect(fromGlobal.options.find(o => o.id === 'folder-global:f1')?.hasVariable).toBe(false)
+    expect(fromGlobal.options.find(o => o.id === 'folder-global:f1')?.type).toBeUndefined()
+
+    // 2. Folder Global defines select -> beats Global Env
+    const fromFolderGlobal = inspectVariableHierarchy('role', {
+      collectionVariables: collVars,
+      pathFolders: [
+        {
+          id: 'f1',
+          name: 'F1',
+          variables: [{ key: 'role', value: 'editor', enabled: true, type: 'select', options: ['editor'] }],
+          folder_envs: {}
+        }
+      ],
+      activeEnvId: 'env-local',
+      environments: envsWithSelect
+    })
+    expect(fromFolderGlobal.inheritedType).toBe('select')
+    expect(fromFolderGlobal.inheritedOptions).toEqual(['editor'])
+
+    // 3. Folder-Env defines select -> beats Folder Global
+    const fromFolderEnv = inspectVariableHierarchy('role', {
+      collectionVariables: collVars,
+      pathFolders: [
+        {
+          id: 'f1',
+          name: 'F1',
+          variables: [{ key: 'role', value: 'editor', enabled: true, type: 'select', options: ['editor'] }],
+          folder_envs: {
+            'env-local': [{ key: 'role', value: 'super', enabled: true, type: 'select', options: ['super'] }]
+          }
+        }
+      ],
+      activeEnvId: 'env-local',
+      environments: envsWithSelect
+    })
+    expect(fromFolderEnv.inheritedType).toBe('select')
+    expect(fromFolderEnv.inheritedOptions).toEqual(['super'])
+
+    // 4. Path Param defines select -> beats Folder-Env
+    const fromPathParam = inspectVariableHierarchy('role', {
+      collectionVariables: collVars,
+      pathFolders: [
+        {
+          id: 'f1',
+          name: 'F1',
+          variables: [],
+          folder_envs: {
+            'env-local': [{ key: 'role', value: 'super', enabled: true, type: 'select', options: ['super'] }]
+          }
+        }
+      ],
+      activeEnvId: 'env-local',
+      environments: envsWithSelect,
+      isPathParam: true,
+      pathParams: [{ key: 'role', value: '', enabled: true, type: 'select', options: ['path-role'] }]
+    })
+    expect(fromPathParam.inheritedType).toBe('select')
+    expect(fromPathParam.inheritedOptions).toEqual(['path-role'])
+  })
+
+  it('stops fallbackScopeOrder at a higher-precedence text override instead of inheriting select from a shadowed lower tier', () => {
+    const result = inspectVariableHierarchy('role', {
+      collectionVariables: [
+        {
+          key: 'role',
+          value: 'viewer',
+          enabled: true,
+          type: 'select',
+          options: ['viewer', 'editor']
+        }
+      ],
+      pathFolders: [{ id: 'f1', name: 'F1', variables: [], folder_envs: {} }],
+      activeEnvId: 'env-local',
+      environments: [
+        {
+          id: 'env-local',
+          name: 'Local',
+          variables: [{ key: 'role', value: 'plain-override', enabled: true, type: 'text' }]
+        }
+      ]
+    })
+
+    expect(result.winningScopeId).toBe('global-env:env-local')
+    expect(result.inheritedType).toBe('text')
+    expect(result.inheritedOptions).toEqual([])
+  })
+
+  it('supports Tier 5 requestVariables overriding all 4 lower tiers independently per request and live option inheritance', () => {
+    const envsWithSelect = [
+      {
+        id: 'env-local',
+        name: 'Local',
+        variables: [
+          { key: 'role', value: 'admin', enabled: true, type: 'select', options: ['admin', 'user'] },
+          { key: 'host', value: 'https://dev.api', enabled: true, type: 'text' }
+        ]
+      }
+    ]
+    const folders = [
+      {
+        id: 'f1',
+        name: 'F1',
+        variables: [{ key: 'role', value: 'editor', enabled: true }],
+        folder_envs: {}
+      }
+    ]
+
+    // 1. resolveHierarchyVariables: Tier 5 requestVariables beats Folder-Env/Folder/Env/Collection
+    const reqAResolved = resolveHierarchyVariables({
+      collectionVariables: [{ key: 'role', value: 'coll', enabled: true }],
+      activeEnvVariables: envsWithSelect[0].variables,
+      pathFolders: folders,
+      activeEnvId: 'env-local',
+      requestVariables: [{ key: 'role', value: 'user', enabled: true }]
+    })
+    const reqBResolved = resolveHierarchyVariables({
+      collectionVariables: [{ key: 'role', value: 'coll', enabled: true }],
+      activeEnvVariables: envsWithSelect[0].variables,
+      pathFolders: folders,
+      activeEnvId: 'env-local',
+      requestVariables: []
+    })
+    expect(reqAResolved.get('role')).toBe('user')
+    expect(reqBResolved.get('role')).toBe('editor')
+
+    // 2. inspectVariableHierarchy: select variable defaults to 'request' when hasActiveRequest is true
+    const selectInspect = inspectVariableHierarchy('role', {
+      collectionVariables: [],
+      pathFolders: [],
+      activeEnvId: 'env-local',
+      environments: envsWithSelect,
+      hasActiveRequest: true,
+      requestVariables: [{ key: 'role', value: 'user', enabled: true }]
+    })
+    expect(selectInspect.winningScopeId).toBe('request')
+    expect(selectInspect.effectiveValue).toBe('user')
+    expect(selectInspect.defaultScopeId).toBe('request')
+    // Pure value override in request.variables inherits live select options from Global Env
+    expect(selectInspect.inheritedType).toBe('select')
+    expect(selectInspect.inheritedOptions).toEqual(['admin', 'user'])
+    expect(selectInspect.parentInheritedType).toBe('select')
+    expect(selectInspect.parentInheritedOptions).toEqual(['admin', 'user'])
+
+    // 3. Normal text variable without request override defaults to winning shared scope ('global-env:env-local')
+    const textInspect = inspectVariableHierarchy('host', {
+      collectionVariables: [],
+      pathFolders: [],
+      activeEnvId: 'env-local',
+      environments: envsWithSelect,
+      hasActiveRequest: true,
+      requestVariables: []
+    })
+    expect(textInspect.winningScopeId).toBe('global-env:env-local')
+    expect(textInspect.defaultScopeId).toBe('global-env:env-local')
+    expect(textInspect.options[0]).toMatchObject({ id: 'request', kind: 'request' })
+  })
 })
 

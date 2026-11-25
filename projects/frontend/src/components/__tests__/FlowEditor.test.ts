@@ -1296,4 +1296,211 @@ describe('Story 4: Orthogonal 2-Axis Flowchart UI, RequestPickerModal, Live Exec
       expect(wrapper.find('[data-test="flow-editor"]').exists()).toBe(true)
     })
   })
+
+  describe('7. Example Request selection and deleted-example explicit failure in Flow', () => {
+    it('allows selecting an Example on FlowStepCard, warns when missing, and fails runCurrentFlow without falling back to Default', async () => {
+      const collectionStore = useCollectionStore()
+      const flowStore = useFlowStore()
+      collectionStore.tree = [
+        {
+          id: 'req-login',
+          name: 'Login',
+          type: 'request',
+          method: 'POST',
+          path: 'req-login.json',
+          created_at: '',
+          examples: [
+            {
+              id: 'ex-invalid',
+              name: 'Invalid Password',
+              method: 'PUT',
+              url: 'https://api.example.com/auth/login?mode=invalid',
+              params: [{ key: 'mode', value: 'invalid', enabled: true }],
+              path_params: [],
+              headers: [],
+              variables: [],
+              body: { type: 'json', content: '{"pass":"wrong"}' },
+              auth: { type: 'inherit' },
+              sync_flags: {
+                url: true,
+                method: false,
+                auth: true,
+                scripts: true,
+                body: false,
+                params: false,
+                path_params: false,
+                headers: false,
+                variables: false
+              },
+              created_at: '',
+              updated_at: ''
+            }
+          ]
+        } as any
+      ]
+
+      flowStore.currentFlow = {
+        id: 'flow-ex-ui',
+        name: 'Flow Example UI',
+        layout: 'vertical',
+        nodes: [
+          {
+            id: 'node-1',
+            steps: [{ id: 'step-1', request_id: 'req-login', example_id: 'ex-invalid', enabled: true }],
+            branches: []
+          }
+        ]
+      } as any
+
+      const wrapper = mount(FlowEditor)
+      const exSelect = wrapper.find('[data-test="flow-step-example-select"]')
+      expect(exSelect.exists()).toBe(true)
+      expect((exSelect.element as HTMLSelectElement).value).toBe('ex-invalid')
+      expect(wrapper.find('[data-test="flow-step-method"]').text()).toBe('PUT')
+      expect(wrapper.find('[data-test="flow-step-example-missing-warning"]').exists()).toBe(false)
+
+      // Execute flow with ex-invalid
+      vi.mocked(AppBinding.GetRequest).mockResolvedValue({
+        success: true,
+        data: {
+          id: 'req-login',
+          name: 'Login',
+          method: 'POST',
+          url: 'https://api.example.com/auth/login',
+          headers: [],
+          params: [],
+          body: { type: 'json', content: '{"pass":"ok"}' },
+          auth: { type: 'none' },
+          examples: collectionStore.tree[0].examples
+        }
+      } as any)
+      let sentMethod = ''
+      let sentUrl = ''
+      vi.mocked(AppBinding.SendRequest).mockImplementation((async (execReq: any) => {
+        sentMethod = execReq.method
+        sentUrl = execReq.url
+        return {
+          success: true,
+          data: {
+            status_code: 200,
+            status_text: '200 OK',
+            headers: {},
+            body: '{"ok":true}',
+            size_bytes: 11,
+            time_ms: 5,
+            timestamp: '2026-01-01T00:00:00Z'
+          }
+        }
+      }) as any)
+
+      const okSummary = await flowStore.runCurrentFlow()
+      expect(okSummary?.status).toBe('passed')
+      expect(sentMethod).toBe('PUT')
+      expect(sentUrl).toContain('mode=invalid')
+
+      // Simulate example deleted on Request -> FlowStepCard shows warning and runCurrentFlow fails explicitly
+      collectionStore.tree[0].examples = []
+      await flushPromises()
+      expect(wrapper.find('[data-test="flow-step-example-missing-warning"]').exists()).toBe(true)
+
+      vi.mocked(AppBinding.GetRequest).mockResolvedValue({
+        success: true,
+        data: {
+          id: 'req-login',
+          name: 'Login',
+          method: 'POST',
+          url: 'https://api.example.com/auth/login',
+          headers: [],
+          params: [],
+          body: { type: 'none', content: '' },
+          auth: { type: 'none' },
+          examples: []
+        }
+      } as any)
+      const sendSpy = vi.mocked(AppBinding.SendRequest)
+      sendSpy.mockClear()
+
+      const failSummary = await flowStore.runCurrentFlow()
+      expect(failSummary?.status).toBe('failed')
+      expect(flowStore.stepStates['step-1']?.failureCategory).toBe('deleted_example')
+      expect(sendSpy).not.toHaveBeenCalled()
+    })
+
+    it('clears stale example_id when changing step request and resolves idle example metadata in StepInspectorPanel', async () => {
+      const collectionStore = useCollectionStore()
+      const flowStore = useFlowStore()
+      collectionStore.tree = [
+        {
+          id: 'req-1',
+          name: 'First',
+          type: 'request',
+          method: 'GET',
+          url: 'https://api.example.com/first',
+          path: 'req-1.json',
+          created_at: '',
+          examples: [
+            {
+              id: 'ex-put',
+              name: 'Put Variant',
+              method: 'PUT',
+              url: 'https://api.example.com/first?v=2',
+              headers: [],
+              params: [{ key: 'v', value: '2', enabled: true }],
+              path_params: [],
+              variables: [],
+              body: { type: 'none', content: '' },
+              auth: { type: 'inherit' },
+              sync_flags: {
+                url: true,
+                method: false,
+                auth: true,
+                scripts: true,
+                body: false,
+                params: false,
+                path_params: false,
+                headers: false,
+                variables: false
+              },
+              created_at: '',
+              updated_at: ''
+            }
+          ]
+        } as any,
+        {
+          id: 'req-2',
+          name: 'Second',
+          type: 'request',
+          method: 'POST',
+          url: 'https://api.example.com/second',
+          path: 'req-2.json',
+          created_at: ''
+        } as any
+      ]
+
+      flowStore.currentFlow = {
+        id: 'flow-inspector-ex',
+        name: 'Inspector Example',
+        layout: 'vertical',
+        nodes: [
+          {
+            id: 'node-1',
+            steps: [{ id: 'step-1', request_id: 'req-1', example_id: 'ex-put', enabled: true }],
+            branches: []
+          }
+        ]
+      } as any
+      flowStore.selectedStepId = 'step-1'
+
+      const wrapper = mount(FlowEditor)
+      await flushPromises()
+      const inspector = wrapper.find('[data-test="step-inspector-panel"]')
+      expect(inspector.exists()).toBe(true)
+      expect(inspector.text()).toContain('PUT')
+      expect(inspector.text()).toContain('https://api.example.com/first?v=2')
+
+      expect(flowStore.changeStepRequest('step-1', 'req-2')).toBe(true)
+      expect(flowStore.currentFlow!.nodes[0].steps[0].request_id).toBe('req-2')
+      expect(flowStore.currentFlow!.nodes[0].steps[0].example_id).toBeUndefined()
+    })
+  })
 })

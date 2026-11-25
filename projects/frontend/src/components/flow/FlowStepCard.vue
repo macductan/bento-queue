@@ -7,6 +7,7 @@ import {
   findRequestInCollectionTree,
   getMethodBadgeClass
 } from '../../stores/flowStore'
+import { useI18n } from '@/i18n'
 
 const props = defineProps<{
   step: model.FlowStep & { name?: string }
@@ -22,6 +23,7 @@ const emit = defineEmits<{
   (e: 'select-step', stepId: string): void
 }>()
 
+const { t } = useI18n()
 const collectionStore = useCollectionStore()
 const flowStore = useFlowStore()
 
@@ -29,8 +31,28 @@ const requestInfo = computed(() => {
   return findRequestInCollectionTree(collectionStore.tree, props.step.request_id)
 })
 
+const requestTreeNode = computed(() => {
+  return collectionStore.findNode(collectionStore.tree, props.step.request_id)
+})
+
+const availableExamples = computed(() => {
+  const list = requestTreeNode.value?.examples
+  return Array.isArray(list) ? list : []
+})
+
+const selectedExampleId = computed(() => (props.step.example_id || '').trim())
+
+const selectedExample = computed(() => {
+  if (!selectedExampleId.value) return null
+  return availableExamples.value.find(ex => ex.id === selectedExampleId.value) || null
+})
+
 const isRequestMissing = computed(() => {
   return !requestInfo.value
+})
+
+const isExampleMissing = computed(() => {
+  return Boolean(!isRequestMissing.value && selectedExampleId.value && !selectedExample.value)
 })
 
 const stepState = computed(() => {
@@ -66,6 +88,12 @@ const displayName = computed(() => {
 })
 
 const displayMethod = computed(() => {
+  if (selectedExample.value) {
+    const useDefaultMethod = selectedExample.value.sync_flags?.method !== false
+    if (!useDefaultMethod && selectedExample.value.method) {
+      return selectedExample.value.method
+    }
+  }
   if (requestInfo.value) return requestInfo.value.method
   if (stepState.value?.method) return stepState.value.method.toUpperCase()
   return 'REQ'
@@ -87,7 +115,7 @@ const totalTestsCount = computed(() => {
 
 const cardStatusClasses = computed(() => {
   const selectedRing = isSelected.value ? 'ring-2 ring-indigo-500/60' : ''
-  if (isRequestMissing.value) {
+  if (isRequestMissing.value || isExampleMissing.value) {
     return `border-red-500 bg-red-950/20 ${selectedRing}`.trim()
   }
   switch (stepStatus.value) {
@@ -126,6 +154,16 @@ const handleUpdateTimeout = (e: Event) => {
 const handleUpdateStepName = (e: Event) => {
   const val = (e.target as HTMLInputElement).value
   ;(props.step as any).name = val
+}
+
+const handleUpdateExampleId = (e: Event) => {
+  const val = (e.target as HTMLSelectElement).value.trim()
+  const target = stepTarget.value as model.FlowStep
+  if (!val) {
+    delete target.example_id
+  } else {
+    target.example_id = val
+  }
 }
 
 const handleDeleteStep = () => {
@@ -223,19 +261,50 @@ const handleDeleteStep = () => {
         </button>
       </div>
     </div>
-    <div v-else class="flex items-center justify-between gap-2 text-[11px] text-zinc-400">
-      <span
-        data-test="flow-step-folder-path"
-        class="truncate font-mono text-[10px] text-zinc-400 bg-zinc-950/60 px-1.5 py-0.5 rounded"
+    <div v-else class="flex flex-col gap-1.5">
+      <div class="flex items-center justify-between gap-2 text-[11px] text-zinc-400">
+        <span
+          data-test="flow-step-folder-path"
+          class="truncate font-mono text-[10px] text-zinc-400 bg-zinc-950/60 px-1.5 py-0.5 rounded"
+        >
+          {{ requestInfo?.breadcrumbPath || 'Root' }}
+        </span>
+        <span
+          v-if="parallelTotal && parallelTotal > 1"
+          class="text-[10px] text-indigo-400 font-mono shrink-0"
+        >
+          #{{ (parallelIndex ?? 0) + 1 }}/{{ parallelTotal }}
+        </span>
+      </div>
+      <div
+        v-if="availableExamples.length > 0 || selectedExampleId"
+        class="flex items-center gap-1.5 text-[10px]"
+        @click.stop
       >
-        {{ requestInfo?.breadcrumbPath || 'Root' }}
-      </span>
-      <span
-        v-if="parallelTotal && parallelTotal > 1"
-        class="text-[10px] text-indigo-400 font-mono shrink-0"
+        <span class="text-zinc-500 shrink-0">{{ t('examples.flowExampleLabel') }}:</span>
+        <select
+          data-test="flow-step-example-select"
+          :value="selectedExampleId"
+          class="flex-1 min-w-0 bg-zinc-950/80 border rounded px-1.5 py-0.5 text-[10px] outline-none"
+          :class="isExampleMissing ? 'border-red-500/70 text-red-300' : 'border-zinc-800 focus:border-indigo-500 text-zinc-200'"
+          @change="handleUpdateExampleId"
+        >
+          <option value="">{{ t('examples.defaultLabel') }}</option>
+          <option v-if="isExampleMissing" :value="selectedExampleId" disabled>
+            ⚠ {{ selectedExampleId }} (missing)
+          </option>
+          <option v-for="ex in availableExamples" :key="ex.id" :value="ex.id">
+            {{ ex.name }}
+          </option>
+        </select>
+      </div>
+      <div
+        v-if="isExampleMissing"
+        data-test="flow-step-example-missing-warning"
+        class="px-2 py-1 rounded bg-red-950/60 border border-red-500/50 text-red-300 text-[10px] font-medium"
       >
-        #{{ (parallelIndex ?? 0) + 1 }}/{{ parallelTotal }}
-      </span>
+        ⚠ {{ t('examples.flowExampleMissing') }}
+      </div>
     </div>
 
     <!-- Custom step name & timeout overrides -->

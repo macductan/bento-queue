@@ -1,5 +1,5 @@
-import { watch, nextTick, type Ref } from 'vue'
-import type { Request, KVPair } from '../stores/requestStore'
+import { watch, nextTick, type Ref, type ComputedRef } from 'vue'
+import type { Request, KVPair, ExampleSyncFlags } from '../stores/requestStore'
 import {
   parseUrl,
   updateUrlWithParams,
@@ -8,13 +8,20 @@ import {
   areParamsEqual
 } from '../utils/urlParams'
 
-export function useUrlParamsSync(req: Ref<Request | null>) {
+export function useUrlParamsSync(
+  req: Ref<Request | null>,
+  syncFlags?: Ref<ExampleSyncFlags | null> | ComputedRef<ExampleSyncFlags | null>
+) {
   let isSyncing = false
   let lastSyncedUrl = ''
   let lastSyncedParams: KVPair[] = []
   let currentRequestId = ''
 
   let currentRequestRef: Request | null = null
+
+  const isUrlLinked = () => Boolean(syncFlags?.value?.url)
+  const isParamsLinked = () => Boolean(syncFlags?.value?.params)
+  const isPathParamsLinked = () => Boolean(syncFlags?.value?.path_params)
 
   function syncInitialState() {
     currentRequestRef = req.value
@@ -35,24 +42,28 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
       req.value.path_params = []
     }
 
-    const reconciledPathParams = reconcilePathParamsFromUrl(currentUrl, req.value.path_params)
-    if (!areParamsEqual(req.value.path_params, reconciledPathParams)) {
-      req.value.path_params = reconciledPathParams
+    if (!isPathParamsLinked()) {
+      const reconciledPathParams = reconcilePathParamsFromUrl(currentUrl, req.value.path_params)
+      if (!areParamsEqual(req.value.path_params, reconciledPathParams)) {
+        req.value.path_params = reconciledPathParams
+      }
     }
 
-    const { params: parsedFromUrl } = parseUrl(currentUrl)
+    if (!isParamsLinked()) {
+      const { params: parsedFromUrl } = parseUrl(currentUrl)
 
-    if (parsedFromUrl.length > 0) {
-      const reconciled = reconcileParamsFromUrl(currentUrl, req.value.params)
-      if (!areParamsEqual(req.value.params, reconciled)) {
-        req.value.params = reconciled
-      }
-    } else {
-      const enabledParams = req.value.params.filter(p => p.enabled && p.key.trim() !== '')
-      if (enabledParams.length > 0) {
-        const updatedUrl = updateUrlWithParams(currentUrl, req.value.params)
-        if (updatedUrl !== currentUrl) {
-          req.value.url = updatedUrl
+      if (parsedFromUrl.length > 0) {
+        const reconciled = reconcileParamsFromUrl(currentUrl, req.value.params)
+        if (!areParamsEqual(req.value.params, reconciled)) {
+          req.value.params = reconciled
+        }
+      } else {
+        const enabledParams = req.value.params.filter(p => p.enabled && p.key.trim() !== '')
+        if (enabledParams.length > 0) {
+          const updatedUrl = updateUrlWithParams(currentUrl, req.value.params)
+          if (updatedUrl !== currentUrl) {
+            req.value.url = updatedUrl
+          }
         }
       }
     }
@@ -80,6 +91,7 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
     () => req.value?.url,
     (newUrl) => {
       if (!req.value || isSyncing) return
+      if (isUrlLinked()) return
       if (newUrl === undefined || newUrl === null) return
       if (newUrl === lastSyncedUrl) return
 
@@ -92,10 +104,14 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
         req.value.path_params = []
       }
 
-      const newPathParams = reconcilePathParamsFromUrl(newUrl, req.value.path_params)
-      const newParams = reconcileParamsFromUrl(newUrl, req.value.params)
-      const pathChanged = !areParamsEqual(req.value.path_params, newPathParams)
-      const queryChanged = !areParamsEqual(req.value.params, newParams)
+      const newPathParams = isPathParamsLinked()
+        ? req.value.path_params
+        : reconcilePathParamsFromUrl(newUrl, req.value.path_params)
+      const newParams = isParamsLinked()
+        ? req.value.params
+        : reconcileParamsFromUrl(newUrl, req.value.params)
+      const pathChanged = !isPathParamsLinked() && !areParamsEqual(req.value.path_params, newPathParams)
+      const queryChanged = !isParamsLinked() && !areParamsEqual(req.value.params, newParams)
 
       if (pathChanged || queryChanged) {
         isSyncing = true
@@ -118,6 +134,7 @@ export function useUrlParamsSync(req: Ref<Request | null>) {
     () => req.value?.params,
     (newParams) => {
       if (!req.value || isSyncing) return
+      if (isParamsLinked()) return
       if (!newParams) return
       if (areParamsEqual(newParams, lastSyncedParams)) return
 

@@ -45,7 +45,8 @@ const computedDefaultHeadersCount = computed(() => {
     collectionVariables: collectionStore.activeCollection?.variables,
     activeEnvVariables: envStore.variablesMap,
     pathFolders: pathNodes,
-    activeEnvId: envStore.activeEnvId
+    activeEnvId: envStore.activeEnvId,
+    requestVariables: req.value.variables
   })
   const inherited = getInheritedHeaders(pathNodes).map(h => ({
     ...h,
@@ -113,6 +114,27 @@ const activeTab = computed({
 })
 
 const bodyType = computed(() => req.value?.body?.type || 'none')
+const activeSyncFlags = computed(() => requestStore.activeSyncFlags)
+const isBodyLinked = computed(() => Boolean(activeSyncFlags.value?.body))
+
+const isTabLinked = (tabId: string): boolean => {
+  const flags = activeSyncFlags.value
+  if (!flags) return false
+  switch (tabId) {
+    case 'params':
+      return Boolean(flags.params && flags.path_params)
+    case 'auth':
+      return Boolean(flags.auth)
+    case 'headers':
+      return Boolean(flags.headers)
+    case 'body':
+      return Boolean(flags.body)
+    case 'scripts':
+      return Boolean(flags.scripts)
+    default:
+      return false
+  }
+}
 
 const bodyTypeOptions = [
   { value: 'none', label: 'None' },
@@ -124,6 +146,7 @@ const bodyTypeOptions = [
 ]
 
 const onBodyTypeSelect = (val: string) => {
+  if (isBodyLinked.value) return
   requestStore.setBodyType(val as any)
   if (uiStore.activeRequestTab !== 'body') {
     uiStore.activeRequestTab = 'body'
@@ -188,6 +211,12 @@ const onBodyTypeSelect = (val: string) => {
           data-test="tab-scripts-badge"
           class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"
         ></span>
+        <span
+          v-if="isTabLinked(tab.id)"
+          :data-test="`tab-linked-dot-${tab.id}`"
+          :title="t('examples.linkedBadge')"
+          class="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
+        ></span>
       </button>
     </div>
 
@@ -202,6 +231,7 @@ const onBodyTypeSelect = (val: string) => {
         aria-label="Body type"
         :model-value="bodyType"
         :options="bodyTypeOptions"
+        :disabled="isBodyLinked"
         size="xs"
         align="right"
         @update:model-value="onBodyTypeSelect"
