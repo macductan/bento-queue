@@ -970,6 +970,154 @@ describe('RequestEditor.vue - Save State Indicator', () => {
     expect(codeEl.text()).not.toContain('coll-secret')
     expect(codeEl.text()).toContain("-H 'X-Trace: trace-99'")
   })
+
+  it('renders ExampleSwitcher, locks Base URL when url is linked, allows Params edit, and preserves Example Body on Sync All', async () => {
+    const requestStore = useRequestStore()
+    const baseReq = createMockRequest({
+      id: 'req-ex-ui',
+      name: 'Search API',
+      method: 'POST',
+      url: 'https://api.example.com/v1/search?q=default',
+      params: [{ key: 'q', value: 'default', enabled: true }],
+      headers: [],
+      body: { type: 'json', content: '{"q":"default"}' },
+      examples: [
+        {
+          id: 'ex-1',
+          name: 'Empty Query',
+          method: 'POST',
+          url: 'https://api.example.com/v1/search?q=empty',
+          params: [{ key: 'q', value: 'empty', enabled: true }],
+          path_params: [],
+          headers: [],
+          variables: [],
+          body: { type: 'json', content: '{"q":"empty"}' },
+          auth: { type: 'inherit' },
+          sync_flags: {
+            url: true,
+            method: true,
+            auth: true,
+            scripts: true,
+            body: false,
+            params: false,
+            path_params: false,
+            headers: false,
+            variables: false
+          },
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z'
+        }
+      ]
+    })
+    requestStore.original = JSON.parse(JSON.stringify(baseReq))
+    requestStore.draft = JSON.parse(JSON.stringify(baseReq))
+    requestStore.current = requestStore.draft
+    requestStore.activeExampleId = null
+
+    const wrapper = mount(RequestEditor)
+    expect(wrapper.find('[data-test="example-switcher"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="example-sync-all-btn"]').exists()).toBe(true)
+
+    // Switch to ex-1
+    await wrapper.find('[data-test="example-tab"][data-example-id="ex-1"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(requestStore.activeExampleId).toBe('ex-1')
+    expect(wrapper.find('[data-test="url-linked-badge"]').exists()).toBe(true)
+    expect((wrapper.find('#url-input').element as HTMLTextAreaElement).readOnly).toBe(true)
+    expect((wrapper.find('[data-test="method-selector"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('[data-test="body-linked-banner"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="auth-linked-banner"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="scripts-linked-banner"]').exists()).toBe(true)
+
+    // Verify resolvedCurlPreview uses effective Example config (linked Base URL + Example query & body)
+    const exCurl = wrapper.find('[data-test="curl-preview-code"]').text()
+    expect(exCurl).toContain('https://api.example.com/v1/search?q=empty')
+    expect(exCurl).toContain('"q":"empty"')
+
+    // Unlink URL directly from badge -> unlocks #url-input for independent editing
+    await wrapper.find('[data-test="url-unlink-btn"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="url-linked-badge"]').exists()).toBe(false)
+    expect((wrapper.find('#url-input').element as HTMLTextAreaElement).readOnly).toBe(false)
+    // Re-link URL for Sync All test below
+    requestStore.setExampleSyncFlag('ex-1', 'url', true)
+    await wrapper.vm.$nextTick()
+
+    // Switch back to Default, change Base URL & Body, click Sync All -> Example keeps its Body & Query!
+    await wrapper.find('[data-test="example-tab-default"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    requestStore.current!.url = 'https://api.example.com/v2/search?q=default'
+    requestStore.current!.body.content = '{"q":"updated-default"}'
+    await wrapper.find('[data-test="example-sync-all-btn"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const updatedEx = requestStore.examples[0]
+    expect(updatedEx.url).toBe('https://api.example.com/v2/search?q=empty')
+    expect(updatedEx.body.content).toBe('{"q":"empty"}')
+  })
+
+  it('supports ExampleSwitcher create/rename/duplicate/sync-flag-popover, tab-linked-dots, and request rename keeping draft.name synced', async () => {
+    const { RenameRequest } = await import('../../../wailsjs/go/main/App')
+    vi.mocked(RenameRequest).mockResolvedValue({ success: true, data: {} } as any)
+    const requestStore = useRequestStore()
+    const baseReq = createMockRequest({
+      id: 'req-ex-crud',
+      name: 'Users API',
+      method: 'GET',
+      url: 'https://api.example.com/users',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' }
+    })
+    requestStore.original = JSON.parse(JSON.stringify(baseReq))
+    requestStore.draft = JSON.parse(JSON.stringify(baseReq))
+    requestStore.current = requestStore.draft
+    requestStore.activeExampleId = null
+
+    const wrapper = mount(RequestEditor)
+    // Create new example via ExampleSwitcher
+    await wrapper.find('[data-test="example-add-btn"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(requestStore.examples).toHaveLength(1)
+    expect(requestStore.activeExampleId).toBe(requestStore.examples[0].id)
+
+    // Linked tab dots appear on auth & scripts tabs by default
+    expect(wrapper.find('[data-test="tab-linked-dot-auth"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="tab-linked-dot-scripts"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="tab-linked-dot-body"]').exists()).toBe(false)
+
+    // Open sync popover and toggle body sync flag on -> body tab shows linked dot
+    await wrapper.find('[data-test="example-sync-config-btn"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-test="sync-flag-body"]').setValue(true)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test="tab-linked-dot-body"]').exists()).toBe(true)
+
+    // Rename Request while Example is active -> draft.name and original.name both stay synchronized
+    await wrapper.find('[data-test="breadcrumb-rename-btn"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    const renameInput = wrapper.find('[data-test="breadcrumb-name-input"]')
+    await renameInput.setValue('Users V2')
+    await renameInput.trigger('keydown.enter')
+    await new Promise(r => setTimeout(r, 10))
+    expect(requestStore.current?.name).toBe('Users V2')
+    expect(requestStore.draft?.name).toBe('Users V2')
+    expect(requestStore.original?.name).toBe('Users V2')
+
+    // Duplicate & delete via ExampleSwitcher action menu
+    await wrapper.find('[data-test="example-menu-trigger"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-test="example-action-duplicate"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(requestStore.examples).toHaveLength(2)
+
+    await wrapper.findAll('[data-test="example-menu-trigger"]')[1].trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[data-test="example-action-delete"]').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(requestStore.examples).toHaveLength(1)
+  })
 })
 
 

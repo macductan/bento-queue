@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, watch, onMounted, computed, onBeforeUnmount, provide, nextTick } from 'vue'
 import { useCollectionStore, type AuthConfig } from '@/stores/collectionStore'
+import type { KVPair } from '@/stores/requestStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useTabStore } from '@/stores/tabStore'
@@ -25,8 +26,8 @@ const tabStore = useTabStore()
 const loading = ref(false)
 const saving = ref(false)
 const folder = ref<any>(null)
-const variables = ref<{ key: string, value: string, enabled: boolean }[]>([])
-const folder_envs = ref<Record<string, { key: string, value: string, enabled: boolean }[]>>({})
+const variables = ref<KVPair[]>([])
+const folder_envs = ref<Record<string, KVPair[]>>({})
 const resolveDefaultEnvScope = (): string => {
   const activeId = envStore.activeEnvId
   if (activeId && envStore.environments.some(e => e.id === activeId)) {
@@ -36,7 +37,7 @@ const resolveDefaultEnvScope = (): string => {
 }
 
 const selectedEnvScope = ref<string>(resolveDefaultEnvScope())
-const headers = ref<{ key: string, value: string, enabled: boolean }[]>([])
+const headers = ref<KVPair[]>([])
 const auth = ref<AuthConfig>({ type: 'inherit' })
 const auth_envs = ref<Record<string, AuthConfig>>({})
 const activeTab = computed<'variables' | 'auth' | 'headers'>({
@@ -76,7 +77,7 @@ watch(
   }
 )
 
-const currentScopeVariables = computed<{ key: string, value: string, enabled: boolean }[]>({
+const currentScopeVariables = computed<KVPair[]>({
   get() {
     if (selectedEnvScope.value === '__folder_global__') {
       return variables.value
@@ -188,6 +189,7 @@ const effectiveVariables = computed(() => {
 
 provide('effectiveVariables', effectiveVariables)
 provide('variableHierarchyFolders', folderHierarchyNodes)
+provide('variableScopeContext', 'folder')
 
 const defaultHeaders = computed(() => {
   if (!folder.value) return []
@@ -286,7 +288,7 @@ let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 let activeSavePromise: Promise<boolean> | null = null
 
 const getCleanSnapshot = () => {
-  const cleanFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+  const cleanFolderEnvs: Record<string, KVPair[]> = {}
   for (const [envId, vars] of Object.entries(folder_envs.value)) {
     const clean = (vars || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
     if (clean.length > 0) {
@@ -423,7 +425,7 @@ const saveFolderData = async (options?: { silent?: boolean } | boolean): Promise
     try {
       const cleanHeaders = headers.value.filter(h => typeof h?.key === 'string' && h.key.trim() !== '')
       const cleanVariables = variables.value.filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
-      const cleanFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+      const cleanFolderEnvs: Record<string, KVPair[]> = {}
       for (const [envId, vars] of Object.entries(folder_envs.value)) {
         const clean = (vars || []).filter(v => typeof v?.key === 'string' && v.key.trim() !== '')
         if (clean.length > 0) {
@@ -528,7 +530,7 @@ const syncExternalFolderVariables = (updatedData: any) => {
   const nextVars = Array.isArray(updatedData.variables)
     ? updatedData.variables.map((v: any) => ({ ...v }))
     : []
-  const nextFolderEnvs: Record<string, { key: string; value: string; enabled: boolean }[]> = {}
+  const nextFolderEnvs: Record<string, KVPair[]> = {}
   if (updatedData.folder_envs && typeof updatedData.folder_envs === 'object') {
     for (const [envId, list] of Object.entries(updatedData.folder_envs)) {
       if (Array.isArray(list)) {

@@ -36,6 +36,9 @@ description: Use the standalone `hecto` CLI to inspect, create, update, move, de
    - You can address any **Folder** or **Request** by its `UUID` or by its slash-separated hierarchical name path (e.g., `"Users/Auth"` or `"Users/Auth/Login"`).
 4. **Isolated Testing (`--data-dir` / `HECTO_CONFIG_DIR`)**:
    - When running automated tests or sandboxed experiments, always pass `--data-dir /tmp/my-isolated-dir` or set `HECTO_CONFIG_DIR=/tmp/my-isolated-dir` so you never touch the user's real collections.
+5. **JIT Manual & Safe Compact Output (Recommended for AI Agents)**:
+   - Use `hecto agent-guide --toc` to list sections/aliases and `hecto agent-guide --section <id|alias[,...]>` (e.g., `core`, `req`, `flow`, `mock`, `3.4,6`) to read only the needed reference instead of loading the entire manual.
+   - Pass `--compact` on `hecto run` / `hecto flow run` to drop duplicate fields, truncate large bodies (`500` bytes by default, override via `--max-body <bytes>`), and automatically redact sensitive headers/variables/auth values on `stdout` (`--redact`) without altering disk persistence.
 
 ---
 
@@ -110,7 +113,15 @@ hecto folder move <id|path> --to <target-id|path|root> [-c <coll>] [--json]
 ### 3.4. `req`
 ```bash
 hecto req list [--folder <id|path>] [-c <coll>] [--json]
-hecto req get <id|path> [-c <coll>] [--json]
+hecto req get <id|path> [--example <id|name>] [--effective] [-c <coll>] [--json]
+hecto req example <list|get|create|update|delete|sync|detach> ...
+  hecto req example list <req-id|path> [-c <coll>] [--json]
+  hecto req example get <req-id|path> <ex-id|name> [--effective] [-c <coll>] [--json]
+  hecto req example create <req-id|path> [--name <name>] [--from <ex-id|name>] [-c <coll>] [--json]
+  hecto req example update <req-id|path> <ex-id|name> [--name ...] [--method ...] [--url ...] [--sync <group>=<true|false>]... [patch flags] [-c <coll>] [--json]
+  hecto req example delete <req-id|path> <ex-id|name> [-c <coll>] [--json]
+  hecto req example sync <req-id|path> [<ex-id|name> | --all] [-c <coll>] [--json]
+  hecto req example detach <req-id|path> <ex-id|name> [--name <new-req-name>] [-c <coll>] [--json]
 hecto req create --name <name> [--method <GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS>] --url <U> \
   [--folder <id|path>] [--header "K:V"]... [--param K=V]... [--path-param K=V]... \
   [--body-type <none|json|text|xml|urlencoded|formdata>] [--body <str|@file>] \
@@ -128,11 +139,14 @@ hecto req move <id|path> --to <target-id|path|root> [-c <coll>] [--json]
 ```
 > **Read-Merge-Write (`update`)**: Only flags explicitly passed on the command line are modified; unflagged fields are preserved intact. Passing `--body ""`, `--pre-script ""`, or `--post-script ""` clears that field.
 
-### 3.5. `run` & `import`
+### 3.5. `run`, `import` & `agent-guide`
 ```bash
-hecto run <id|path> [-c <coll>] [--env <id|name|none>] [--var K=V]... [--timeout <sec>] [--no-save-env] [--json]
+hecto run <id|path> [--example <id|name>] [-c <coll>] [--env <id|name|none>] [--var K=V]... [--timeout <sec>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]
 hecto import <file-or-curl> [-c <coll>] [--folder <id|path>] [--name <name>] [--json]
+hecto agent-guide [--toc | --list | --section <id|alias[,...]>] [--json]
 ```
+- `hecto agent-guide --toc --json` emits `{"success":true,"data":{"sections":[...],"composite_aliases":{"core":["1","2","3"]}}}`.
+- `hecto agent-guide --section flow --json` emits `{"success":true,"data":{"sections":["6"],"content":"..."}}`.
 
 ---
 
@@ -170,6 +184,7 @@ In `--pre-script` and `--post-script`, use the `ha` (or `pm`) object:
   }
 }
 ```
+> **Compact & Redaction Flags (`--compact`, `--redact`, `--max-body <bytes>`):** `--redact` masks sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `X-Auth`, configured `apiKey` headers, ...), sensitive URL query/userinfo params, `FormData`/`urlencoded` credentials, error URLs, and secret variables/auth fields as `"***REDACTED***"` on `stdout` only (real values still persist to disk). `--max-body <bytes>` truncates `body` cleanly on UTF-8 rune boundaries and sets `"body_truncated": true`. `--compact` enables `--redact`, defaults `--max-body 500`, and omits `request`, `resolved_request`, `headers`, `console_logs`, `scoped_auth_updates`, and empty optional fields (`status_text`, `script_tests`, `script_logs`).
 
 ---
 
@@ -214,10 +229,10 @@ Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scena
 | `hecto flow delete <id\|path>` | `[-c <coll>] [--json]` — Delete a flow file from `<collection>/flows/`. |
 | `hecto flow move <id\|path>` | `--to <folder-id\|path\|root> [-c <coll>] [--json]` — Move a flow to another FlowFolder or root. |
 | `hecto flow folder <verb>` | `create --name <name> [--parent <id\|path>]` \| `update <id\|path> --name <name>` \| `delete <id\|path>` \| `move <id\|path> --to <id\|path\|root>` \| `list` \| `tree` \| `get <id\|path>` |
-| `hecto flow run <id\|path>` | `[-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
+| `hecto flow run <id\|path>` | `[--example <id\|name>] [-c <coll>] [--env <id\|name\|none>] [--var K=V]... [--timeout-ms <ms>] [--no-save-env] [--compact] [--redact] [--max-body <bytes>] [--json]` — Execute the flow headlessly. Returns exit code `0` with `{"success":true,"data":...}` in `--json` mode, or exit code `1` in non-JSON mode if `data.status == "failed"`. |
 
 ### 6.2. Shorthand `--steps` vs Full `--nodes-json`
-- **`--steps` shorthand:** Comma `,` separates sequential `FlowNode` rows; `||` separates parallel `FlowStep` items within the same row. Each token is a Request UUID or `<Folder>/<Request>` path:
+- **`--steps` shorthand:** Comma `,` separates sequential `FlowNode` rows; `||` separates parallel `FlowStep` items within the same row. Each token is a Request UUID or `<Folder>/<Request>` path (optionally `<request_selector>@<example_selector>`):
   ```bash
   hecto flow create --name "Checkout E2E" --folder "E2E Suite" \
     --steps "AuthFlow/Login,Users/Get Profile||Catalog/Get Cart,Orders/Checkout" --json
@@ -286,4 +301,113 @@ Flows live inside `<collection>/flows/` and orchestrate multi-step E2E API scena
   }
 }
 ```
+> **Flow `--compact` Mode:** Automatically enables `--redact`, drops the duplicate top-level `step_results` array, projects each step's `run_output` to compact fields (`status_code`, `time_ms`, `size_bytes`, `body_truncated`, `script_tests`, `script_logs`, `env_updates`, `scoped_env_updates`, `script_error`, `network_error`), omits `body` on `passed` steps (unless `--max-body > 0` is explicitly provided), and keeps truncated `body` (default `500` bytes) plus failure details on `failed` steps.
+
+---
+
+## 7. Local Mock HTTP Server (`hecto mock`)
+
+`hecto mock` configures `<collection>/mock-server.json` (100% compatible with the Desktop UI `MockServerModal.vue`) and runs an embedded local HTTP mock server on `127.0.0.1:<port>`.
+
+### Single Active Instance & Hot-Reload Rules
+- **1 Global Instance at a Time:** State for the live CLI mock daemon is stored in a single global file `<configDir>/mock-daemon.json` (`pid`, `port`, `base_url`, `collection_id`, `coll_root`, `started_at`) — never inside `<collection>/`. (Note: Desktop UI in-process servers do not write `mock-daemon.json`.)
+- **Auto-Stop Previous Daemon:** Any `hecto mock start` (foreground or `--daemon`, alias `serve`) automatically stops any previously running CLI daemon before binding the new port.
+- **Port Policy:** Ports must be in `1024..65535` (default `4010`, port `0` is disallowed). `hecto mock` never silently switches ports — if the target port is occupied by an external process, it returns `IO_ERROR`.
+- **Collection-Scoped `status`:** `hecto mock status [-c <coll>]` sets `running: true` only when the live daemon matches `<coll>`. If a daemon is running on a different collection, `status` returns `running: false` for the queried collection together with `active_daemon` metadata, and automatically cleans up stale PID files.
+- **Hot-Reload:** Running mock servers watch `<collection>/mock-server.json` and hot-reload `routes` in memory whenever routes are created, updated, or deleted via CLI or edited on disk (no restart required).
+- **HTTP Matching Behavior:** Supports `:param` and `*` path segments, `ANY` method wildcard, `delay_ms` (`0..30000`), custom headers (defaults to `Content-Type: application/json; charset=utf-8`), CORS headers (`Access-Control-Allow-Origin: *`), and returns HTTP `404` JSON `{"error":"MOCK_ROUTE_NOT_FOUND","method":...,"path":...}` for unmatched requests (with configured `OPTIONS`/`ANY` routes matched first before falling back to `204` on unmatched `OPTIONS`).
+
+### 7.1. `hecto mock` Command Matrix
+
+| Command | Flags & Usage |
+|---|---|
+| `hecto mock status` | `[-c <coll>] [--json]` — Inspect mock server status, configured port, routes, and live daemon info. |
+| `hecto mock config` | `[--port <1024..65535>] [-c <coll>] [--json]` — Read or update the collection's configured port in `mock-server.json` (alias `-p`). |
+| `hecto mock start` / `serve` | `[--port <1024..65535>] [--daemon] [-c <coll>] [--json]` — Start the mock server (foreground flushes 1 status line and waits for `SIGINT`/`SIGTERM`; `--daemon` detaches stdio, waits until TCP ready, prints JSON, and exits `0`). |
+| `hecto mock stop` | `[-c <coll>] [--json]` — Stop the active mock daemon and remove `<configDir>/mock-daemon.json`. |
+| `hecto mock route list` | `[-c <coll>] [--json]` — List all `MockRoute` entries in `<collection>/mock-server.json`. |
+| `hecto mock route get` | `<id\|"METHOD /path"> [-c <coll>] [--json]` — Get a single route by UUID or `"METHOD /path"` (returns `VALIDATION` with matching IDs if ambiguous). |
+| `hecto mock route create` | `--path </path> [--method <GET\|POST\|PUT\|PATCH\|DELETE\|OPTIONS\|HEAD\|ANY>] [--status-code <100..599>] [--delay-ms <0..30000>] [--header "K:V"]... [--body <str\|@file>] [--description <text>] [--enabled\|--disabled] [-c <coll>] [--json]` — Defaults: `method=GET`, `status_code=200`, `delay_ms=0`, `enabled=true`. |
+| `hecto mock route update` | `<id\|"METHOD /path"> [--method ...] [--path ...] [--status-code <100..599>] [--delay-ms <0..30000>] [--set-header "K:V"]... [--unset-header K]... [--body <str\|@file>] [--description <text>] [--enabled\|--disabled] [-c <coll>] [--json]` — Read-Merge-Write (`FlagSet.Visit`); passing `--body ""` or `--description ""` clears that field. |
+| `hecto mock route delete` | `<id\|"METHOD /path"> [-c <coll>] [--json]` — Delete a route by UUID or `"METHOD /path"`. |
+
+> **Aliases:** Top-level `mocks` (`mock`); subcommands `serve` (`start`), `routes` (`route`); route verbs `ls` (`list`), `show` (`get`), `add` (`create`), `patch` (`update`), `rm` (`delete`); flags `--status` (`--status-code`), `--delay` (`--delay-ms`), `--desc` (`--description`), `-p` (`--port`).
+
+### 7.2. JSON Schemas (`mock-server.json`, `status`/`start`/`stop`, `route delete`)
+
+`<collection>/mock-server.json`:
+```json
+{
+  "port": 4010,
+  "routes": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "method": "GET",
+      "path": "/api/users/:id",
+      "status_code": 200,
+      "headers": [{ "key": "X-Mock", "value": "true", "enabled": true }],
+      "body": "{\"id\":42,\"name\":\"Alice\"}",
+      "delay_ms": 0,
+      "enabled": true,
+      "description": "Fetch mocked user"
+    }
+  ]
+}
+```
+
+`hecto mock start --daemon --json` / `hecto mock status --json` / `hecto mock config --json` / `hecto mock stop --json`:
+```json
+{
+  "success": true,
+  "data": {
+    "running": true,
+    "port": 4010,
+    "configured_port": 4020,
+    "base_url": "http://127.0.0.1:4010",
+    "routes": [],
+    "pid": 12345,
+    "collection_id": "default",
+    "coll_root": "/path/to/collections/default",
+    "started_at": "2026-11-18T14:00:00Z",
+    "active_daemon": { "pid": 12345, "port": 4010, "base_url": "...", "collection_id": "...", "coll_root": "...", "started_at": "..." },
+    "stopped": true
+  }
+}
+```
+- `configured_port` is included when `running: true` and `mock-server.json` has a different port than the running daemon.
+- `active_daemon` is included on `status` when `running: false` for the queried collection while another collection's daemon is active.
+- `stopped` (`true|false`) is included on `hecto mock stop`.
+
+`hecto mock route delete <id|"METHOD /path"> --json`:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_id": "550e8400-e29b-41d4-a716-446655440000",
+    "method": "GET",
+    "path": "/api/users/:id"
+  }
+}
+```
+
+### 7.3. End-to-End `--daemon` & `stop` Recipe
+```bash
+# 1. Configure port and create routes
+hecto mock config --port 4010 --json
+hecto mock route create --method GET --path "/api/users/:id" \
+  --status-code 200 --header "X-Source: mock" \
+  --body '{"id":42,"role":"admin"}' --json
+
+# 2. Start background daemon (waits until TCP ready before exiting 0)
+hecto mock start --daemon --json
+
+# 3. Call the mock server or add another route (hot-reloaded automatically!)
+curl -s http://127.0.0.1:4010/api/users/42
+hecto mock route create --method ANY --path "/api/ping" --body '{"pong":true}' --json
+
+# 4. Inspect status and stop the daemon
+hecto mock status --json
+hecto mock stop --json
+```
+
 

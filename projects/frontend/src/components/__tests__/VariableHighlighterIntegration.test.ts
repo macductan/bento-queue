@@ -200,6 +200,7 @@ describe('VariableHighlighter Integration with UrlBar', () => {
       const selectEl = popover?.querySelector('[data-test="variable-scope-select"]') as HTMLSelectElement
       const optionTexts = Array.from(selectEl.options).map(o => o.text)
       expect(optionTexts).toEqual([
+        'Request này (Riêng Request)',
         'Folder: Child Folder (Dev)',
         'Folder: Child Folder (Dùng chung)',
         'Folder: Parent Folder (Dev)',
@@ -207,6 +208,7 @@ describe('VariableHighlighter Integration with UrlBar', () => {
         'Global Env (Dev)',
         'Collection Env (Dùng chung)'
       ])
+      expect(selectEl.value).toBe('folder-env:folder-child:env-1')
 
       wrapper.unmount()
     } finally {

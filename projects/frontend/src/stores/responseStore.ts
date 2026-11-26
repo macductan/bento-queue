@@ -4,7 +4,7 @@ import { useRequestStore, type Request } from './requestStore'
 import { useUiStore } from './uiStore'
 import { useEnvironmentStore } from './environmentStore'
 import { useCollectionStore } from './collectionStore'
-import { useTabStore } from './tabStore'
+import { useTabStore, makeResponseCacheKey } from './tabStore'
 import { buildExecuteRequest, type ExecuteRequest } from '../utils/buildExecuteRequest'
 import { getInheritedHeaders } from '../utils/headers'
 import { resolveHierarchyVariables } from '../utils/resolveHierarchyVariables'
@@ -88,6 +88,10 @@ export const useResponseStore = defineStore('response', {
       const envStore = useEnvironmentStore()
       const tabStore = useTabStore()
       const reqId = req.id
+      const exampleId = reqStore.activeExampleId ?? null
+      const syncFlags = reqStore.activeSyncFlags
+      const canMutateGroup = (flag: keyof NonNullable<typeof syncFlags>): boolean =>
+        !exampleId || !syncFlags || !syncFlags[flag]
       const initialResponse = this.response ? JSON.parse(JSON.stringify(this.response)) : null
       let nextResponse: ExecuteResponse | null = initialResponse
       let nextError: { code: string; message: string } | null = null
@@ -108,7 +112,8 @@ export const useResponseStore = defineStore('response', {
         collectionVariables: collectionStore.activeCollection?.variables,
         activeEnvVariables: envStore.variablesMap,
         pathFolders: pathNodes,
-        activeEnvId: envStore.activeEnvId
+        activeEnvId: envStore.activeEnvId,
+        requestVariables: req.variables
       })
 
       // Clone request for execution so script mutations apply cleanly
@@ -149,39 +154,39 @@ export const useResponseStore = defineStore('response', {
         const mut = preRes.requestMutations
         if (mut.url !== undefined) {
           effectiveReq.url = mut.url
-          req.url = mut.url
+          if (canMutateGroup('url')) req.url = mut.url
         }
         if (mut.method !== undefined) {
           effectiveReq.method = mut.method
-          req.method = mut.method
+          if (canMutateGroup('method')) req.method = mut.method
         }
         if (mut.params !== undefined) {
           effectiveReq.params = mut.params
-          req.params = mut.params.map(p => ({ ...p }))
+          if (canMutateGroup('params')) req.params = mut.params.map(p => ({ ...p }))
         }
         if (mut.path_params !== undefined) {
           effectiveReq.path_params = mut.path_params
-          req.path_params = mut.path_params.map(p => ({ ...p }))
+          if (canMutateGroup('path_params')) req.path_params = mut.path_params.map(p => ({ ...p }))
         }
         if (mut.headers !== undefined) {
           effectiveReq.headers = mut.headers
-          req.headers = mut.headers.map(h => ({ ...h }))
+          if (canMutateGroup('headers')) req.headers = mut.headers.map(h => ({ ...h }))
         }
         if (mut.body !== undefined) {
           if (!effectiveReq.body) effectiveReq.body = { type: 'none', content: '' }
           if (!req.body) req.body = { type: 'none', content: '' }
           if (mut.body.type !== undefined) {
             effectiveReq.body.type = mut.body.type
-            req.body.type = mut.body.type
+            if (canMutateGroup('body')) req.body.type = mut.body.type
           }
           if (mut.body.content !== undefined) {
             effectiveReq.body.content = mut.body.content
-            req.body.content = mut.body.content
+            if (canMutateGroup('body')) req.body.content = mut.body.content
           }
         }
         if (mut.auth !== undefined) {
           effectiveReq.auth = mut.auth
-          req.auth = mut.auth
+          if (canMutateGroup('auth')) req.auth = mut.auth
         }
 
         if (!preRes.success) {
@@ -267,17 +272,17 @@ export const useResponseStore = defineStore('response', {
               await envStore.applyScopedAuthUpdates(postRes.scopedAuthUpdates, pathNodes)
             }
             const pMut = postRes.requestMutations
-            if (pMut.url !== undefined) req.url = pMut.url
-            if (pMut.method !== undefined) req.method = pMut.method
-            if (pMut.params !== undefined) req.params = pMut.params.map(p => ({ ...p }))
-            if (pMut.path_params !== undefined) req.path_params = pMut.path_params.map(p => ({ ...p }))
-            if (pMut.headers !== undefined) req.headers = pMut.headers.map(h => ({ ...h }))
-            if (pMut.body !== undefined) {
+            if (pMut.url !== undefined && canMutateGroup('url')) req.url = pMut.url
+            if (pMut.method !== undefined && canMutateGroup('method')) req.method = pMut.method
+            if (pMut.params !== undefined && canMutateGroup('params')) req.params = pMut.params.map(p => ({ ...p }))
+            if (pMut.path_params !== undefined && canMutateGroup('path_params')) req.path_params = pMut.path_params.map(p => ({ ...p }))
+            if (pMut.headers !== undefined && canMutateGroup('headers')) req.headers = pMut.headers.map(h => ({ ...h }))
+            if (pMut.body !== undefined && canMutateGroup('body')) {
               if (!req.body) req.body = { type: 'none', content: '' }
               if (pMut.body.type !== undefined) req.body.type = pMut.body.type
               if (pMut.body.content !== undefined) req.body.content = pMut.body.content
             }
-            if (pMut.auth !== undefined) {
+            if (pMut.auth !== undefined && canMutateGroup('auth')) {
               req.auth = pMut.auth
             }
             if (!postRes.success) {
@@ -327,8 +332,10 @@ export const useResponseStore = defineStore('response', {
           const isStillActiveRequest =
             (collectionStore.activeRequestId === reqId && !collectionStore.activeFolderId) ||
             (!collectionStore.activeRequestId && !collectionStore.activeFolderId && reqStore.current?.id === reqId)
+          const isStillActiveScenario =
+            isStillActiveRequest && (reqStore.activeExampleId ?? null) === exampleId
 
-          if (isStillActiveRequest) {
+          if (isStillActiveScenario) {
             if (updatedResponse) {
               this.response = nextResponse
             }
@@ -337,10 +344,10 @@ export const useResponseStore = defineStore('response', {
             }
             this.loading = false
             if (tabStore.tabs.some(t => t.type === 'request' && t.entityId === reqId)) {
-              tabStore.saveResponseToCache(reqId)
+              tabStore.saveResponseToCache(reqId, exampleId)
             }
           } else if (tabStore.tabs.some(t => t.type === 'request' && t.entityId === reqId)) {
-            tabStore.responseCache[reqId] = {
+            tabStore.responseCache[makeResponseCacheKey(reqId, exampleId)] = {
               response: nextResponse ? JSON.parse(JSON.stringify(nextResponse)) : null,
               error: nextError ? { ...nextError } : null,
               loading: false,

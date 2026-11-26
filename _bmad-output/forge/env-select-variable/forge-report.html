@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Báo cáo Forge Idea — Biến Select Box (hecto-api)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-2: #263348;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 32px 16px 64px;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .header-card {
+      position: relative;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px 220px 32px 32px;
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+    @media (max-width: 720px) {
+      .header-card { padding: 24px; }
+      .seal-wrap { position: static !important; margin-top: 20px; }
+    }
+    .eyebrow {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      line-height: 1.25;
+      color: #f8fafc;
+    }
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .pill {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #bae6fd;
+    }
+    .seal-wrap {
+      position: absolute;
+      right: 28px;
+      top: 50%;
+      transform: translateY(-50%) rotate(-8deg);
+      width: 156px;
+      height: 156px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px 28px;
+      margin-bottom: 20px;
+    }
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 10px;
+    }
+    li:last-child {
+      margin-bottom: 0;
+    }
+    strong { color: #f8fafc; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      background: rgba(15, 23, 42, 0.75);
+      border: 1px solid var(--border);
+      padding: 1px 6px;
+      border-radius: 5px;
+      color: #7dd3fc;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .persona-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .persona-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      color: #f8fafc;
+      margin-bottom: 4px;
+    }
+    .persona-role {
+      font-size: 12px;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .persona-voice {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+    .risk-box {
+      border-left: 3px solid var(--amber);
+      background: rgba(245, 158, 11, 0.08);
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 12px;
+    }
+    .risk-box:last-child { margin-bottom: 0; }
+    .rejected-box {
+      border-left: 3px solid var(--red);
+      background: rgba(239, 68, 68, 0.07);
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 12px;
+    }
+    .rejected-box:last-child { margin-bottom: 0; }
+    .footer-note {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 28px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header-card">
+      <div class="eyebrow">BMad Forge Idea • Báo cáo kết thúc phiên</div>
+      <h1>Biến &amp; KVPair dạng Select Box trong <code>hecto-api</code></h1>
+      <p class="subtitle">Giải quyết tình trạng chọn đi chọn lại giá trị lặp lại gây mệt và dễ gõ sai khi test API.</p>
+      <div class="meta-row">
+        <span class="pill">Người chủ trì: tanmac</span>
+        <span class="pill">Dự án: hecto-api (v1.21.0)</span>
+        <span class="pill">Mục tiêu: Làm rõ • Phản biện • Chốt thiết kế</span>
+        <span class="pill">Ngày chốt: 2026-11-25</span>
+      </div>
+
+      <div class="seal-wrap" aria-label="HARDENED Seal">
+        <svg viewBox="0 0 180 180" width="156" height="156">
+          <defs>
+            <radialGradient id="wax" cx="40%" cy="35%" r="65%">
+              <stop offset="0%" stop-color="#34d399" />
+              <stop offset="55%" stop-color="#059669" />
+              <stop offset="100%" stop-color="#064e3b" />
+            </radialGradient>
+          </defs>
+          <circle cx="90" cy="90" r="80" fill="url(#wax)" stroke="#a7f3d0" stroke-width="2.5" stroke-dasharray="6 4" />
+          <circle cx="90" cy="90" r="66" fill="none" stroke="#ecfdf5" stroke-width="1.5" opacity="0.7" />
+          <text x="90" y="75" text-anchor="middle" fill="#ecfdf5" font-size="11" font-weight="700" letter-spacing="2">FORGE OUTCOME</text>
+          <text x="90" y="100" text-anchor="middle" fill="#ffffff" font-size="21" font-weight="900" letter-spacing="1.5">HARDENED</text>
+          <text x="90" y="122" text-anchor="middle" fill="#d1fae5" font-size="10" font-weight="600">ĐÃ ĐƯỢC RÈN &amp; CHỐT</text>
+        </svg>
+      </div>
+    </header>
+
+    <section class="section">
+      <h2>✅ Các quyết định đã khóa (Locked Decisions)</h2>
+      <ul>
+        <li><strong>Mở rộng trực tiếp trên <code>KVPair</code>:</strong> Bổ sung kiểu trường tùy chọn (vd <code>type?: "text" | "select"</code>) và <code>options?: string[]</code> (<code>omitempty</code>) trong <code>projects/model/types.go</code>; mặc định là <code>"text"</code> để tương thích ngược hoàn toàn.</li>
+        <li><strong>Áp dụng cho toàn bộ các bảng <code>KVPair</code>:</strong> Hỗ trợ trên cả <strong>4 tầng Variables</strong> (<code>Collection</code>, <code>Global Env</code>, <code>Folder Global</code>, <code>Folder Env</code>) lẫn Request <code>Params</code>, <code>PathParams</code>, <code>Headers</code>, <code>FormData</code>, <code>URLEncoded</code> — trừ các header tự sinh <code>_isAuto</code>.</li>
+        <li><strong>Điểm chạm chọn nhanh:</strong> Chọn 1-click trực tiếp tại <code>VariableHoverPopover.vue</code> (khi hover <code>{{biến}}</code> hoặc <code>:param</code>) và trong bảng <code>KvpEditor.vue</code> / <code>EnvModal.vue</code>, với nút chuyển <code>Text ↔ Select</code> + popover sửa options thu gọn ở cuối ô Value.</li>
+        <li><strong>Kế thừa 4 tầng:</strong> <code>options</code> gắn trực tiếp theo từng dòng ở mỗi tầng (để <code>Dev</code> và <code>Prod</code> có thể có danh sách lựa chọn khác nhau). Khi ghi đè qua <code>VariableHoverPopover</code> vào một tầng chưa khai báo <code>options</code>, popover kế thừa danh sách <code>options</code> từ tầng gần nhất đang có.</li>
+        <li><strong>Cấu trúc <code>options</code>:</strong> Dùng mảng chuỗi thuần <code>string[]</code> hiển thị qua dropdown list, không thêm trường <code>label</code> riêng.</li>
+        <li><strong>Độ chặt &amp; giá trị ngoài danh sách:</strong> Dropdown có dòng <strong><code>+ Thêm lựa chọn...</code></strong> ở cuối để nối nhanh option mới ngay tại chỗ mà không phải mở modal. Nếu script (<code>pm.*.set</code>) hoặc CLI <code>hecto</code> ghi một <code>value</code> không nằm trong <code>options</code>, UI giữ nguyên giá trị đó kèm nhãn <code>"(ngoài danh sách)"</code>; đồng thời hỗ trợ dùng <code>{{biến}}</code> lồng bên trong từng option.</li>
+        <li><strong>Lưu trữ thống nhất:</strong> Khi chọn option, app ghi thẳng <code>value</code> (và <code>options</code> nếu mới thêm) vào file JSON trên đĩa như cơ chế hiện tại, giữ đồng bộ giữa Desktop UI, <code>API Flow</code> và CLI <code>hecto</code>.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <h2>🚫 Các phương án đã loại bỏ &amp; lý do</h2>
+      <div class="rejected-box">
+        <strong>Option dạng <code>{ label, value }</code>:</strong> Bị loại vì làm tăng độ phức tạp khi nhập và không cần thiết cho mục tiêu chọn nhanh các chuỗi định sẵn.
+      </div>
+      <div class="rejected-box">
+        <strong>Chỉ giới hạn trong 4 tầng Variables:</strong> Bị bác bỏ sau phản biện của người dùng — Request Params, PathParams, Headers và Body cũng thường xuyên có các giá trị lặp lại và đã dùng chung model <code>KVPair</code> + component <code>KvpEditor.vue</code>.
+      </div>
+      <div class="rejected-box">
+        <strong>Thanh Quick-Switch ghim ngoài Header hoặc chỉ sửa trong Modal:</strong> Loại thanh ghim ngoài vì dễ làm rối UI khi nhiều biến; loại việc chỉ sửa trong Modal vì không giảm được thao tác khi đang bấm Send liên tục.
+      </div>
+      <div class="rejected-box">
+        <strong>Dropdown khóa cứng tuyệt đối / Combobox nhập tự do:</strong> Khóa cứng gây vướng khi thiếu 1 option đột xuất hoặc khi script/CLI ghi đè; combobox tự do dễ lặp lại lỗi gõ nhầm.
+      </div>
+      <div class="rejected-box">
+        <strong>Lưu lựa chọn đang chọn ở state cục bộ tách khỏi JSON:</strong> Loại bỏ để tránh lệch dữ liệu giữa Desktop UI, <code>API Flow</code> và CLI <code>hecto</code>.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>⚠️ Điểm yếu còn lại &amp; bẫy kỹ thuật cần lưu ý khi triển khai</h2>
+      <div class="risk-box">
+        <strong>Nhiễu Git diff khi đổi lựa chọn thường xuyên:</strong> Vì giá trị đang chọn ghi thẳng vào JSON trong thư mục Collection, team dùng <code>GitAutoSync</code> cần chấp nhận việc đổi dropdown sẽ làm file JSON đổi giống hệt hành vi sửa biến hiện tại.
+      </div>
+      <div class="risk-box">
+        <strong>Rủi ro rụng field <code>type</code> / <code>options</code> trong codebase hiện tại:</strong> Bắt buộc phải cập nhật <code>kvEqual</code> &amp; <code>kvToMap</code> trong <code>projects/service/git_merge.go</code>, <code>upsertVariable</code> trong <code>VariableHoverPopover.vue</code>, dirty-check trong <code>EnvModal.vue</code>, và <code>upsertKVPair</code> trong <code>projects/cmd/hecto/main.go</code> (hiện cả 4 nơi đều chỉ giữ 4 field <code>key</code>, <code>value</code>, <code>enabled</code>, <code>description</code>).
+      </div>
+      <div class="risk-box">
+        <strong>Gọn UI trong <code>KvpEditor.vue</code> &amp; <code>EnvModal.vue</code>:</strong> Cần giữ nút chuyển <code>Text ↔ Select</code> cực gọn ở cuối ô Value (ẩn nhẹ khi không dùng) để 90% dòng text thường không bị chật chội, đồng thời lưu ý <code>EnvModal.vue</code> đang tự render bảng riêng thay vì dùng <code>KvpEditor.vue</code>.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>🎭 Hội đồng Persona đã tham gia phản biện</h2>
+      <div class="grid-2">
+        <div class="persona-card">
+          <div class="persona-head">📋 John <span style="font-weight:400;color:var(--muted)">(BMad Agent)</span></div>
+          <div class="persona-role">Product Manager • Jobs-to-be-Done</div>
+          <p class="persona-voice">Truy vấn lý do gốc rễ khiến hệ thống 4 tầng + tick <code>enabled</code> hiện tại không đủ, bóc tách đúng nỗi đau "đổi phát mệt và gõ sai".</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">🎨 Sally <span style="font-weight:400;color:var(--muted)">(BMad Agent)</span></div>
+          <div class="persona-role">UX Designer • Luồng thao tác thực tế</div>
+          <p class="persona-voice">Phản biện vị trí điểm chạm để tránh tình trạng đặt select box sâu trong modal khiến số cú click còn nhiều hơn gõ tay.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">🏗️ Winston <span style="font-weight:400;color:var(--muted)">(BMad Agent)</span></div>
+          <div class="persona-role">System Architect • Kiến trúc 4 tầng</div>
+          <p class="persona-voice">Chỉ ra bài toán rớt về ô text khi ghi đè qua <code>VariableHoverPopover</code> ở tầng chưa có <code>options</code>, dẫn tới quy tắc kế thừa <code>options</code>.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">🎯 Yui <span style="font-weight:400;color:var(--muted)">(Custom Persona)</span></div>
+          <div class="persona-role">The Craftsman • Tối giản cấu trúc</div>
+          <p class="persona-voice">Cảnh báo độ phình bảng biến ~530px nếu ép nhập cả Label lẫn Value, thúc đẩy quyết định gọn nhẹ về mảng <code>string[]</code>.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">🌶️ Boundary <span style="font-weight:400;color:var(--muted)">(Custom Persona)</span></div>
+          <div class="persona-role">Edge-Case Hunter • Ca biên Runtime</div>
+          <p class="persona-voice">Bắt lỗi kinh điển khi <code>pm.environment.set</code> hoặc CLI ghi giá trị ngoài <code>options</code> khiến dropdown bị trống hoặc tự nhảy về phần tử đầu.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">💻 Amelia <span style="font-weight:400;color:var(--muted)">(BMad Agent)</span></div>
+          <div class="persona-role">Senior Software Engineer • Codebase Audit</div>
+          <p class="persona-voice">Soi đúng 4 điểm rò rỉ field trong <code>git_merge.go</code>, <code>EnvModal.vue</code>, <code>VariableHoverPopover.vue</code> và <code>main.go</code>.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">🚢 Dana <span style="font-weight:400;color:var(--muted)">(Custom Persona)</span></div>
+          <div class="persona-role">The Pragmatist • Thực dụng UX bảng</div>
+          <p class="persona-voice">Phản biện rủi ro làm rối 90% dòng text thường khi mở <code>select</code> cho toàn bộ <code>KvpEditor</code>, chốt nguyên tắc ẩn gọn nút chuyển kiểu.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">🧪 Murat <span style="font-weight:400;color:var(--muted)">(BMad Agent)</span></div>
+          <div class="persona-role">Master Test Architect • Kiểm thử biên</div>
+          <p class="persona-voice">Kiểm tra các ca biên cuối cùng: <code>options: []</code>, chuyển từ <code>select</code> về <code>text</code>, và giữ nguyên cơ chế lưu JSON.</p>
+        </div>
+        <div class="persona-card">
+          <div class="persona-head">👤 Các góc nhìn ngoại vi (Generated Voices)</div>
+          <div class="persona-role">Hải • Tuấn • Linh • Dũng • Phong • Kiên • Tâm • Ngọc</div>
+          <p class="persona-voice">Đóng vai người dùng thực tế (Git Sync team, QA chạy Flow/CLI, Dev test UUID/Script/biến lồng) để ép mọi giả định lộ hết điểm yếu trước khi chốt.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer-note">
+      Xuất tự động từ BMad Forge Idea • <code>_bmad-output/forge/env-select-variable/</code>
+    </div>
+  </div>
+</body>
+</html>

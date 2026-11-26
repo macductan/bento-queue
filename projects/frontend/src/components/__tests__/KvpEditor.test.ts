@@ -1,16 +1,35 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import KvpEditor from '../KvpEditor.vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { useRequestStore, type Request } from '@/stores/requestStore'
+import { useRequestStore, type Request, type KVPair } from '@/stores/requestStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useUiStore } from '@/stores/uiStore'
 import { nextTick } from 'vue'
 
 describe('KvpEditor', () => {
+  const mountedWrappers: any[] = []
+  const track = <T>(w: T): T => {
+    mountedWrappers.push(w)
+    return w
+  }
+
   beforeEach(() => {
     setActivePinia(createPinia())
     useUiStore().setLocale('vi')
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    for (const w of mountedWrappers) {
+      try {
+        w.unmount()
+      } catch {
+        // ignore
+      }
+    }
+    mountedWrappers.length = 0
+    document.body.innerHTML = ''
   })
 
   const createMockRequest = (overrides: Partial<Request> = {}): Request => ({
@@ -178,6 +197,288 @@ describe('KvpEditor', () => {
     expect(textarea.classes()).toContain('whitespace-pre-wrap')
     expect(textarea.classes()).toContain('break-all')
     expect(textarea.classes()).toContain('mono-sm')
+  })
+
+  it('toggles Text <-> Select, seeds options from non-empty value, and materializes phantom row', async () => {
+    const model: KVPair[] = [{ key: 'env', value: 'dev', enabled: true }]
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { modelValue: model }
+      })
+    )
+    await nextTick()
+
+    // Row 0 starts in text mode
+    const toggleBtns = wrapper.findAll('[data-test="kvp-mode-toggle-btn"]')
+    expect(toggleBtns.length).toBe(2) // row 0 + phantom row
+    expect(wrapper.findAll('textarea[placeholder="Value"]').length).toBe(2)
+
+    // Switch row 0 to select -> seeds options = ['dev']
+    await toggleBtns[0].trigger('click')
+    await nextTick()
+    expect(model[0].type).toBe('select')
+    expect(model[0].options).toEqual(['dev'])
+    expect(wrapper.find('[data-test="kvp-select-trigger"]').text()).toContain('dev')
+
+    // Switch row 0 back to text -> preserves options
+    await wrapper.findAll('[data-test="kvp-mode-toggle-btn"]')[0].trigger('click')
+    await nextTick()
+    expect(model[0].type).toBe('text')
+    expect(model[0].options).toEqual(['dev'])
+
+    // Click toggle on phantom row (index 1) -> materializes real row with type: 'select' and no empty option seeded
+    const phantomToggle = wrapper.findAll('[data-test="kvp-mode-toggle-btn"]')[1]
+    await phantomToggle.trigger('click')
+    await nextTick()
+    expect(model.length).toBe(2)
+    expect(model[1].type).toBe('select')
+    expect(model[1].options).toBeUndefined()
+  })
+
+  it('supports 1-click option selection, + Thêm lựa chọn... (deduped & rejects empty), and options popover', async () => {
+    const model: KVPair[] = [
+      { key: 'mode', value: 'a', enabled: true, type: 'select', options: ['a', 'b'] }
+    ]
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { modelValue: model }
+      })
+    )
+    await nextTick()
+
+    // Open 1-click dropdown (teleported to body)
+    await wrapper.find('[data-test="kvp-select-trigger"]').trigger('click')
+    await nextTick()
+    const dropdown = document.body.querySelector('[data-test="kvp-select-dropdown"]') as HTMLElement
+    expect(dropdown).not.toBeNull()
+
+    // Click option "b"
+    ;(dropdown.querySelector('[data-test="kvp-select-option-b"]') as HTMLButtonElement).click()
+    await nextTick()
+    expect(model[0].value).toBe('b')
+    expect(document.body.querySelector('[data-test="kvp-select-dropdown"]')).toBeNull()
+
+    // Re-open dropdown and test "+ Thêm lựa chọn..."
+    await wrapper.find('[data-test="kvp-select-trigger"]').trigger('click')
+    await nextTick()
+    ;(document.body.querySelector('[data-test="kvp-add-option-trigger"]') as HTMLButtonElement).click()
+    await nextTick()
+
+    const addInput = document.body.querySelector('[data-test="kvp-add-option-input"]') as HTMLInputElement
+    const addBtn = document.body.querySelector('[data-test="kvp-add-option-confirm"]') as HTMLButtonElement
+
+    // Reject empty/whitespace string
+    addInput.value = '   '
+    addInput.dispatchEvent(new Event('input'))
+    addBtn.click()
+    await nextTick()
+    expect(document.body.querySelector('[data-test="kvp-add-option-error"]')).not.toBeNull()
+    expect(model[0].options).toEqual(['a', 'b'])
+
+    // Add duplicate "b" -> does not duplicate in options, selects "b"
+    addInput.value = 'b'
+    addInput.dispatchEvent(new Event('input'))
+    addBtn.click()
+    await nextTick()
+    expect(model[0].options).toEqual(['a', 'b'])
+    expect(model[0].value).toBe('b')
+
+    // Re-open and add new option "c" -> appends to options and selects "c"
+    await wrapper.find('[data-test="kvp-select-trigger"]').trigger('click')
+    await nextTick()
+    ;(document.body.querySelector('[data-test="kvp-add-option-trigger"]') as HTMLButtonElement).click()
+    await nextTick()
+    const addInput2 = document.body.querySelector('[data-test="kvp-add-option-input"]') as HTMLInputElement
+    addInput2.value = 'c'
+    addInput2.dispatchEvent(new Event('input'))
+    ;(document.body.querySelector('[data-test="kvp-add-option-confirm"]') as HTMLButtonElement).click()
+    await nextTick()
+    expect(model[0].options).toEqual(['a', 'b', 'c'])
+    expect(model[0].value).toBe('c')
+
+    // Open options popover and remove option "c" -> value "c" is preserved as out-of-list!
+    await wrapper.find('[data-test="kvp-edit-options-btn"]').trigger('click')
+    await nextTick()
+    const popover = document.body.querySelector('[data-test="kvp-options-popover"]') as HTMLElement
+    expect(popover).not.toBeNull()
+    ;(popover.querySelector('[data-test="kvp-remove-option-btn-2"]') as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(model[0].options).toEqual(['a', 'b'])
+    expect(model[0].value).toBe('c')
+    expect(wrapper.find('[data-test="kvp-out-of-list-badge"]').text()).toContain('ngoài danh sách')
+  })
+
+  it('displays "(ngoài danh sách)" without deleting value when value is outside options, and hides controls for _isAuto rows', async () => {
+    const model: KVPair[] = [
+      { key: 'Content-Type', value: 'application/json', enabled: true, _isAuto: true },
+      { key: 'tier', value: 'x', enabled: true, type: 'select', options: ['a'] }
+    ]
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { modelValue: model }
+      })
+    )
+    await nextTick()
+
+    // _isAuto row (index 0) must not have toggle or options button
+    const rowEls = wrapper.findAll('.divide-y > div')
+    expect(rowEls[0].find('[data-test="kvp-mode-toggle-btn"]').exists()).toBe(false)
+    expect(rowEls[0].find('[data-test="kvp-edit-options-btn"]').exists()).toBe(false)
+
+    // Row 1 shows out-of-list value and keeps 'x'
+    expect(rowEls[1].find('[data-test="kvp-select-trigger"]').text()).toContain('x')
+    expect(rowEls[1].find('[data-test="kvp-out-of-list-badge"]').text()).toContain('ngoài danh sách')
+    expect(model[1].value).toBe('x')
+  })
+
+  it('supports select mode on path_params with readonlyKeys', async () => {
+    const reqStore = useRequestStore()
+    reqStore.current = createMockRequest({
+      path_params: [{ key: 'org', value: 'acme', enabled: true }]
+    })
+
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { field: 'path_params', readonlyKeys: true, keyPrefix: ':' }
+      })
+    )
+    await nextTick()
+
+    await wrapper.find('[data-test="kvp-mode-toggle-btn"]').trigger('click')
+    await nextTick()
+    expect(reqStore.current.path_params?.[0].type).toBe('select')
+    expect(reqStore.current.path_params?.[0].options).toEqual(['acme'])
+  })
+
+  it('edits options in popover (add/error/edit/Enter/outside-click blur commit) and Escape cancels inline-add without closing dropdown', async () => {
+    const model: KVPair[] = [
+      { key: 'mode', value: 'a', enabled: true, type: 'select', options: ['a', 'b'] }
+    ]
+    const wrapper = track(
+      mount(KvpEditor, {
+        attachTo: document.body,
+        props: { modelValue: model }
+      })
+    )
+    await nextTick()
+
+    // 1. Escape inside kvp-add-option-input cancels inline-add without closing dropdown
+    await wrapper.find('[data-test="kvp-select-trigger"]').trigger('click')
+    await nextTick()
+    ;(document.body.querySelector('[data-test="kvp-add-option-trigger"]') as HTMLButtonElement).click()
+    await nextTick()
+
+    const inlineInput = document.body.querySelector('[data-test="kvp-add-option-input"]') as HTMLInputElement
+    expect(inlineInput).not.toBeNull()
+    inlineInput.focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+
+    expect(document.body.querySelector('[data-test="kvp-select-dropdown"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-test="kvp-add-option-input"]')).toBeNull()
+
+    // Second Escape closes the dropdown
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(document.body.querySelector('[data-test="kvp-select-dropdown"]')).toBeNull()
+
+    // 2. Options popover add validation & editing existing option
+    await wrapper.find('[data-test="kvp-edit-options-btn"]').trigger('click')
+    await nextTick()
+    const popover = document.body.querySelector('[data-test="kvp-options-popover"]') as HTMLElement
+    const popAddInput = popover.querySelector('[data-test="kvp-popover-add-option-input"]') as HTMLInputElement
+    const popAddBtn = popover.querySelector('[data-test="kvp-popover-add-option-btn"]') as HTMLButtonElement
+
+    // Reject empty and duplicate
+    popAddInput.value = '   '
+    popAddInput.dispatchEvent(new Event('input'))
+    popAddBtn.click()
+    await nextTick()
+    expect(popover.querySelector('[data-test="kvp-popover-option-error"]')).not.toBeNull()
+
+    popAddInput.value = 'a'
+    popAddInput.dispatchEvent(new Event('input'))
+    popAddBtn.click()
+    await nextTick()
+    expect(popover.querySelector('[data-test="kvp-popover-option-error"]')).not.toBeNull()
+
+    // Add valid option 'c'
+    popAddInput.value = 'c'
+    popAddInput.dispatchEvent(new Event('input'))
+    popAddBtn.click()
+    await nextTick()
+    expect(model[0].options).toEqual(['a', 'b', 'c'])
+
+    // Edit option 1 via Enter
+    const opt1Input = popover.querySelector('[data-test="kvp-option-item-input-1"]') as HTMLInputElement
+    opt1Input.value = 'b2'
+    opt1Input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await nextTick()
+    expect(model[0].options).toEqual(['a', 'b2', 'c'])
+
+    // Edit option 0 while focused and click outside on document.body -> blur-before-close commits edit
+    const opt0Input = popover.querySelector('[data-test="kvp-option-item-input-0"]') as HTMLInputElement
+    opt0Input.focus()
+    opt0Input.value = 'a2'
+    window.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await nextTick()
+
+    expect(model[0].options).toEqual(['a2', 'b2', 'c'])
+    expect(document.body.querySelector('[data-test="kvp-options-popover"]')).toBeNull()
+  })
+
+  it('locks checkboxes, inputs, and row mutations when readonly prop is true', async () => {
+    const model: KVPair[] = [{ key: 'Authorization', value: 'Bearer 1', enabled: true }]
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { modelValue: model, readonly: true }
+      })
+    )
+    await nextTick()
+
+    expect((wrapper.find('[role="checkbox"]').element as HTMLButtonElement).disabled).toBe(true)
+    expect((wrapper.find('input[type="text"]').element as HTMLInputElement).readOnly).toBe(true)
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).readOnly).toBe(true)
+    expect(wrapper.find('[data-test="kvp-mode-toggle-btn"]').exists()).toBe(false)
+    expect((wrapper.vm as any)).toBeDefined()
+  })
+
+  it('uses synchronized CSS Grid columns for header and body rows in 4-col and 3-col (keysLocked) modes', async () => {
+    const model: KVPair[] = [{ key: 'k', value: 'v', enabled: true }]
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { modelValue: model }
+      })
+    )
+    await nextTick()
+
+    const header4 = wrapper.find('[data-test="kvp-header-row"]')
+    const body4 = wrapper.findAll('[data-test="kvp-body-row"]')
+    expect(header4.classes()).toContain('grid')
+    expect(header4.classes()).toContain('items-stretch')
+    expect(header4.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]')
+    expect(body4.length).toBe(2) // row + phantom
+    for (const row of body4) {
+      expect(row.classes()).toContain('grid')
+      expect(row.classes()).toContain('items-stretch')
+      expect(row.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]')
+      const cells = row.findAll(':scope > div')
+      expect(cells.length).toBe(4)
+      expect(cells[1].classes()).toContain('min-w-0')
+      expect(cells[2].classes()).toContain('min-w-0')
+      expect(cells[1].find('input[type="text"]').classes()).toContain('min-w-0')
+    }
+
+    await wrapper.setProps({ readonlyKeys: true })
+    await nextTick()
+
+    const header3 = wrapper.find('[data-test="kvp-header-row"]')
+    const body3 = wrapper.findAll('[data-test="kvp-body-row"]')
+    expect(header3.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]')
+    expect(body3.length).toBe(1)
+    expect(body3[0].classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]')
+    expect(body3[0].findAll(':scope > div').length).toBe(3)
   })
 })
 

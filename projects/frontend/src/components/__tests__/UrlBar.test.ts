@@ -336,6 +336,69 @@ describe('UrlBar.vue', () => {
     expect(sendBtn.attributes('aria-label')).toBe('Send')
     expect(sendBtn.text()).toContain('Send')
   })
+
+  it('renders url-linked-badge as a non-overlapping flex sibling and wraps URL only while focused', async () => {
+    const requestStore = useRequestStore()
+    requestStore.current = {
+      id: 'req-linked-url',
+      name: 'Linked URL Req',
+      method: 'GET',
+      url: 'https://api-eu.dhl.com/track/shipments?trackingNumber=00340434775433345690&requesterCountryCode=DE',
+      headers: [],
+      params: [],
+      body: { type: 'none', content: '' },
+      examples: [
+        {
+          id: 'ex-1',
+          name: 'Example 1',
+          method: 'GET',
+          url: 'https://api-eu.dhl.com/track/shipments?trackingNumber=00340434775433345690&requesterCountryCode=DE',
+          headers: [],
+          params: [],
+          body: { type: 'none', content: '' },
+          sync_flags: {
+            url: true,
+            method: true,
+            auth: false,
+            scripts: false,
+            body: false,
+            params: false,
+            path_params: false,
+            headers: false,
+            variables: false
+          },
+          created_at: '2026-11-26',
+          updated_at: '2026-11-26'
+        }
+      ],
+      created_at: '2026-11-26',
+      updated_at: '2026-11-26'
+    }
+    requestStore.draft = requestStore.current
+    requestStore.activeExampleId = 'ex-1'
+
+    const wrapper = mount(UrlBar)
+    await wrapper.vm.$nextTick()
+
+    const badge = wrapper.find('[data-test="url-linked-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.classes()).toContain('shrink-0')
+    expect(badge.classes()).not.toContain('absolute')
+
+    const textarea = wrapper.find('#url-input')
+    const highlighter = wrapper.findComponent({ name: 'VariableHighlighter' })
+    expect(textarea.classes()).not.toContain('pr-28')
+    expect(textarea.classes()).toContain('whitespace-pre')
+    expect(textarea.classes()).not.toContain('whitespace-pre-wrap')
+    expect(highlighter.props('wrap')).toBe(false)
+
+    await textarea.trigger('focus')
+    await wrapper.vm.$nextTick()
+
+    expect(textarea.classes()).toContain('whitespace-pre-wrap')
+    expect(textarea.classes()).toContain('break-all')
+    expect(highlighter.props('wrap')).toBe(true)
+  })
 })
 
 

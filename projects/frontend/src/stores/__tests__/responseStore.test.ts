@@ -195,4 +195,146 @@ describe('responseStore integration', () => {
     const sentReq = (SendRequest as any).mock.calls[0][0]
     expect(sentReq.url).toBe('https://custom.folder.api/users')
   })
+
+  it('sends effective Request for active Example and caches response by (requestId, exampleId)', async () => {
+    const responseStore = useResponseStore()
+    const requestStore = useRequestStore()
+    const { useTabStore } = await import('../tabStore')
+    const tabStore = useTabStore()
+
+    vi.mocked(SendRequest).mockResolvedValueOnce({
+      success: true,
+      data: {
+        status_code: 201,
+        status_text: '201 Created',
+        headers: {},
+        body: '{"created":true}',
+        time_ms: 15,
+        size_bytes: 16,
+        timestamp: '',
+        truncated: false,
+        is_binary: false
+      }
+    } as any)
+
+    const baseReq = createMockRequest({
+      id: 'req-send-ex',
+      name: 'Create Order',
+      method: 'POST',
+      url: 'https://v2.api.dev/orders?default=1',
+      params: [{ key: 'default', value: '1', enabled: true }],
+      body: { type: 'json', content: '{"kind":"default"}' },
+      examples: [
+        {
+          id: 'ex-vip',
+          name: 'VIP Order',
+          method: 'POST',
+          url: 'https://v1.api.dev/orders?vip=1',
+          params: [{ key: 'vip', value: '1', enabled: true }],
+          path_params: [],
+          headers: [],
+          variables: [],
+          body: { type: 'json', content: '{"kind":"vip"}' },
+          auth: { type: 'inherit' },
+          sync_flags: {
+            url: true,
+            method: true,
+            auth: true,
+            scripts: true,
+            body: false,
+            params: false,
+            path_params: false,
+            headers: false,
+            variables: false
+          },
+          created_at: '',
+          updated_at: ''
+        }
+      ]
+    })
+
+    tabStore.openTab({ type: 'request', entityId: 'req-send-ex', name: 'Create Order', method: 'POST' })
+    requestStore.original = JSON.parse(JSON.stringify(baseReq))
+    requestStore.draft = JSON.parse(JSON.stringify(baseReq))
+    requestStore.selectExample('ex-vip')
+
+    await responseStore.send()
+
+    expect(SendRequest).toHaveBeenCalledTimes(1)
+    const sentReq = (SendRequest as any).mock.calls[0][0]
+    expect(sentReq.method).toBe('POST')
+    expect(sentReq.url).toBe('https://v2.api.dev/orders?vip=1')
+    expect(sentReq.body).toBe('{"kind":"vip"}')
+    expect(tabStore.responseCache['req-send-ex::ex-vip']?.response?.body).toBe('{"created":true}')
+    expect(tabStore.responseCache['req-send-ex']?.response ?? null).toBeNull()
+  })
+
+  it('prevents pre/post script requestMutations from overwriting linked Default fields on active Example', async () => {
+    const responseStore = useResponseStore()
+    const requestStore = useRequestStore()
+
+    vi.mocked(SendRequest).mockResolvedValueOnce({
+      success: true,
+      data: {
+        status_code: 200,
+        status_text: '200 OK',
+        headers: {},
+        body: '{}',
+        time_ms: 5,
+        size_bytes: 2,
+        timestamp: '',
+        truncated: false,
+        is_binary: false
+      }
+    } as any)
+
+    const baseReq = createMockRequest({
+      id: 'req-script-guard',
+      name: 'Script Guard',
+      method: 'GET',
+      url: 'https://api.example.com/items',
+      headers: [],
+      scripts: {
+        pre_request: "ha.request.headers.set('X-Added', 'yes'); ha.request.query.set('added', '1');",
+        post_response: ''
+      },
+      examples: [
+        {
+          id: 'ex-guard',
+          name: 'Guarded',
+          method: 'GET',
+          url: 'https://api.example.com/items',
+          headers: [],
+          params: [],
+          path_params: [],
+          variables: [],
+          body: { type: 'none', content: '' },
+          auth: { type: 'inherit' },
+          sync_flags: {
+            url: true,
+            method: true,
+            auth: true,
+            scripts: true,
+            body: false,
+            params: true, // linked!
+            path_params: false,
+            headers: false, // unlinked!
+            variables: false
+          },
+          created_at: '',
+          updated_at: ''
+        }
+      ]
+    })
+
+    requestStore.original = JSON.parse(JSON.stringify(baseReq))
+    requestStore.draft = JSON.parse(JSON.stringify(baseReq))
+    requestStore.selectExample('ex-guard')
+
+    await responseStore.send()
+
+    // Unlinked header mutation persisted to projection, linked params mutation blocked on reqStore.current
+    expect(requestStore.current!.headers.some(h => h.key === 'X-Added' && h.value === 'yes')).toBe(true)
+    expect(requestStore.current!.params).toEqual([])
+  })
 })

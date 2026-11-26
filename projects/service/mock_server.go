@@ -79,6 +79,36 @@ func normalizeMockRoute(r model.MockRoute) model.MockRoute {
 	return r
 }
 
+func normalizeMockCollRoot(collRoot string) string {
+	trimmed := strings.TrimSpace(collRoot)
+	if trimmed == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(trimmed); err == nil {
+		return abs
+	}
+	return filepath.Clean(trimmed)
+}
+
+func sameMockCollRoot(a, b string) bool {
+	na := normalizeMockCollRoot(a)
+	nb := normalizeMockCollRoot(b)
+	return na != "" && na == nb
+}
+
+func normalizeMockConfig(cfg model.MockServerConfig) model.MockServerConfig {
+	if cfg.Port <= 0 {
+		cfg.Port = defaultMockPort
+	}
+	if cfg.Routes == nil {
+		cfg.Routes = []model.MockRoute{}
+	}
+	for i := range cfg.Routes {
+		cfg.Routes[i] = normalizeMockRoute(cfg.Routes[i])
+	}
+	return cfg
+}
+
 func (s *MockServerService) readConfigLocked(collRoot string) model.MockServerConfig {
 	cfg := model.MockServerConfig{
 		Port:   defaultMockPort,
@@ -98,20 +128,11 @@ func (s *MockServerService) readConfigLocked(collRoot string) model.MockServerCo
 			Routes: []model.MockRoute{},
 		}
 	}
-	if cfg.Port <= 0 {
-		cfg.Port = defaultMockPort
-	}
-	if cfg.Routes == nil {
-		cfg.Routes = []model.MockRoute{}
-	}
-	for i := range cfg.Routes {
-		cfg.Routes[i] = normalizeMockRoute(cfg.Routes[i])
-	}
-	return cfg
+	return normalizeMockConfig(cfg)
 }
 
 func (s *MockServerService) statusLocked(collRoot string, cfg model.MockServerConfig) model.MockServerStatus {
-	isRunning := s.running && (collRoot != "" && s.activeCollRoot == collRoot)
+	isRunning := s.running && sameMockCollRoot(s.activeCollRoot, collRoot)
 	port := cfg.Port
 	if isRunning && s.activePort > 0 {
 		port = s.activePort
@@ -143,22 +164,14 @@ func (s *MockServerService) SaveConfig(collRoot string, cfg model.MockServerConf
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if cfg.Port <= 0 {
-		cfg.Port = defaultMockPort
-	}
-	if cfg.Routes == nil {
-		cfg.Routes = []model.MockRoute{}
-	}
-	for i := range cfg.Routes {
-		cfg.Routes[i] = normalizeMockRoute(cfg.Routes[i])
-	}
+	cfg = normalizeMockConfig(cfg)
 
 	if err := s.fs.WriteJSON(s.configPath(collRoot), cfg); err != nil {
 		s.logger.Error("failed to save mock-server.json", "error", err)
 		return model.NewError(model.ErrIO, "Không thể lưu cấu hình Mock Server")
 	}
 
-	if s.running {
+	if s.running && sameMockCollRoot(s.activeCollRoot, collRoot) {
 		s.activeRoutes = append([]model.MockRoute(nil), cfg.Routes...)
 	}
 
@@ -180,8 +193,6 @@ func (s *MockServerService) Start(collRoot string, port int) model.Result {
 	listenPort := cfg.Port
 	if port > 0 {
 		listenPort = port
-		cfg.Port = port
-		_ = s.fs.WriteJSON(s.configPath(collRoot), cfg)
 	} else if port == 0 {
 		listenPort = 0
 	}
@@ -193,12 +204,17 @@ func (s *MockServerService) Start(collRoot string, port int) model.Result {
 		return model.NewError(model.ErrIO, fmt.Sprintf("Không thể mở cổng %d cho Mock Server: %v", listenPort, err))
 	}
 
+	if port > 0 {
+		cfg.Port = port
+		_ = s.fs.WriteJSON(s.configPath(collRoot), cfg)
+	}
+
 	actualPort := listenPort
 	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
 		actualPort = tcpAddr.Port
 	}
 
-	s.activeCollRoot = collRoot
+	s.activeCollRoot = normalizeMockCollRoot(collRoot)
 	s.activePort = actualPort
 	s.activeRoutes = append([]model.MockRoute(nil), cfg.Routes...)
 	s.ln = ln
@@ -240,7 +256,42 @@ func (s *MockServerService) Stop(collRoot string) model.Result {
 	return model.NewSuccess(s.statusLocked(collRoot, cfg))
 }
 
-func cleanURLPath(p string) string {
+// ReloadRoutes reloads routes from <collRoot>/mock-server.json into memory without writing to disk.
+func (s *MockServerService) ReloadRoutes(collRoot string) model.Result {
+	if strings.TrimSpace(collRoot) == "" {
+		return model.NewError(model.ErrValidation, ErrCollectionRootEmpty)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cfg := model.MockServerConfig{
+		Port:   defaultMockPort,
+		Routes: []model.MockRoute{},
+	}
+	path := s.configPath(collRoot)
+	if s.fs.Exists(path) {
+		if err := s.fs.ReadJSON(path, &cfg); err != nil {
+			s.logger.Warn("failed to reload mock-server.json, preserving active routes", "path", path, "error", err)
+			routes := []model.MockRoute{}
+			if s.running && sameMockCollRoot(s.activeCollRoot, collRoot) && s.activeRoutes != nil {
+				routes = append([]model.MockRoute(nil), s.activeRoutes...)
+			}
+			return model.NewSuccess(s.statusLocked(collRoot, model.MockServerConfig{
+				Port:   defaultMockPort,
+				Routes: routes,
+			}))
+		}
+		cfg = normalizeMockConfig(cfg)
+	}
+
+	if s.running && sameMockCollRoot(s.activeCollRoot, collRoot) {
+		s.activeRoutes = append([]model.MockRoute(nil), cfg.Routes...)
+	}
+	return model.NewSuccess(s.statusLocked(collRoot, cfg))
+}
+
+// CleanMockPath normalizes a mock route URL path (strips query string, ensures leading slash, trims trailing slash).
+func CleanMockPath(p string) string {
 	p = strings.TrimSpace(p)
 	if idx := strings.Index(p, "?"); idx >= 0 {
 		p = p[:idx]
@@ -253,13 +304,16 @@ func cleanURLPath(p string) string {
 	}
 	if len(p) > 1 {
 		p = strings.TrimRight(p, "/")
+		if p == "" {
+			return "/"
+		}
 	}
 	return p
 }
 
 func matchMockPath(pattern, actual string) bool {
-	pat := cleanURLPath(pattern)
-	act := cleanURLPath(actual)
+	pat := CleanMockPath(pattern)
+	act := CleanMockPath(actual)
 	if pat == act {
 		return true
 	}

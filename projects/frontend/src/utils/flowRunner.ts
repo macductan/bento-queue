@@ -34,6 +34,7 @@ export interface FlowBranch {
 export interface FlowStep {
   id: string
   request_id: string
+  example_id?: string
   enabled: boolean
   timeout_ms?: number
 }
@@ -78,6 +79,7 @@ export interface FlowTreeNode {
 
 export type StepFailureCategory =
   | 'deleted_request'
+  | 'deleted_example'
   | 'network_or_timeout'
   | 'script_error'
   | 'test_failed'
@@ -85,6 +87,8 @@ export type StepFailureCategory =
 
 export interface StepVerdictInput {
   requestMissing?: boolean
+  exampleMissing?: boolean
+  exampleError?: string | null
   networkError?: string | null
   scriptError?: string | null
   scriptTests?: ScriptTestResult[] | null
@@ -324,6 +328,18 @@ export function evaluateStepVerdict(input: StepVerdictInput | undefined | null):
       passed: false,
       failureCategory: 'deleted_request',
       failureReason: 'Request gốc đã bị xóa khỏi Collection'
+    }
+  }
+
+  if (input.exampleMissing === true) {
+    const reason =
+      typeof input.exampleError === 'string' && input.exampleError.trim() !== ''
+        ? input.exampleError.trim()
+        : 'Example được chọn đã bị xóa khỏi Request gốc'
+    return {
+      passed: false,
+      failureCategory: 'deleted_example',
+      failureReason: reason
     }
   }
 

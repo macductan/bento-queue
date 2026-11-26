@@ -23,12 +23,83 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 - **Nguồn duy nhất cho Version (Single Source of Truth)**:
   - Trường `"version"` trong `projects/frontend/package.json`.
 - **AI Agent CLI (`hecto`) & Shared TypeScript Engine (`goja` - từ `v1.14.0`)**:
-  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`), `hecto run`, `hecto flow run` và `hecto import`.
+  - Binary độc lập `projects/cmd/hecto/main.go` (không phụ thuộc Wails/GTK/WebKit, cài đặt qua `./projects/install-cli.sh`) cung cấp lệnh tự định hướng `hecto agent-guide` (nhúng `SKILL.md`, hỗ trợ `--toc`/`--list` và `--section <id|alias[,...]>` từ `v1.21.0`), hệ lệnh trực giao (`collection`, `env`, `folder`, `req`, `flow`, `mock` với `list`/`get`/`create`/`update`/`delete`/`move`/`activate`/`start`/`stop`), `hecto run` / `hecto flow run` (hỗ trợ `--compact`, `--redact`, `--max-body <bytes>` từ `v1.21.0`) và `hecto import`.
   - Shared TypeScript Execution Engine (`projects/frontend/src/utils/headless-engine.ts` $\rightarrow$ `projects/engine/headless-engine.js`) nhúng qua `//go:embed` trên pure-Go `github.com/dop251/goja` đảm bảo đồng nhất 100% logic giải biến 4 tầng, kế thừa Auth/Header, `btoa`/`atob` Latin-1 (hỗ trợ tiếng Việt/Unicode), thực thi `ha.*` Pre-request/Post-response scripts và đánh giá luồng đa nhánh `flowRunner.ts` giữa Desktop UI và CLI.
   - Đồng bộ file 3 lớp (`projects/storage/watcher.go` dùng `fsnotify` + lọc self-write 400ms + debounce 300ms + `collectionStore.smartReload()`): tự động phát hiện thay đổi từ CLI/Git/Editor ngoài, giữ nguyên trạng thái mở cây thư mục (`expandedFolders`) và bảo vệ các tab đang chỉnh sửa dở (`isDirty`).
 - **API Flow (Structured Flowchart Runner - từ `v1.15.0`)**:
   - Lưu trữ độc lập tại `<collection>/flows/` với `FlowFolder` (`_folder.json`) và `Flow` (`<flow-uuid>.json`).
   - Bước thực thi kiểu Con trỏ mỏng (`Thin Pointer` trỏ tới `request_id` gốc), tái sử dụng 100% biến 4 tầng, kế thừa Auth/Header và Script của Request gốc; hỗ trợ chạy Tuần tự, Hàng Song song (`Promise.all` / goroutines kèm gom tuần tự thay đổi biến sau hàng), và Rẽ nhánh 3 chế độ (`success`, `error`, `custom` 3 ô).
+
+---
+
+## [v1.23.0] - 2026-11-26
+
+### Added — Tự động xuống dòng (Word Wrap) mặc định cho Response Viewer
+- **Lưu trạng thái `responseWordWrap` mặc định `true` (`uiStore.ts`)**:
+  - Bổ sung `RESPONSE_WORD_WRAP_STORAGE_KEY` (`hecto_response_word_wrap`), trạng thái `responseWordWrap` (fallback an toàn về `true` khi `localStorage` trống, lỗi hoặc hỏng giá trị) cùng `setResponseWordWrap` và `toggleResponseWordWrap`.
+- **Nút bật/tắt Wrap & Hỗ trợ Pretty/Raw (`ResponseViewer.vue`, `JsonViewer.vue`, `jsonHighlight.ts`, `en.ts`, `vi.ts`)**:
+  - Thêm nút `toggle-response-wrap-btn` (song ngữ `en`/`vi`, responsive `flex-wrap`) trên thanh công cụ phụ của `ResponseViewer.vue`.
+  - Hỗ trợ word wrap đồng bộ cho cả **Pretty mode** (bố cục từng hàng flex độc lập `flex items-stretch` giúp chiều cao từng dòng tự giãn mà không bị đè chữ và chỉ số dòng luôn khớp chính xác khi xuống nhiều dòng thị giác, hàm `splitHtmlLinesSafe` trong `jsonHighlight.ts` xử lý an toàn thẻ `<span>`/`<mark>`, chuẩn hóa CRLF, void tags `br`/`hr`/`img`/`wbr`/`input`/`col`, và tự đóng thẻ ở EOF) và **Raw mode** (`whitespace-pre-wrap break-words [overflow-wrap:anywhere]`). Khi tắt wrap, khôi phục sticky gutter và cuộn ngang (`whitespace-pre`) mà vẫn giữ nguyên tìm kiếm (`Ctrl+F`) và `scrollToActiveMatch`.
+
+### Fixed — Sửa lỗi lệch cột và đứt viền dọc trên toàn bộ bảng dữ liệu
+- **Đồng bộ cột CSS Grid (`KvpEditor.vue`, `DefaultHeadersTable.vue`, `HeadersTable.vue`)**:
+  - Chuyển cả tiêu đề và các dòng dữ liệu sang CSS Grid dùng chung track cột và `items-stretch` (`KvpEditor`: 4 cột hoặc 3 cột khi `keysLocked` kèm `min-w-0` trên Key `<input>`; `DefaultHeadersTable`: 4 cột cố định kèm `min-w-0`; `HeadersTable`: 2 cột kèm `min-w-0`), khắc phục hoàn toàn lỗi lệch vạch phân cách dọc và đứt viền cột.
+- **Cố định cột bảng HTML (`EnvModal.vue`, `ResponseViewer.vue`)**:
+  - Chuẩn hóa bảng biến môi trường `env-variables-table` trong `EnvModal.vue` dùng `table-fixed` + `<colgroup>` (`w-10`, `w-1/3`, auto, `w-10`), `px-0` cho cột checkbox/delete, đồng bộ `border-l` cho cột xóa và `min-w-0` cho Key/Value.
+  - Chuẩn hóa bảng `execution-logs-table` trong `ResponseViewer.vue` dùng `table-fixed` + `<colgroup>` (`w-28`, `w-32`, `w-20`, auto) và `min-w-[480px]` trong wrapper `overflow-x-auto`, thêm `truncate` cho cột thời gian và wrap an toàn nội dung `http-log-detail-box` để tránh sập cột Detail trong pane hẹp (`StepInspectorPanel`).
+- **Sửa hiển thị thanh URL (`UrlBar.vue`)**: Chuyển badge `Linked · Ngắt liên kết` thành flex sibling (`shrink-0`) để chữ URL dài không đè lên badge và chỉ bật wrap nhiều dòng khi đang focus để không cắt nửa dòng chữ thứ hai trong khung `h-[44px]`.
+- **Tests**: Cập nhật và bổ sung unit/component tests đầy đủ cho `uiStore.test.ts`, `ResponseViewer.test.ts`, `KvpEditor.test.ts`, `DefaultHeadersTable.test.ts`, `HeadersTable.test.ts`, `EnvModal.test.ts`, và `UrlBar.test.ts`.
+
+---
+
+## [v1.22.0] - 2026-11-25
+
+### Added — Biến & KVPair dạng Select Box (Chọn nhanh 1-Click, Tầng Request độc lập & Kế thừa 5 tầng)
+- **Mở rộng Model `KVPair`, `Request.Variables` (Tầng 5), Git 3-way Merge & CLI (`projects/model/types.go`, `projects/service/git_merge.go`, `projects/cmd/hecto/main.go`, `projects/frontend/src/utils/headless-engine.ts`)**:
+  - Bổ sung trường tùy chọn `type?: "text" | "select"` và `options?: string[]` (`omitempty`, mặc định `"text"` tương thích ngược 100%) trên `KVPair`, áp dụng đồng bộ cho cả 4 tầng Variables (`Collection`, `Global Env`, `Folder Global`, `Folder Env`), `Request.Variables` lẫn Request `Params`, `PathParams`, `Headers`, `FormData`, `URLEncoded`.
+  - Bổ sung `Request.Variables` (`request.variables`, Tầng 5 cao nhất trước `--var` của CLI) vào mô hình `Request`, bộ giải `resolveHierarchyVariables`, `responseStore`, `ScriptEditor`, `flowStore` và `headless-engine.ts`/`headless-engine.js`, đảm bảo các Request khác nhau lưu giá trị biến `select` độc lập mà không ghi đè lẫn nhau.
+  - Cập nhật `kvEqual` (chuẩn hóa `""` ↔ `"text"` và so sánh `slices.Equal`), `kvToMap` trong `git_merge.go` và `formatConflictValue` trong `GitConflictResolverModal.vue` để bảo toàn và hiển thị khác biệt `type`/`options` khi merge Git.
+  - Bảo toàn `type`/`options` qua `reconcileUrlAndParams` (`projects/engine/headless-engine.js`) và CLI `upsertKVPair`, đồng thời mở rộng `redactKVPairSecrets` che cả `Options` khi chạy CLI với `--redact`/`--compact`.
+- **Giao diện Select Box 1-Click & Kế thừa 5 tầng (`KvpValueSelectControl.vue`, `KvpEditor.vue`, `EnvModal.vue`, `VariableHoverPopover.vue`, `VariableHighlighter.vue`, `resolveHierarchyVariables.ts`)**:
+  - Xây dựng component dùng chung `KvpValueSelectControl.vue` (`<Teleport to="body">`) với nút chuyển gọn `Text ↔ Select`, popover quản lý danh sách `options`, dropdown chọn 1-click kèm `+ Thêm lựa chọn...` tại chỗ và hiển thị nguyên vẹn giá trị ngoài danh sách kèm nhãn `"(ngoài danh sách)"`.
+  - Tích hợp vào `KvpEditor.vue` (ẩn hoàn toàn trên header tự sinh `_isAuto`), `EnvModal.vue` (kèm sửa dirty-check `closeAndSave`), `FolderEditor.vue`, `CollectionEnvModal.vue` và bản dịch i18n `kvp.*` (`en.ts`, `vi.ts`).
+  - Mở rộng `inspectVariableHierarchy` và `VariableHoverPopover.vue`: mặc định phạm vi lưu của biến `select` trong Request là **`Request này (Riêng Request)`** (chọn ở Request A không ảnh hưởng Request B, đồng thời lưu ghi đè thuần `value` để tự động đồng bộ `options` mới từ Env/Folder và có nút `Bỏ ghi đè`), còn biến `text` thường giữ nguyên mặc định phạm vi Env/Folder; hỗ trợ chọn 1-click tự lưu ngay, bảo toàn `type`/`options` trong `upsertVariable`, và kế thừa `options` theo thứ tự ưu tiên (`path-param` / `request` → `folder-env` → `folder-global` → `global-env` → `collection`) cho cả `{{var}}` lẫn `:param`, kèm bộ unit/component/Go tests đầy đủ.
+
+### Added — Example Request (Kịch bản đầu vào, Cờ đồng bộ theo nhóm trường & Parity Flow/CLI)
+- **Model `RequestExample`, `ExampleSyncFlags` & Services (`projects/model/types.go`, `projects/service/request_examples.go`, `projects/service/request.go`, `projects/service/collection.go`, `projects/service/git_merge.go`)**:
+  - Bổ sung `RequestExample` và `ExampleSyncFlags` theo 9 nhóm trường (`url`, `method`, `auth`, `scripts` mặc định bật; `body`, `params`, `path_params`, `headers`, `variables` mặc định tắt) nhúng trực tiếp trong mảng `Request.Examples` (`<req-uuid>.json`), cùng `TreeNode.Examples` và `FlowStep.ExampleID`.
+  - Hỗ trợ tách Base URL (trước `?`) + danh sách key `:path_param` khỏi `?query` (`Params`) khi `url` bật đồng bộ nhưng `params` độc lập; tự động tái sinh `example.id` khi `Duplicate` Request; hỗ trợ `DetachExample` (Move/Extract thành Request mới cùng thư mục và xóa Example khỏi Request gốc); và nâng cấp merge 3 chiều mảng `examples[]` theo `id` trong `git_merge.go` kèm hiển thị diff trong `GitConflictResolverModal.vue`.
+- **Giao diện Example Switcher, Linked/Read-only & Flow UI (`ExampleSwitcher.vue`, `RequestEditor.vue`, `UrlBar.vue`, `useUrlParamsSync.ts`, `requestExamples.ts`, `requestStore.ts`, `tabStore.ts`, `responseStore.ts`, `FlowStepCard.vue`, `StepInspectorPanel.vue`)**:
+  - Bổ sung `ExampleSwitcher.vue` ngay trong `RequestEditor.vue` (Request gốc đóng vai trò kịch bản `Default`), bảo vệ trạng thái Linked/Chỉ đọc cho các nhóm đang bật đồng bộ (bao gồm khóa toàn bộ `UrlBar` khi `url` đang link, cập nhật cURL Preview theo kịch bản Example đang chọn), hỗ trợ Sync chọn lọc / Sync All và Detach.
+  - Lưu `active_example_id` ở UI local (`localStorage`, không ghi xuống JSON gây Git diff rác), cache Response tạm theo từng cặp `(requestId, exampleId)` trong `tabStore.ts`/`responseStore.ts`, và cho phép chọn `example_id` trên từng bước Flow (`FlowStepCard.vue`, `StepInspectorPanel.vue`, `flowStore.ts`).
+- **Parity CLI & Headless Engine (`projects/engine/headless.go`, `projects/engine/flow.go`, `projects/cmd/hecto/main.go`, `projects/cmd/hecto/SKILL.md`, `projects/frontend/src/utils/headless-engine.ts`)**:
+  - Mở rộng CLI `hecto req example <list|get|create|update|delete|sync|detach>`, `hecto run --example <id|name>`, và `hecto flow run --example` / `--steps Req@Example` (báo lỗi tường minh khi `example_id` bị xóa thay vì âm thầm chạy `Default`).
+  - Cập nhật tài liệu nhúng `projects/cmd/hecto/SKILL.md` (`hecto agent-guide`), rebuild `projects/engine/headless-engine.js`, và bổ sung đầy đủ unit, component, Go và Playwright E2E tests.
+
+---
+
+## [v1.21.0] - 2026-11-18
+
+### Added — Tối ưu `hecto` CLI cho AI Agent: JIT `agent-guide` & Nén/Che Secret Output
+- **Trích xuất tài liệu JIT (`hecto agent-guide --toc | --list | --section <id|alias[,...]>` - `projects/cmd/hecto/main.go`, `projects/cmd/hecto/SKILL.md`)**:
+  - Phân tích động cấu trúc heading `## N.` / `### N.M.` (bỏ qua code fence) trực tiếp từ `SKILL.md` nhúng (`//go:embed SKILL.md`), hỗ trợ mục lục `--toc`/`--list` (text và JSON kèm `composite_aliases.core`), chọn một hoặc nhiều mục theo số hoặc alias (`core`=`1,2,3`, `req`, `flow`, `mock`, `agent-guide`, `compact`, `flow-commands`, `mock-schemas`, v.v.), khử trùng lặp cha–con bất kể thứ tự truyền, và báo lỗi `VALIDATION` rõ ràng khi sai/xung đột cờ hoặc thừa positional.
+- **Nén Output & Che Secret trên `stdout` (`--compact`, `--redact`, `--max-body <bytes>` - `projects/cmd/hecto/main.go`, `projects/engine/headless.go`)**:
+  - Loại bỏ trường `Response` dư thừa trong `engine.RunOutput` đồng thời truyền tín hiệu cắt giới hạn 10 MB của executor (`resp.Truncated`) sang `body_truncated`.
+  - Hỗ trợ `--max-body <bytes>` cắt `body` an toàn tại ranh giới UTF-8 rune kèm hậu tố `"... [truncated, total <N> bytes]"` và `body_truncated: true`.
+  - Hỗ trợ `--redact` che `"***REDACTED***"` chỉ trên `stdout` (sau khi ghi đĩa và đánh giá nhánh rẽ flow đã chạy xong với giá trị thật) cho headers nhạy cảm (bao gồm `"auth"`, `private-key`, `access-key` và tên header/query `apiKey` cấu hình), URL query/userinfo, trường nhạy cảm trong `FormData`/`application/x-www-form-urlencoded`, URL trong chuỗi lỗi (`network_error`, `failure_reason`, `halted_error`, `handleRun`), `env_updates`/`scoped_env_updates`, và `scoped_auth_updates`.
+  - Hỗ trợ `--compact` (tự bật `--redact`, mặc định `--max-body 500`): loại bỏ `request`, `resolved_request`, `headers`, `console_logs`, `scoped_auth_updates` ở `hecto run`; loại bỏ mảng phẳng `step_results` ở `hecto flow run`, ẩn `body` ở các step `passed` (trừ khi truyền `--max-body > 0`), và giữ `body` cắt gọn kèm chi tiết lỗi ở các step `failed` (bảo toàn exit code `1` non-JSON / `0` JSON khi flow thất bại), kèm bộ unit & CLI integration tests toàn diện.
+
+---
+
+## [v1.20.0] - 2026-11-18
+
+### Added — Standalone `hecto mock` CLI & Single-Instance Mock Daemon
+- **Hệ lệnh `hecto mock` cho AI Agent & Terminal (`projects/cmd/hecto/main.go`, `projects/cmd/hecto/SKILL.md`)**:
+  - Bổ sung trọn bộ lệnh quản lý và vận hành Mock HTTP Server từ dòng lệnh: `hecto mock status | config | start (serve) | stop` và `hecto mock route list | get | create | update | delete`, tương thích 100% với cấu trúc `<collection>/mock-server.json` và `MockServerModal.vue` trên Desktop UI (`GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD|ANY`, `port` `1024..65535`, `status_code` `100..599`, `delay_ms` `0..30000`, route selector `<id | "METHOD /path">`, cập nhật Read-Merge-Write qua `FlagSet.Visit` và vị trí cờ linh hoạt).
+  - Cập nhật tài liệu nhúng `SKILL.md` (`hecto agent-guide`) với bảng tra cứu lệnh, quy tắc vận hành đơn phiên, JSON schema và kịch bản mẫu cho AI Coding Agent.
+- **Quản lý Đơn phiên 1 Port duy nhất & Hot-Reload (`projects/cmd/hecto/main.go`, `projects/service/mock_server.go`, `projects/service/config.go`)**:
+  - Đảm bảo tại mọi thời điểm chỉ mở tối đa 1 Mock Server / 1 port trên toàn CLI thông qua file trạng thái toàn cục `<configDir>/mock-daemon.json` (nằm ngoài thư mục Collection để giữ sạch Git Sync); tự động dừng tiến trình cũ trước khi mở port mới, hỗ trợ cả chế độ foreground lẫn `--daemon` (đồng bộ sẵn sàng TCP qua pipe FD 3 trước khi trả JSON) và tự động dọn stale/recycled PID.
+  - Bổ sung `MockServerService.ReloadRoutes`, `CleanMockPath` và `ConfigService.ConfigDir`, kết hợp `fsnotify` tự động hot-reload `routes` khi `mock-server.json` thay đổi trên đĩa (bảo toàn routes đang chạy nếu file tạm thời lỗi cú pháp) và chỉ lưu `port` xuống đĩa sau khi bind TCP thành công, kèm bộ unit & CLI integration tests toàn diện.
 
 ---
 

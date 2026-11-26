@@ -13,6 +13,8 @@ const responseStore = useResponseStore()
 const uiStore = useUiStore()
 
 const req = computed(() => requestStore.current)
+const isMethodLinked = computed(() => Boolean(requestStore.activeSyncFlags?.method))
+const isUrlLinked = computed(() => Boolean(requestStore.activeSyncFlags?.url))
 const urlInputRef = ref<HTMLTextAreaElement | null>(null)
 const highlighterRef = ref<InstanceType<typeof VariableHighlighter> | null>(null)
 
@@ -43,7 +45,15 @@ const onFocus = () => {
   });
 }
 const onBlur = () => {
-  setTimeout(() => isFocused.value = false, 150)
+  setTimeout(() => {
+    isFocused.value = false
+    if (urlInputRef.value) {
+      urlInputRef.value.style.height = ''
+      urlInputRef.value.scrollTop = 0
+      urlInputRef.value.scrollLeft = 0
+      highlighterRef.value?.syncScroll({ target: urlInputRef.value } as unknown as Event)
+    }
+  }, 150)
 }
 
 const isOpen = ref(false)
@@ -51,6 +61,7 @@ const listboxRef = ref<HTMLElement | null>(null)
 const buttonRef = ref<HTMLButtonElement | null>(null)
 
 const toggleDropdown = () => {
+  if (isMethodLinked.value) return
   isOpen.value = !isOpen.value
 }
 
@@ -60,6 +71,7 @@ const closeDropdown = () => {
 }
 
 const selectMethod = (method: string) => {
+  if (isMethodLinked.value) return
   if (req.value) {
     req.value.method = method
   }
@@ -67,6 +79,7 @@ const selectMethod = (method: string) => {
 }
 
 const applyCustomMethod = () => {
+  if (isMethodLinked.value) return
   const normalized = customMethodInput.value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '')
   if (!normalized || !req.value) return
   req.value.method = normalized
@@ -75,6 +88,7 @@ const applyCustomMethod = () => {
 }
 
 const onButtonKeyDown = (e: KeyboardEvent) => {
+  if (isMethodLinked.value) return
   if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
     e.preventDefault()
     isOpen.value = true
@@ -176,13 +190,17 @@ const autoResize = (e: Event) => {
 };
 const initResize = (el: any) => {
   if (el) {
-    el.style.height = 'auto';
-    el.style.height = el.scrollHeight + 'px';
+    if (isFocused.value) {
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    } else {
+      el.style.height = '';
+    }
   }
 };
 
 const onUrlPaste = (e: ClipboardEvent) => {
-  if (!req.value) return
+  if (!req.value || isUrlLinked.value) return
   const pasted = e.clipboardData?.getData('text/plain') || e.clipboardData?.getData('text') || ''
   if (!isCurlCommand(pasted)) return
 
@@ -190,21 +208,32 @@ const onUrlPaste = (e: ClipboardEvent) => {
   if (!parsed.url) return
 
   e.preventDefault()
-  req.value.method = parsed.method || 'GET'
+  const flags = requestStore.activeSyncFlags
+  if (!flags?.method) {
+    req.value.method = parsed.method || 'GET'
+  }
   req.value.url = parsed.url
-  req.value.params = parsed.params
-  if (parsed.path_params) {
+  if (!flags?.params) {
+    req.value.params = parsed.params
+  }
+  if (!flags?.path_params && parsed.path_params) {
     req.value.path_params = parsed.path_params
   }
-  req.value.headers = parsed.headers
-  req.value.body = {
-    type: parsed.body.type,
-    content: parsed.body.content,
-    ...(parsed.body.form_data ? { form_data: parsed.body.form_data } : {}),
-    ...(parsed.body.urlencoded ? { urlencoded: parsed.body.urlencoded } : {})
+  if (!flags?.headers) {
+    req.value.headers = parsed.headers
   }
-  requestStore.setBodyType(parsed.body.type)
-  req.value.auth = parsed.auth ? parsed.auth : { type: 'inherit' }
+  if (!flags?.body) {
+    req.value.body = {
+      type: parsed.body.type,
+      content: parsed.body.content,
+      ...(parsed.body.form_data ? { form_data: parsed.body.form_data } : {}),
+      ...(parsed.body.urlencoded ? { urlencoded: parsed.body.urlencoded } : {})
+    }
+    requestStore.setBodyType(parsed.body.type)
+  }
+  if (!flags?.auth) {
+    req.value.auth = parsed.auth ? parsed.auth : { type: 'inherit' }
+  }
 
   nextTick(() => {
     if (urlInputRef.value) {
@@ -227,8 +256,14 @@ const onUrlPaste = (e: ClipboardEvent) => {
       ref="buttonRef"
       type="button"
       data-test="method-selector"
-      class="h-full px-3.5 flex items-center justify-between gap-2 font-mono text-xs font-bold tracking-wide shrink-0 rounded-l-[5px] border-t-0 border-b-0 border-l-0 border-r hover:bg-surface-hover cursor-pointer transition-colors outline-none"
-      :class="[responseStore.urlInvalid ? 'border-error-border' : 'border-border-default', isUnknownMethod ? 'method-badge-options text-text-primary' : currentMethodColorClass]"
+      :disabled="isMethodLinked"
+      :title="isMethodLinked ? t('examples.linkedBadge') : undefined"
+      class="h-full px-3.5 flex items-center justify-between gap-2 font-mono text-xs font-bold tracking-wide shrink-0 rounded-l-[5px] border-t-0 border-b-0 border-l-0 border-r transition-colors outline-none"
+      :class="[
+        responseStore.urlInvalid ? 'border-error-border' : 'border-border-default',
+        isUnknownMethod ? 'method-badge-options text-text-primary' : currentMethodColorClass,
+        isMethodLinked ? 'opacity-70 cursor-not-allowed' : 'hover:bg-surface-hover cursor-pointer'
+      ]"
       aria-haspopup="listbox"
       :aria-expanded="isOpen"
       @click="toggleDropdown"
@@ -313,19 +348,25 @@ const onUrlPaste = (e: ClipboardEvent) => {
       >
       <VariableHighlighter 
         ref="highlighterRef"
-        :wrap="true"
+        :wrap="isFocused"
         :single-line="false"
         :enable-path-params="true"
         :value="req.url" 
         style="font-variant-ligatures: none;"
-        overlay-class="px-3 pt-2 pb-3 font-mono text-sm w-full h-full"
+        overlay-class="px-3 py-[11px] font-mono text-sm w-full h-full"
       >
         <textarea
           :ref="el => { urlInputRef = el as HTMLTextAreaElement; initResize(el) }"
           id="url-input"
           v-model="req.url"
+          :readonly="isUrlLinked"
+          :title="isUrlLinked ? t('examples.urlLinkedHint') : undefined"
           rows="1"
-          class="transparent-selection w-full h-full bg-transparent px-3 pt-2 pb-3 font-mono text-sm text-transparent caret-text-primary outline-none resize-none overflow-hidden block whitespace-pre-wrap break-all"
+          class="transparent-selection w-full h-full bg-transparent px-3 py-[11px] font-mono text-sm text-transparent caret-text-primary outline-none resize-none overflow-hidden block"
+          :class="[
+            isFocused ? 'whitespace-pre-wrap break-all' : 'whitespace-pre',
+            isUrlLinked ? 'cursor-not-allowed opacity-80' : ''
+          ]"
           style="font-variant-ligatures: none;"
           spellcheck="false"
           autocomplete="off"
@@ -339,6 +380,23 @@ const onUrlPaste = (e: ClipboardEvent) => {
         ></textarea>
       </VariableHighlighter>
       </div>
+    </div>
+
+    <div
+      v-if="isUrlLinked"
+      data-test="url-linked-badge"
+      class="shrink-0 self-center mx-2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium whitespace-nowrap"
+      :title="t('examples.urlLinkedHint')"
+    >
+      <span>{{ t('examples.linkedBadge') }}</span>
+      <button
+        type="button"
+        data-test="url-unlink-btn"
+        class="underline hover:text-amber-100 cursor-pointer"
+        @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'url', false)"
+      >
+        {{ t('examples.unlink') }}
+      </button>
     </div>
 
     <!-- Send/Abort Button -->

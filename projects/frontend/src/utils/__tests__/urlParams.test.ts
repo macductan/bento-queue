@@ -262,16 +262,18 @@ describe('urlParams utility', () => {
       ])
     })
 
-    it('should preserve custom properties like _isAuto on existing params during reconciliation', () => {
+    it('should preserve custom properties like _isAuto, type, and options on existing params during reconciliation', () => {
       const current: KVPair[] = [
-        { key: 'a', value: '1', enabled: true, _isAuto: true }
+        { key: 'a', value: '1', enabled: true, _isAuto: true, type: 'select', options: ['1', '2'] }
       ]
       const reconciled = reconcileParamsFromUrl('https://api.com?a=2', current)
       expect(reconciled[0]).toEqual({
         key: 'a',
         value: '2',
         enabled: true,
-        _isAuto: true
+        _isAuto: true,
+        type: 'select',
+        options: ['1', '2']
       })
     })
 
@@ -302,9 +304,16 @@ describe('urlParams utility', () => {
       expect(extractPathParamKeys('user:pass@localhost:8080/users/:uid')).toEqual(['uid'])
     })
 
-    it('reconciles path_params preserving existing values, enabled state, and descriptions', () => {
+    it('reconciles path_params preserving existing values, enabled state, descriptions, type, and options', () => {
       const current: KVPair[] = [
-        { key: 'api_key', value: 'sec-123', enabled: true, description: 'API Key' },
+        {
+          key: 'api_key',
+          value: 'sec-123',
+          enabled: true,
+          description: 'API Key',
+          type: 'select',
+          options: ['sec-123', 'sec-456']
+        },
         { key: 'removed', value: 'old', enabled: true }
       ]
       const next = reconcilePathParamsFromUrl(
@@ -312,7 +321,14 @@ describe('urlParams utility', () => {
         current
       )
       expect(next).toEqual([
-        { key: 'api_key', value: 'sec-123', enabled: true, description: 'API Key' },
+        {
+          key: 'api_key',
+          value: 'sec-123',
+          enabled: true,
+          description: 'API Key',
+          type: 'select',
+          options: ['sec-123', 'sec-456']
+        },
         { key: 'order_id', value: '', enabled: true }
       ])
     })

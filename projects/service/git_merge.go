@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -45,6 +46,15 @@ var fieldLabels = map[string]string{
 	"auth.apiKey.addTo":     "API Key Location (addTo)",
 	"scripts.pre_request":   "Pre-request Script",
 	"scripts.post_response": "Post-response Script",
+	"sync_flags.url":        "Sync Flag: URL",
+	"sync_flags.method":     "Sync Flag: Method",
+	"sync_flags.auth":       "Sync Flag: Auth",
+	"sync_flags.scripts":    "Sync Flag: Scripts",
+	"sync_flags.body":       "Sync Flag: Body",
+	"sync_flags.params":     "Sync Flag: Params",
+	"sync_flags.path_params": "Sync Flag: Path Params",
+	"sync_flags.headers":    "Sync Flag: Headers",
+	"sync_flags.variables":  "Sync Flag: Variables",
 }
 
 var topLevelKVPairFields = map[string]string{
@@ -290,6 +300,9 @@ func friendlyFieldLabel(fieldPath string) string {
 			return fmt.Sprintf("Auth (%s) — %s", parts[0], subLbl)
 		}
 	}
+	if strings.HasPrefix(fieldPath, "sync_flags.") {
+		return "Sync Flag: " + strings.TrimPrefix(fieldPath, "sync_flags.")
+	}
 	return fieldPath
 }
 
@@ -316,11 +329,20 @@ func parseKVPairs(val interface{}) []model.KVPair {
 	return filtered
 }
 
+func normalizeKVType(t string) string {
+	if t == "" {
+		return "text"
+	}
+	return t
+}
+
 func kvEqual(a, b model.KVPair) bool {
 	return a.Key == b.Key &&
 		a.Value == b.Value &&
 		a.Enabled == b.Enabled &&
-		a.Description == b.Description
+		a.Description == b.Description &&
+		normalizeKVType(a.Type) == normalizeKVType(b.Type) &&
+		slices.Equal(a.Options, b.Options)
 }
 
 func kvToMap(kv model.KVPair) map[string]interface{} {
@@ -331,6 +353,12 @@ func kvToMap(kv model.KVPair) map[string]interface{} {
 	}
 	if kv.Description != "" {
 		m["description"] = kv.Description
+	}
+	if kv.Type != "" {
+		m["type"] = kv.Type
+	}
+	if len(kv.Options) > 0 {
+		m["options"] = slices.Clone(kv.Options)
 	}
 	return m
 }
@@ -690,6 +718,253 @@ func mergeBodyObject3Way(baseBody, oursBody, theirsBody map[string]interface{}) 
 	return merged, conflicts
 }
 
+func parseExampleObjects(val interface{}) ([]map[string]interface{}, map[string]map[string]interface{}, []string) {
+	if val == nil {
+		return nil, map[string]map[string]interface{}{}, nil
+	}
+	arr, ok := val.([]interface{})
+	if !ok {
+		return nil, map[string]map[string]interface{}{}, nil
+	}
+	list := make([]map[string]interface{}, 0, len(arr))
+	byID := make(map[string]map[string]interface{}, len(arr))
+	order := make([]string, 0, len(arr))
+	for idx, item := range arr {
+		m, ok := item.(map[string]interface{})
+		if !ok || m == nil {
+			continue
+		}
+		id, _ := m["id"].(string)
+		id = strings.TrimSpace(id)
+		if id == "" {
+			id = fmt.Sprintf("__idx_%d", idx)
+		}
+		cloned := cloneJSONMap(m)
+		list = append(list, cloned)
+		if _, exists := byID[id]; !exists {
+			byID[id] = cloned
+			order = append(order, id)
+		}
+	}
+	return list, byID, order
+}
+
+func exampleDisplayName(id string, objs ...map[string]interface{}) string {
+	for _, obj := range objs {
+		if obj == nil {
+			continue
+		}
+		if n, ok := obj["name"].(string); ok && strings.TrimSpace(n) != "" {
+			return strings.TrimSpace(n)
+		}
+	}
+	return id
+}
+
+func mergeSingleExample3Way(id string, baseEx, oursEx, theirsEx map[string]interface{}) (map[string]interface{}, []model.GitFieldConflict) {
+	exName := exampleDisplayName(id, oursEx, theirsEx, baseEx)
+	keys := sortedUnionKeys(baseEx, oursEx, theirsEx)
+	merged := make(map[string]interface{}, len(keys))
+	var conflicts []model.GitFieldConflict
+
+	for _, k := range keys {
+		var bVal, oVal, tVal interface{}
+		var inB, inO, inT bool
+		if baseEx != nil {
+			bVal, inB = baseEx[k]
+		}
+		if oursEx != nil {
+			oVal, inO = oursEx[k]
+		}
+		if theirsEx != nil {
+			tVal, inT = theirsEx[k]
+		}
+
+		if k == "created_at" {
+			if inO && oVal != nil {
+				merged[k] = oVal
+			} else if inT && tVal != nil {
+				merged[k] = tVal
+			} else if inB && bVal != nil {
+				merged[k] = bVal
+			}
+			continue
+		}
+		if k == "updated_at" {
+			merged[k] = time.Now().UTC().Format(time.RFC3339)
+			continue
+		}
+
+		fieldPrefix := fmt.Sprintf("examples.%s.%s", id, k)
+		if labelPrefix, isKV := topLevelKVPairFields[k]; isKV {
+			mergedList, kvConflicts := mergeKVPairList(fieldPrefix, fmt.Sprintf("Example (%s) — %s", exName, labelPrefix), bVal, oVal, tVal)
+			if len(mergedList) > 0 || inO || inT {
+				merged[k] = mergedList
+			}
+			conflicts = append(conflicts, kvConflicts...)
+			continue
+		}
+
+		if k == "auth_envs" {
+			bMap, _ := asMap(bVal)
+			oMap, _ := asMap(oVal)
+			tMap, _ := asMap(tVal)
+			mergedAuthEnvs, authConflicts := mergeNestedObject3Way(fieldPrefix, bMap, oMap, tMap)
+			if len(mergedAuthEnvs) > 0 || inO || inT {
+				merged[k] = mergedAuthEnvs
+			}
+			for i := range authConflicts {
+				authConflicts[i].Label = fmt.Sprintf("Example (%s) — %s", exName, authConflicts[i].Label)
+			}
+			conflicts = append(conflicts, authConflicts...)
+			continue
+		}
+
+		if k == "body" {
+			bBody, _ := asMap(bVal)
+			oBody, oIsMap := asMap(oVal)
+			tBody, tIsMap := asMap(tVal)
+			if oIsMap || tIsMap {
+				mergedBody, bodyConflicts := mergeBodyObject3Way(bBody, oBody, tBody)
+				merged[k] = mergedBody
+				for i := range bodyConflicts {
+					bodyConflicts[i].FieldPath = fmt.Sprintf("examples.%s.%s", id, bodyConflicts[i].FieldPath)
+					bodyConflicts[i].Label = fmt.Sprintf("Example (%s) — %s", exName, bodyConflicts[i].Label)
+				}
+				conflicts = append(conflicts, bodyConflicts...)
+				continue
+			}
+		}
+
+		bSub, bIsMap := asMap(bVal)
+		oSub, oIsMap := asMap(oVal)
+		tSub, tIsMap := asMap(tVal)
+		if (oIsMap && tIsMap) || (oIsMap && !inT && bIsMap) || (tIsMap && !inO && bIsMap) {
+			if !inO && inB && jsonEqual(tVal, bVal) {
+				continue
+			}
+			if !inT && inB && jsonEqual(oVal, bVal) {
+				continue
+			}
+			if oIsMap && tIsMap {
+				subMerged, subConflicts := mergeNestedObject3Way(fieldPrefix, bSub, oSub, tSub)
+				merged[k] = subMerged
+				for i := range subConflicts {
+					subPrefix := "examples." + id + "."
+					rawSubPath := strings.TrimPrefix(subConflicts[i].FieldPath, subPrefix)
+					subConflicts[i].Label = fmt.Sprintf("Example (%s) — %s", exName, friendlyFieldLabel(rawSubPath))
+				}
+				conflicts = append(conflicts, subConflicts...)
+				continue
+			}
+		}
+
+		if inO == inT && (!inO || jsonEqual(oVal, tVal)) {
+			if inO {
+				merged[k] = cloneJSONValue(oVal)
+			}
+			continue
+		}
+		if inO == inB && (!inO || jsonEqual(oVal, bVal)) {
+			if inT {
+				merged[k] = cloneJSONValue(tVal)
+			}
+			continue
+		}
+		if inT == inB && (!inT || jsonEqual(tVal, bVal)) {
+			if inO {
+				merged[k] = cloneJSONValue(oVal)
+			}
+			continue
+		}
+
+		if inO {
+			merged[k] = cloneJSONValue(oVal)
+		}
+		conflicts = append(conflicts, model.GitFieldConflict{
+			FieldPath:   fieldPrefix,
+			Label:       fmt.Sprintf("Example (%s) — %s", exName, friendlyFieldLabel(k)),
+			BaseValue:   cloneJSONValue(bVal),
+			OursValue:   cloneJSONValue(oVal),
+			TheirsValue: cloneJSONValue(tVal),
+		})
+	}
+
+	return merged, conflicts
+}
+
+func mergeExamples3Way(baseVal, oursVal, theirsVal interface{}) ([]interface{}, []model.GitFieldConflict) {
+	_, baseByID, _ := parseExampleObjects(baseVal)
+	_, oursByID, oursOrder := parseExampleObjects(oursVal)
+	_, theirsByID, theirsOrder := parseExampleObjects(theirsVal)
+
+	seen := make(map[string]bool, len(oursOrder)+len(theirsOrder))
+	orderedIDs := make([]string, 0, len(oursOrder)+len(theirsOrder))
+	for _, id := range oursOrder {
+		if !seen[id] {
+			seen[id] = true
+			orderedIDs = append(orderedIDs, id)
+		}
+	}
+	for _, id := range theirsOrder {
+		if !seen[id] {
+			seen[id] = true
+			orderedIDs = append(orderedIDs, id)
+		}
+	}
+
+	merged := make([]interface{}, 0, len(orderedIDs))
+	var conflicts []model.GitFieldConflict
+
+	for _, id := range orderedIDs {
+		bEx, inB := baseByID[id]
+		oEx, inO := oursByID[id]
+		tEx, inT := theirsByID[id]
+
+		if inO == inT && (!inO || jsonEqual(oEx, tEx)) {
+			if inO {
+				merged = append(merged, cloneJSONMap(oEx))
+			}
+			continue
+		}
+		if inO == inB && (!inO || jsonEqual(oEx, bEx)) {
+			if inT {
+				merged = append(merged, cloneJSONMap(tEx))
+			}
+			continue
+		}
+		if inT == inB && (!inT || jsonEqual(tEx, bEx)) {
+			if inO {
+				merged = append(merged, cloneJSONMap(oEx))
+			}
+			continue
+		}
+
+		// Edit vs Delete conflict
+		if !inO || !inT {
+			exName := exampleDisplayName(id, oEx, tEx, bEx)
+			if inO {
+				merged = append(merged, cloneJSONMap(oEx))
+			}
+			conflicts = append(conflicts, model.GitFieldConflict{
+				FieldPath:   fmt.Sprintf("examples.%s", id),
+				Label:       fmt.Sprintf("Example (%s)", exName),
+				BaseValue:   cloneJSONValue(bEx),
+				OursValue:   cloneJSONValue(oEx),
+				TheirsValue: cloneJSONValue(tEx),
+			})
+			continue
+		}
+
+		// Both sides modified the same Example ID -> field-level 3-way merge
+		mergedEx, exConflicts := mergeSingleExample3Way(id, bEx, oEx, tEx)
+		merged = append(merged, mergedEx)
+		conflicts = append(conflicts, exConflicts...)
+	}
+
+	return merged, conflicts
+}
+
 // MergeJSONObjects performs a field-level 3-Way JSON Merge between baseObj, oursObj (Local), and theirsObj (Remote).
 // Returns the merged JSON map (using Ours values as preview fallback for conflicted fields) and any unresolved field conflicts.
 func MergeJSONObjects(relPath string, baseObj, oursObj, theirsObj map[string]interface{}) (map[string]interface{}, []model.GitFieldConflict) {
@@ -785,6 +1060,16 @@ func MergeJSONObjects(relPath string, baseObj, oursObj, theirsObj map[string]int
 				merged[k] = mergedList
 			}
 			conflicts = append(conflicts, kvConflicts...)
+			continue
+		}
+
+		// 3b. Request examples array merged by id
+		if k == "examples" {
+			mergedList, exConflicts := mergeExamples3Way(bVal, oVal, tVal)
+			if len(mergedList) > 0 || inO || inT {
+				merged[k] = mergedList
+			}
+			conflicts = append(conflicts, exConflicts...)
 			continue
 		}
 

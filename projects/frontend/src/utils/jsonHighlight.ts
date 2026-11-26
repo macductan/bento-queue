@@ -16,6 +16,71 @@ export function decodeHtmlEntities(s: string): string {
     .replace(/&amp;/g, '&')
 }
 
+const VOID_HTML_TAGS = new Set(['br', 'hr', 'img', 'wbr', 'input', 'col'])
+
+export function splitHtmlLinesSafe(html: string): string[] {
+  if (!html) {
+    return ['']
+  }
+
+  const normalized = html.replace(/\r\n?/g, '\n')
+  const openTags: Array<{ tagName: string; openTag: string }> = []
+  const lines: string[] = []
+  let current = ''
+
+  const tokenRegex = /<(?:\/?[a-zA-Z][^>\n]*|![^>\n]*|\?[^>\n]*)>|\n|[^<\n]+|</g
+  let match: RegExpExecArray | null
+
+  while ((match = tokenRegex.exec(normalized)) !== null) {
+    const token = match[0]
+
+    if (token === '\n') {
+      for (let i = openTags.length - 1; i >= 0; i--) {
+        current += `</${openTags[i].tagName}>`
+      }
+      lines.push(current)
+      current = openTags.map(t => t.openTag).join('')
+      continue
+    }
+
+    if (token.startsWith('<') && token.length > 1) {
+      const closeMatch = token.match(/^<\/\s*([a-zA-Z0-9-]+)\s*>$/)
+      if (closeMatch) {
+        const closeTagName = closeMatch[1].toLowerCase()
+        for (let i = openTags.length - 1; i >= 0; i--) {
+          if (openTags[i].tagName === closeTagName) {
+            openTags.splice(i, 1)
+            break
+          }
+        }
+        current += token
+        continue
+      }
+
+      if (!token.startsWith('<!') && !token.startsWith('<?')) {
+        const openMatch = token.match(/^<\s*([a-zA-Z0-9-]+)(?=[\s/>])[^>]*>$/)
+        if (openMatch) {
+          const tagName = openMatch[1].toLowerCase()
+          if (!VOID_HTML_TAGS.has(tagName) && !token.endsWith('/>')) {
+            openTags.push({ tagName, openTag: token })
+          }
+        }
+      }
+
+      current += token
+      continue
+    }
+
+    current += token
+  }
+
+  for (let i = openTags.length - 1; i >= 0; i--) {
+    current += `</${openTags[i].tagName}>`
+  }
+  lines.push(current)
+  return lines
+}
+
 export function highlightHtmlWithSearch(
   html: string,
   query: string,

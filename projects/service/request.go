@@ -166,6 +166,16 @@ func (s *RequestService) Duplicate(id string) model.Result {
 	now := time.Now()
 	req.CreatedAt = now
 	req.UpdatedAt = now
+	if len(req.Examples) > 0 {
+		newExamples := make([]model.RequestExample, len(req.Examples))
+		for i, ex := range req.Examples {
+			ex.ID = uuid.New().String()
+			ex.CreatedAt = now
+			ex.UpdatedAt = now
+			newExamples[i] = ex
+		}
+		req.Examples = newExamples
+	}
 
 	dir := filepath.Dir(path)
 	newFilename := slug.RequestFilename(req.ID)

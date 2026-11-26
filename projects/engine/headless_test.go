@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -338,6 +340,35 @@ func TestParseCurl_And_ReconcileRequestURLAndParams(t *testing.T) {
 	if len(r2.PathParams) != 1 || r2.PathParams[0].Key != "orgId" {
 		t.Errorf("expected PathParams [orgId], got: %+v", r2.PathParams)
 	}
+
+	// ReconcileRequestURLAndParams preserves select Type and Options across Go<->JS boundary
+	r3 := &model.Request{
+		URL: "https://api.example.com/:tenant/items?env=dev",
+		Params: []model.KVPair{
+			{Key: "env", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "stg", "prod"}},
+			{Key: "sort", Value: "asc", Enabled: true, Type: "select", Options: []string{"asc", "desc"}},
+		},
+		PathParams: []model.KVPair{
+			{Key: "tenant", Value: "acme", Enabled: true, Type: "select", Options: []string{"acme", "globex"}},
+		},
+	}
+	if err := ReconcileRequestURLAndParams(r3); err != nil {
+		t.Fatalf("ReconcileRequestURLAndParams select metadata failed: %v", err)
+	}
+	if r3.URL != "https://api.example.com/:tenant/items?env=dev&sort=asc" {
+		t.Errorf("r3.URL = %q, want 'https://api.example.com/:tenant/items?env=dev&sort=asc'", r3.URL)
+	}
+	if len(r3.Params) != 2 || r3.Params[0].Key != "env" || r3.Params[0].Value != "dev" ||
+		r3.Params[0].Type != "select" || !slices.Equal(r3.Params[0].Options, []string{"dev", "stg", "prod"}) {
+		t.Errorf("expected matched URL query param to preserve select metadata, got: %+v", r3.Params)
+	}
+	if r3.Params[1].Key != "sort" || r3.Params[1].Type != "select" || !slices.Equal(r3.Params[1].Options, []string{"asc", "desc"}) {
+		t.Errorf("expected appended query param to preserve select metadata, got: %+v", r3.Params)
+	}
+	if len(r3.PathParams) != 1 || r3.PathParams[0].Key != "tenant" || r3.PathParams[0].Value != "acme" ||
+		r3.PathParams[0].Type != "select" || !slices.Equal(r3.PathParams[0].Options, []string{"acme", "globex"}) {
+		t.Errorf("expected path param to preserve select metadata, got: %+v", r3.PathParams)
+	}
 }
 
 func TestExecuteRequestFlow_NoSaveEnv_ScopedAuth_NetworkFailure_And_Errors(t *testing.T) {
@@ -445,3 +476,371 @@ func TestExecuteRequestFlow_NoSaveEnv_ScopedAuth_NetworkFailure_And_Errors(t *te
 	}
 }
 
+func TestExecuteRequestFlow_PropagatesExecutorTruncatedFlag(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte("A"), service.MaxResponseBodySize+64))
+	}))
+	defer ts.Close()
+
+	out, err := ExecuteRequestFlow(RunOptions{
+		Request: model.Request{
+			ID:     "req-10mb",
+			Method: "GET",
+			URL:    ts.URL + "/large",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRequestFlow failed: %v", err)
+	}
+	if !out.BodyTruncated {
+		t.Fatalf("expected BodyTruncated=true when ExecutorService truncates >10MB response")
+	}
+}
+
+func TestUpsertKVPairs_PreservesSelectTypeAndOptions(t *testing.T) {
+	initial := []model.KVPair{
+		{
+			Key:         "env_mode",
+			Value:       "dev",
+			Enabled:     false,
+			Description: "Active mode",
+			Type:        "select",
+			Options:     []string{"dev", "stg", "prod"},
+		},
+		{
+			Key:     "unchanged",
+			Value:   "keep",
+			Enabled: true,
+			Type:    "select",
+			Options: []string{"keep", "drop"},
+		},
+	}
+
+	updated := upsertKVPairs(initial, map[string]string{
+		"env_mode": "canary", // out-of-list value from script
+		"new_var":  "abc",
+	})
+
+	if len(updated) != 3 {
+		t.Fatalf("expected 3 KVPairs after upsert, got %d: %+v", len(updated), updated)
+	}
+
+	if updated[0].Key != "env_mode" || updated[0].Value != "canary" || !updated[0].Enabled {
+		t.Errorf("expected env_mode updated to 'canary' and enabled=true, got %+v", updated[0])
+	}
+	if updated[0].Type != "select" || !slices.Equal(updated[0].Options, []string{"dev", "stg", "prod"}) || updated[0].Description != "Active mode" {
+		t.Errorf("expected env_mode Type/Options/Description preserved, got %+v", updated[0])
+	}
+	if updated[1].Type != "select" || !slices.Equal(updated[1].Options, []string{"keep", "drop"}) {
+		t.Errorf("expected unchanged item metadata preserved, got %+v", updated[1])
+	}
+	if updated[2].Key != "new_var" || updated[2].Value != "abc" || updated[2].Type != "" || updated[2].Options != nil {
+		t.Errorf("expected newly inserted item with default empty Type/Options, got %+v", updated[2])
+	}
+}
+
+func TestApplyScriptUpdatesToDisk_PreservesSelectMetadataAcrossAllTiers(t *testing.T) {
+	tmpDir := t.TempDir()
+	fs := storage.NewFileSystem()
+	logger := newTestLogger()
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(tmpDir)
+	cfg, err := cfgSvc.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	collSvc := service.NewCollectionService(fs, logger)
+	envSvc := service.NewEnvironmentService(fs, logger)
+
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Tier 1: Collection variable with select metadata
+	coll.Variables = []model.KVPair{
+		{Key: "coll_tier", Value: "v1", Enabled: true, Type: "select", Options: []string{"v1", "v2"}},
+	}
+	if res := collSvc.UpdateCollection(cfg.CollectionsRoot, coll); !res.Success {
+		t.Fatalf("UpdateCollection failed: %+v", res.Error)
+	}
+
+	// Tier 2: Global Environment variable with select metadata
+	envRes := envSvc.Save(collRoot, model.Environment{
+		Name: "Staging",
+		Variables: []model.KVPair{
+			{Key: "env_tier", Value: "a", Enabled: true, Type: "select", Options: []string{"a", "b"}},
+		},
+	})
+	stgEnv := envRes.Data.(model.Environment)
+
+	// Tier 3 & 4: Folder global & FolderEnv variables with select metadata
+	fNode := collSvc.CreateFolder(collRoot, "").Data.(model.TreeNode)
+	collSvc.RenameFolder(fNode.ID, "SelectFolder")
+	folder := collSvc.LoadFolder(fNode.ID).Data.(model.Folder)
+	folder.Variables = []model.KVPair{
+		{Key: "folder_tier", Value: "x", Enabled: true, Type: "select", Options: []string{"x", "y"}},
+	}
+	folder.FolderEnvs = map[string][]model.KVPair{
+		stgEnv.ID: {
+			{Key: "folder_env_tier", Value: "one", Enabled: true, Type: "select", Options: []string{"one", "two"}},
+		},
+	}
+	if res := collSvc.UpdateFolder(folder); !res.Success {
+		t.Fatalf("UpdateFolder failed: %+v", res.Error)
+	}
+
+	scriptRes := &ScriptExecutionResult{
+		Success: true,
+		EnvUpdates: map[string]string{
+			"env_tier": "custom-out-of-list",
+		},
+		ScopedEnvUpdates: ScopedEnvUpdates{
+			Collection: map[string]string{"coll_tier": "v2"},
+			FolderGlobals: map[string]map[string]string{
+				"SelectFolder": {"folder_tier": "z-custom"},
+			},
+			FolderEnvs: []FolderEnvUpdateItem{
+				{Folder: "SelectFolder", Env: "Staging", Key: "folder_env_tier", Value: "two"},
+			},
+		},
+	}
+
+	if err := ApplyScriptUpdatesToDisk(
+		fs,
+		collSvc,
+		envSvc,
+		cfg.CollectionsRoot,
+		collRoot,
+		&coll,
+		stgEnv.ID,
+		[]model.TreeNode{fNode},
+		[]model.TreeNode{fNode},
+		scriptRes,
+	); err != nil {
+		t.Fatalf("ApplyScriptUpdatesToDisk failed: %v", err)
+	}
+
+	// Verify Tier 1 (Collection)
+	var diskColl model.Collection
+	if err := fs.ReadJSON(filepath.Join(collRoot, "collection.json"), &diskColl); err != nil {
+		t.Fatalf("ReadJSON collection.json failed: %v", err)
+	}
+	if len(diskColl.Variables) != 1 || diskColl.Variables[0].Value != "v2" ||
+		diskColl.Variables[0].Type != "select" || !slices.Equal(diskColl.Variables[0].Options, []string{"v1", "v2"}) {
+		t.Errorf("expected collection variable select metadata preserved, got %+v", diskColl.Variables)
+	}
+
+	// Verify Tier 2 (Global Environment)
+	diskEnv := envSvc.Get(collRoot, stgEnv.ID).Data.(model.Environment)
+	if len(diskEnv.Variables) != 1 || diskEnv.Variables[0].Value != "custom-out-of-list" ||
+		diskEnv.Variables[0].Type != "select" || !slices.Equal(diskEnv.Variables[0].Options, []string{"a", "b"}) {
+		t.Errorf("expected env variable select metadata preserved with out-of-list value, got %+v", diskEnv.Variables)
+	}
+
+	// Verify Tier 3 & 4 (Folder global & FolderEnv)
+	diskFolder := collSvc.LoadFolder(fNode.ID).Data.(model.Folder)
+	if len(diskFolder.Variables) != 1 || diskFolder.Variables[0].Value != "z-custom" ||
+		diskFolder.Variables[0].Type != "select" || !slices.Equal(diskFolder.Variables[0].Options, []string{"x", "y"}) {
+		t.Errorf("expected folder global variable select metadata preserved, got %+v", diskFolder.Variables)
+	}
+	feVars := diskFolder.FolderEnvs[stgEnv.ID]
+	if len(feVars) != 1 || feVars[0].Value != "two" ||
+		feVars[0].Type != "select" || !slices.Equal(feVars[0].Options, []string{"one", "two"}) {
+		t.Errorf("expected folder_env variable select metadata preserved, got %+v", feVars)
+	}
+}
+
+func TestExecuteRequestFlow_RequestVariablesIndependentPerRequest(t *testing.T) {
+	tmpDir := t.TempDir()
+	fs := storage.NewFileSystem()
+	logger := newTestLogger()
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(tmpDir)
+	cfg, err := cfgSvc.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	collSvc := service.NewCollectionService(fs, logger)
+	envSvc := service.NewEnvironmentService(fs, logger)
+	reqSvc := service.NewRequestService(fs, logger)
+	execSvc := service.NewExecutorService(logger)
+
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var observedRoles []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observedRoles = append(observedRoles, r.URL.Query().Get("role"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	envRes := envSvc.Save(collRoot, model.Environment{
+		Name: "Dev",
+		Variables: []model.KVPair{
+			{Key: "role", Value: "admin", Enabled: true, Type: "select", Options: []string{"admin", "user"}},
+		},
+	})
+	devEnv := envRes.Data.(model.Environment)
+
+	reqA := model.Request{
+		ID:     "req-a",
+		Name:   "Req A",
+		Method: "GET",
+		URL:    ts.URL + "?role={{role}}",
+		Variables: []model.KVPair{
+			{Key: "role", Value: "user", Enabled: true},
+		},
+	}
+	reqB := model.Request{
+		ID:     "req-b",
+		Name:   "Req B",
+		Method: "GET",
+		URL:    ts.URL + "?role={{role}}",
+	}
+
+	outA, err := ExecuteRequestFlow(RunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		EnvSvc:          envSvc,
+		RequestSvc:      reqSvc,
+		ExecutorSvc:     execSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Request:         reqA,
+		Environments:    []model.Environment{devEnv},
+		ActiveEnvID:     devEnv.ID,
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRequestFlow reqA failed: %v", err)
+	}
+	outB, err := ExecuteRequestFlow(RunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		EnvSvc:          envSvc,
+		RequestSvc:      reqSvc,
+		ExecutorSvc:     execSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Request:         reqB,
+		Environments:    []model.Environment{devEnv},
+		ActiveEnvID:     devEnv.ID,
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRequestFlow reqB failed: %v", err)
+	}
+
+	if outA.StatusCode != 200 || outB.StatusCode != 200 {
+		t.Fatalf("unexpected status codes: %d, %d", outA.StatusCode, outB.StatusCode)
+	}
+	if !slices.Equal(observedRoles, []string{"user", "admin"}) {
+		t.Errorf("expected Request A -> user and Request B -> admin, got %v", observedRoles)
+	}
+}
+
+func TestExecuteRequestFlow_WithExampleSelector_AndStrictMissingError(t *testing.T) {
+	tmpDir := t.TempDir()
+	fs := storage.NewFileSystem()
+	logger := newTestLogger()
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(tmpDir)
+	cfg, err := cfgSvc.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	collSvc := service.NewCollectionService(fs, logger)
+	envSvc := service.NewEnvironmentService(fs, logger)
+	reqSvc := service.NewRequestService(fs, logger)
+	execSvc := service.NewExecutorService(logger)
+
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotMethod, gotQuery, gotBody, gotHeader string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotQuery = r.URL.RawQuery
+		gotHeader = r.Header.Get("X-Scenario")
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	flags := model.DefaultExampleSyncFlags()
+	flags.Method = false
+	req := model.Request{
+		ID:      "req-ex-exec",
+		Name:    "Create Item",
+		Method:  "POST",
+		URL:     ts.URL + "/items?mode=default",
+		Headers: []model.KVPair{{Key: "X-Scenario", Value: "default", Enabled: true}},
+		Body:    model.Body{Type: "json", Content: `{"kind":"default"}`},
+		Examples: []model.RequestExample{
+			{
+				ID:        "ex-admin",
+				Name:      "Admin Mode",
+				Method:    "PUT",
+				URL:       ts.URL + "/items?mode=admin",
+				Params:    []model.KVPair{{Key: "mode", Value: "admin", Enabled: true}},
+				Headers:   []model.KVPair{{Key: "X-Scenario", Value: "admin", Enabled: true}},
+				Body:      model.Body{Type: "json", Content: `{"kind":"admin"}`},
+				SyncFlags: flags,
+			},
+		},
+	}
+
+	out, err := ExecuteRequestFlow(RunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		EnvSvc:          envSvc,
+		RequestSvc:      reqSvc,
+		ExecutorSvc:     execSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Request:         req,
+		ExampleSelector: "Admin Mode",
+		NoSaveEnv:       true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteRequestFlow with ExampleSelector failed: %v", err)
+	}
+	if out.StatusCode != 200 || gotMethod != "PUT" || gotQuery != "mode=admin" || gotHeader != "admin" || !strings.Contains(gotBody, `"admin"`) {
+		t.Errorf("unexpected executed example HTTP request: method=%s query=%s header=%s body=%s", gotMethod, gotQuery, gotHeader, gotBody)
+	}
+
+	// Missing example must fail explicitly, never fall back to Default
+	_, err = ExecuteRequestFlow(RunOptions{
+		FS:              fs,
+		CollectionSvc:   collSvc,
+		EnvSvc:          envSvc,
+		RequestSvc:      reqSvc,
+		ExecutorSvc:     execSvc,
+		CollectionsRoot: cfg.CollectionsRoot,
+		CollectionRoot:  collRoot,
+		Collection:      coll,
+		Request:         req,
+		ExampleSelector: "NonExistentExample",
+		NoSaveEnv:       true,
+	})
+	if err == nil || !strings.Contains(err.Error(), model.ErrNotFound) {
+		t.Fatalf("expected NOT_FOUND error for missing example, got: %v", err)
+	}
+}

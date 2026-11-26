@@ -3,6 +3,7 @@ import { computed, provide, ref, watch, nextTick } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import UrlBar from './UrlBar.vue'
+import ExampleSwitcher from './ExampleSwitcher.vue'
 import RequestTabs from './RequestTabs.vue'
 import KvpEditor from './KvpEditor.vue'
 import BodyEditor from './BodyEditor.vue'
@@ -76,8 +77,9 @@ const handleRequestClick = async () => {
 
 const req = computed(() => requestStore.current)
 const loading = computed(() => requestStore.loading)
+const activeSyncFlags = computed(() => requestStore.activeSyncFlags)
 
-useUrlParamsSync(req)
+useUrlParamsSync(req, activeSyncFlags)
 const autoSave = useAutoSave(req)
 
 const isRenamingRequest = ref(false)
@@ -123,6 +125,9 @@ const commitRenameRequest = async () => {
     if (req.value && req.value.id === targetId && req.value.name === currentName) {
       req.value.name = trimmed
     }
+    if (requestStore.draft && requestStore.draft.id === targetId && requestStore.draft.name === currentName) {
+      requestStore.draft.name = trimmed
+    }
     if (requestStore.original && requestStore.original.id === targetId && requestStore.original.name === currentName) {
       requestStore.original.name = trimmed
     }
@@ -134,12 +139,14 @@ const effectiveVariables = computed(() => {
     collectionVariables: collectionStore.activeCollection?.variables,
     activeEnvVariables: envStore.variablesMap,
     pathFolders: pathNodes.value,
-    activeEnvId: envStore.activeEnvId
+    activeEnvId: envStore.activeEnvId,
+    requestVariables: req.value?.variables
   })
 })
 
 provide('effectiveVariables', effectiveVariables)
 provide('variableHierarchyFolders', pathNodes)
+provide('variableScopeContext', 'request')
 
 const hideCurlAuth = ref(false)
 
@@ -217,7 +224,7 @@ const defaultHeaders = computed(() => {
 })
 
 const toggleDefaultHeader = (item: DefaultHeaderItem) => {
-  if (!req.value || item.overridden) return
+  if (!req.value || item.overridden || activeSyncFlags.value?.headers) return
   if (!req.value.headers) req.value.headers = []
 
   const lower = item.key.toLowerCase().trim()
@@ -375,6 +382,7 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
         </div>
       </div>
 
+      <ExampleSwitcher />
       <UrlBar />
       <WarningBanner />
 
@@ -389,8 +397,18 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
                   {{ t('requestEditor.queryParams') }}
                 </span>
+                <div v-if="activeSyncFlags?.params" data-test="params-linked-badge" class="flex items-center gap-2 text-[11px] text-amber-300">
+                  <span>{{ t('examples.linkedBadge') }}</span>
+                  <button
+                    type="button"
+                    class="underline hover:text-amber-200 cursor-pointer"
+                    @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'params', false)"
+                  >
+                    {{ t('examples.unlink') }}
+                  </button>
+                </div>
               </div>
-              <KvpEditor field="params" />
+              <KvpEditor field="params" :readonly="Boolean(activeSyncFlags?.params)" />
             </div>
 
             <div
@@ -402,16 +420,34 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 <span class="text-xs font-semibold uppercase tracking-wider text-sky-400">
                   {{ t('requestEditor.pathParams') }}
                 </span>
-                <span class="text-[11px] text-text-muted">
-                  {{ t('requestEditor.pathParamsHint') }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span v-if="activeSyncFlags?.path_params" data-test="path-params-linked-badge" class="flex items-center gap-1.5 text-[11px] text-amber-300">
+                    <span>{{ t('examples.linkedBadge') }}</span>
+                    <button
+                      type="button"
+                      class="underline hover:text-amber-200 cursor-pointer"
+                      @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'path_params', false)"
+                    >
+                      {{ t('examples.unlink') }}
+                    </button>
+                  </span>
+                  <span class="text-[11px] text-text-muted">
+                    {{ t('requestEditor.pathParamsHint') }}
+                  </span>
+                </div>
               </div>
-              <KvpEditor field="path_params" :readonly-keys="true" key-prefix=":" />
+              <KvpEditor field="path_params" :readonly-keys="true" :readonly="Boolean(activeSyncFlags?.path_params)" key-prefix=":" />
             </div>
           </div>
 
           <div v-show="uiStore.activeRequestTab === 'auth'" role="tabpanel" id="panel-auth" aria-labelledby="tab-auth">
-            <AuthEditor v-model="req.auth" v-model:authEnvs="req.auth_envs" :path-nodes="pathNodes" />
+            <AuthEditor
+              v-model="req.auth"
+              v-model:authEnvs="req.auth_envs"
+              :path-nodes="pathNodes"
+              :readonly="Boolean(activeSyncFlags?.auth)"
+              @unlink="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'auth', false)"
+            />
           </div>
           
           <div v-show="uiStore.activeRequestTab === 'headers'" role="tabpanel" id="panel-headers" aria-labelledby="tab-headers" class="space-y-4">
@@ -421,8 +457,18 @@ const toggleDefaultHeader = (item: DefaultHeaderItem) => {
                 <span class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
                   Headers
                 </span>
+                <div v-if="activeSyncFlags?.headers" data-test="headers-linked-badge" class="flex items-center gap-2 text-[11px] text-amber-300">
+                  <span>{{ t('examples.linkedBadge') }}</span>
+                  <button
+                    type="button"
+                    class="underline hover:text-amber-200 cursor-pointer"
+                    @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'headers', false)"
+                  >
+                    {{ t('examples.unlink') }}
+                  </button>
+                </div>
               </div>
-              <KvpEditor field="headers" />
+              <KvpEditor field="headers" :readonly="Boolean(activeSyncFlags?.headers)" />
             </div>
           </div>
           

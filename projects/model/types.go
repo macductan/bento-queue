@@ -41,10 +41,12 @@ func NewError(code, message string) Result {
 
 // KVPair represents a key-value pair used in headers and query parameters.
 type KVPair struct {
-	Key         string `json:"key"`
-	Value       string `json:"value"`
-	Enabled     bool   `json:"enabled"`
-	Description string `json:"description,omitempty"`
+	Key         string   `json:"key"`
+	Value       string   `json:"value"`
+	Enabled     bool     `json:"enabled"`
+	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Options     []string `json:"options,omitempty"`
 }
 
 // Body represents the request body with a type selector (none, json, text, xml, urlencoded, formdata).
@@ -87,6 +89,48 @@ type Scripts struct {
 	PostResponse string `json:"post_response,omitempty"`
 }
 
+// ExampleSyncFlags controls which field groups on a RequestExample stay synchronized with the Default request.
+type ExampleSyncFlags struct {
+	URL        bool `json:"url"`
+	Method     bool `json:"method"`
+	Auth       bool `json:"auth"`
+	Scripts    bool `json:"scripts"`
+	Body       bool `json:"body"`
+	Params     bool `json:"params"`
+	PathParams bool `json:"path_params"`
+	Headers    bool `json:"headers"`
+	Variables  bool `json:"variables"`
+}
+
+// DefaultExampleSyncFlags returns the default sync flags when cloning a new RequestExample.
+func DefaultExampleSyncFlags() ExampleSyncFlags {
+	return ExampleSyncFlags{
+		URL:     true,
+		Method:  true,
+		Auth:    true,
+		Scripts: true,
+	}
+}
+
+// RequestExample represents a saved input scenario embedded inside a Request.
+type RequestExample struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Method     string                 `json:"method"`
+	URL        string                 `json:"url"`
+	Headers    []KVPair               `json:"headers"`
+	Params     []KVPair               `json:"params"`
+	PathParams []KVPair               `json:"path_params,omitempty"`
+	Variables  []KVPair               `json:"variables,omitempty"`
+	Body       Body                   `json:"body"`
+	Auth       *AuthConfig            `json:"auth,omitempty"`
+	AuthEnvs   map[string]*AuthConfig `json:"auth_envs,omitempty"`
+	Scripts    *Scripts               `json:"scripts,omitempty"`
+	SyncFlags  ExampleSyncFlags       `json:"sync_flags"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
+}
+
 // Request represents an API request entity stored as a JSON file on disk.
 // Identity is UUID v4, stored as <uuid>.json on disk.
 type Request struct {
@@ -97,10 +141,12 @@ type Request struct {
 	Headers    []KVPair               `json:"headers"`
 	Params     []KVPair               `json:"params"`
 	PathParams []KVPair               `json:"path_params,omitempty"`
+	Variables  []KVPair               `json:"variables,omitempty"`
 	Body       Body                   `json:"body"`
 	Auth       *AuthConfig            `json:"auth,omitempty"`
 	AuthEnvs   map[string]*AuthConfig `json:"auth_envs,omitempty"`
 	Scripts    *Scripts               `json:"scripts,omitempty"`
+	Examples   []RequestExample       `json:"examples,omitempty"`
 	CreatedAt  time.Time              `json:"created_at"`
 	UpdatedAt  time.Time              `json:"updated_at"`
 }
@@ -120,6 +166,7 @@ type TreeNode struct {
 	Headers    []KVPair               `json:"headers,omitempty"`
 	Auth       *AuthConfig            `json:"auth,omitempty"`
 	AuthEnvs   map[string]*AuthConfig `json:"auth_envs,omitempty"`
+	Examples   []RequestExample       `json:"examples,omitempty"`
 	CreatedAt  time.Time              `json:"created_at"`
 }
 
@@ -235,6 +282,7 @@ type FlowBranch struct {
 type FlowStep struct {
 	ID        string `json:"id"`
 	RequestID string `json:"request_id"`
+	ExampleID string `json:"example_id,omitempty"`
 	Enabled   bool   `json:"enabled"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"` // Ghi đè timeout_ms cấp Flow nếu > 0
 }

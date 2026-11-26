@@ -202,4 +202,59 @@ describe('BodyEditor.vue', () => {
     const validBadge = wrapper.find('[data-test="xml-valid-badge"]')
     expect(validBadge.text()).toContain('Valid XML')
   })
+
+  it('enforces readonly linked state and unlinks when clicking unlink button', async () => {
+    const reqStore = useRequestStore()
+    const baseReq = {
+      id: 'req-body-lock',
+      name: 'Body Lock',
+      method: 'POST',
+      url: 'https://api.example.com',
+      headers: [],
+      params: [],
+      body: { type: 'json', content: '{"a":1}' },
+      examples: [
+        {
+          id: 'ex-body-locked',
+          name: 'Ex',
+          method: 'POST',
+          url: 'https://api.example.com',
+          headers: [],
+          params: [],
+          body: { type: 'json', content: '{"a":1}' },
+          auth: { type: 'inherit' },
+          sync_flags: {
+            url: true,
+            method: true,
+            auth: true,
+            scripts: true,
+            body: true,
+            params: false,
+            path_params: false,
+            headers: false,
+            variables: false
+          },
+          created_at: '',
+          updated_at: ''
+        }
+      ],
+      created_at: '',
+      updated_at: ''
+    } as any
+    reqStore.original = JSON.parse(JSON.stringify(baseReq))
+    reqStore.draft = JSON.parse(JSON.stringify(baseReq))
+    reqStore.selectExample('ex-body-locked')
+
+    const wrapper = mount(BodyEditor)
+    await nextTick()
+
+    expect(wrapper.find('[data-test="body-linked-banner"]').exists()).toBe(true)
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).readOnly).toBe(true)
+    expect((wrapper.find('[data-test="prettify-json-btn"]').element as HTMLButtonElement).disabled).toBe(true)
+
+    await wrapper.find('[data-test="body-unlink-btn"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-test="body-linked-banner"]').exists()).toBe(false)
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).readOnly).toBe(false)
+  })
 })

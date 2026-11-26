@@ -569,4 +569,62 @@ describe('tabStore - Multisession Tabs & Per-Tab Response State Persistence (CAP
     expect(tabStore.tabs).toHaveLength(0)
     expect(tabStore.activeTabId).toBeNull()
   })
+
+  it('keeps tab method pinned to draft rather than Example method override and purges all example caches on closeTab', async () => {
+    const tabStore = useTabStore()
+    const reqStore = useRequestStore()
+    const resStore = useResponseStore()
+
+    const baseReq = createMockRequest({
+      id: 'req-tab-ex',
+      name: 'Tab Ex',
+      method: 'GET',
+      url: 'https://api.example.com/items',
+      examples: [
+        {
+          id: 'ex-post',
+          name: 'Post Variant',
+          method: 'POST',
+          url: 'https://api.example.com/items',
+          headers: [],
+          params: [],
+          path_params: [],
+          variables: [],
+          body: { type: 'none', content: '' },
+          auth: { type: 'inherit' },
+          sync_flags: {
+            url: true,
+            method: false,
+            auth: true,
+            scripts: true,
+            body: false,
+            params: false,
+            path_params: false,
+            headers: false,
+            variables: false
+          },
+          created_at: '',
+          updated_at: ''
+        }
+      ]
+    })
+
+    tabStore.openTab({ type: 'request', entityId: 'req-tab-ex', name: 'Tab Ex', method: 'GET' })
+    tabStore._ensureRequestStoreSync()
+    reqStore.original = JSON.parse(JSON.stringify(baseReq))
+    reqStore.draft = JSON.parse(JSON.stringify(baseReq))
+    reqStore.selectExample('ex-post')
+    resStore.response = { status_code: 200, status_text: 'OK', headers: {}, body: 'ex', time_ms: 1, size_bytes: 2, timestamp: '', truncated: false, is_binary: false }
+    tabStore.saveResponseToCache('req-tab-ex', 'ex-post')
+    tabStore.saveResponseToCache('req-tab-ex', null)
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(tabStore.tabs[0].method).toBe('GET')
+    expect(tabStore.responseCache['req-tab-ex::ex-post']).toBeDefined()
+    expect(tabStore.responseCache['req-tab-ex']).toBeDefined()
+
+    await tabStore.closeTab('request:req-tab-ex')
+    expect(tabStore.responseCache['req-tab-ex::ex-post']).toBeUndefined()
+    expect(tabStore.responseCache['req-tab-ex']).toBeUndefined()
+  })
 })

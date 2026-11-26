@@ -1,8 +1,8 @@
 <script lang="ts" setup>
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useCollectionStore, type TreeNode } from '@/stores/collectionStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
-import { useRequestStore } from '@/stores/requestStore'
+import { useRequestStore, type KVPair } from '@/stores/requestStore'
 import { useUiStore } from '@/stores/uiStore'
 import {
   inspectVariableHierarchy,
@@ -10,6 +10,7 @@ import {
 } from '@/utils/resolveHierarchyVariables'
 import { LoadFolder, UpdateFolder } from '../../wailsjs/go/main/App'
 import CustomSelect, { type SelectOption } from '@/components/CustomSelect.vue'
+import KvpValueSelectControl from '@/components/KvpValueSelectControl.vue'
 
 export interface AnchorRectLike {
   top: number
@@ -50,6 +51,13 @@ const uiStore = useUiStore()
 const saving = ref(false)
 const revision = ref(0)
 const showAllEnvs = ref(false)
+
+const injectedScopeContext = inject<'request' | 'folder' | null>('variableScopeContext', null)
+const hasActiveRequest = computed(() => {
+  if (injectedScopeContext === 'folder') return false
+  if (injectedScopeContext === 'request') return Boolean(requestStore.current)
+  return Boolean(requestStore.current && !collectionStore.activeFolderId)
+})
 
 const activeEnvObj = computed(() => {
   if (!envStore.activeEnvId) return null
@@ -106,20 +114,77 @@ const inspection = computed(() => {
     includeAllEnvs: showAllEnvs.value,
     allFolders: showAllEnvs.value ? allTreeFolders.value : null,
     isPathParam: isPathParam.value,
-    pathParamValue: currentPathParamValue.value
+    pathParamValue: currentPathParamValue.value,
+    pathParams: requestStore.current?.path_params || null,
+    requestVariables: hasActiveRequest.value ? (requestStore.current?.variables || []) : null,
+    hasActiveRequest: hasActiveRequest.value
   })
 })
 
 const selectedScopeId = ref<string>(inspection.value.defaultScopeId)
-const inputValue = ref<string>(
-  inspection.value.valuesByScopeId[inspection.value.defaultScopeId] ?? ''
+const inputValue = ref<string>('')
+const inputType = ref<'text' | 'select'>('text')
+const inputOptions = ref<string[]>([])
+
+const areStringArraysEqual = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i])
+
+const getBaselineForScope = (scopeId: string): {
+  value: string
+  type: 'text' | 'select'
+  options: string[]
+} => {
+  const scopeOpt = inspection.value.options.find(o => o.id === scopeId)
+  const type: 'text' | 'select' =
+    scopeOpt?.type !== undefined
+      ? (scopeOpt.type === 'select' ? 'select' : 'text')
+      : inspection.value.inheritedType
+  const options: string[] =
+    scopeOpt?.type !== undefined
+      ? (Array.isArray(scopeOpt.options) ? [...scopeOpt.options] : [])
+      : [...inspection.value.inheritedOptions]
+  let value = ''
+  if (Object.prototype.hasOwnProperty.call(inspection.value.valuesByScopeId, scopeId)) {
+    value = inspection.value.valuesByScopeId[scopeId] ?? ''
+  } else if (scopeId === 'request' && type === 'select') {
+    value = inspection.value.effectiveValue ?? ''
+  }
+  return { value, type, options }
+}
+
+const syncLocalStateForScope = (scopeId: string) => {
+  const baseline = getBaselineForScope(scopeId)
+  inputValue.value = baseline.value
+  inputType.value = baseline.type
+  inputOptions.value = baseline.options
+}
+
+syncLocalStateForScope(selectedScopeId.value)
+
+watch(
+  () => [props.variableName, props.variableKind, requestStore.current?.id],
+  () => {
+    selectedScopeId.value = inspection.value.defaultScopeId
+    syncLocalStateForScope(selectedScopeId.value)
+  }
 )
 
 watch(
-  () => [props.variableName, props.variableKind],
-  () => {
-    selectedScopeId.value = inspection.value.defaultScopeId
-    inputValue.value = inspection.value.valuesByScopeId[selectedScopeId.value] ?? ''
+  () => ({
+    type: inspection.value.inheritedType,
+    options: inspection.value.inheritedOptions
+  }),
+  (nextMeta, prevMeta) => {
+    const scopeOpt = inspection.value.options.find(o => o.id === selectedScopeId.value)
+    if (scopeOpt?.type !== undefined) return
+    if (
+      prevMeta &&
+      inputType.value === prevMeta.type &&
+      areStringArraysEqual(inputOptions.value, prevMeta.options)
+    ) {
+      inputType.value = nextMeta.type
+      inputOptions.value = [...nextMeta.options]
+    }
   }
 )
 
@@ -128,7 +193,7 @@ watch(
   (opts) => {
     if (!opts.some(o => o.id === selectedScopeId.value)) {
       selectedScopeId.value = inspection.value.defaultScopeId
-      inputValue.value = inspection.value.valuesByScopeId[selectedScopeId.value] ?? ''
+      syncLocalStateForScope(selectedScopeId.value)
     }
   }
 )
@@ -136,7 +201,7 @@ watch(
 watch(
   selectedScopeId,
   (newScopeId) => {
-    inputValue.value = inspection.value.valuesByScopeId[newScopeId] ?? ''
+    syncLocalStateForScope(newScopeId)
   },
   { flush: 'sync' }
 )
@@ -147,7 +212,7 @@ const handleScopeChange = (eOrVal?: any) => {
     : (typeof eOrVal === 'string' ? eOrVal : selectedScopeId.value)
   if (targetVal) {
     selectedScopeId.value = targetVal
-    inputValue.value = inspection.value.valuesByScopeId[targetVal] ?? ''
+    syncLocalStateForScope(targetVal)
   }
 }
 
@@ -193,16 +258,18 @@ const popoverStyle = computed(() => {
 })
 
 const upsertVariable = (
-  list: { key: string; value: string; enabled?: boolean; description?: string }[] | null | undefined,
+  list: KVPair[] | null | undefined,
   key: string,
-  value: string
-): { key: string; value: string; enabled: boolean; description?: string }[] => {
-  const items = Array.isArray(list)
+  value: string,
+  meta?: { type?: 'text' | 'select'; options?: string[]; pureValueOverride?: boolean }
+): KVPair[] => {
+  const items: KVPair[] = Array.isArray(list)
     ? list.map(v => ({
+        ...v,
         key: v.key,
         value: v.value ?? '',
         enabled: Boolean(v.enabled),
-        ...(v.description !== undefined ? { description: v.description } : {})
+        ...(Array.isArray(v.options) ? { options: [...v.options] } : {})
       }))
     : []
   const matchingIndices: number[] = []
@@ -211,23 +278,110 @@ const upsertVariable = (
       matchingIndices.push(i)
     }
   }
+  const buildUpdated = (existing?: KVPair): KVPair => {
+    const next: KVPair = {
+      ...(existing ? { ...existing } : {}),
+      key,
+      value,
+      enabled: true
+    }
+    if (meta?.pureValueOverride) {
+      delete next.type
+      delete next.options
+      return next
+    }
+    if (meta?.type === 'select') {
+      next.type = 'select'
+      if (Array.isArray(meta.options) && meta.options.length > 0) {
+        next.options = [...meta.options]
+      } else {
+        delete next.options
+      }
+    } else {
+      if (existing?.type === 'select') {
+        next.type = 'text'
+      } else {
+        delete next.type
+      }
+      if (!existing) {
+        delete next.options
+      } else if (Array.isArray(meta?.options)) {
+        if (meta.options.length === 0) {
+          delete next.options
+        } else {
+          next.options = [...meta.options]
+        }
+      } else if (!existing.options?.length) {
+        delete next.options
+      }
+    }
+    return next
+  }
   if (matchingIndices.length === 0) {
-    items.push({ key, value, enabled: true })
+    items.push(buildUpdated())
     return items
   }
   const lastIdx = matchingIndices[matchingIndices.length - 1]
-  items[lastIdx] = {
-    ...items[lastIdx],
-    key,
-    value,
-    enabled: true
-  }
+  items[lastIdx] = buildUpdated(items[lastIdx])
   const earlierIndices = new Set(matchingIndices.slice(0, -1))
   return items.filter((_, i) => !earlierIndices.has(i))
 }
 
+const hasPendingChanges = computed(() => {
+  const baseline = getBaselineForScope(selectedScopeId.value)
+  if (inputValue.value !== baseline.value) return true
+  if (inputType.value !== baseline.type) return true
+  return !areStringArraysEqual(inputOptions.value, baseline.options)
+})
+
+const hasRequestOverride = computed(
+  () =>
+    selectedScopeId.value === 'request' &&
+    Boolean(inspection.value.options.find(o => o.id === 'request')?.hasVariable)
+)
+
+const isCurrentScopeReadonly = computed(() => {
+  if (!hasActiveRequest.value) return false
+  const flags = requestStore.activeSyncFlags
+  if (!flags) return false
+  if (selectedScopeId.value === 'request') return Boolean(flags.variables)
+  if (selectedScopeId.value === 'path-param') return Boolean(flags.path_params)
+  return false
+})
+
+const handleClearRequestOverride = async () => {
+  if (saving.value || isCurrentScopeReadonly.value || !requestStore.current) return
+  const trimmedKey = props.variableName.trim()
+  if (!trimmedKey || !Array.isArray(requestStore.current.variables)) return
+  saving.value = true
+  try {
+    requestStore.current.variables = requestStore.current.variables.filter(
+      v => !(v && typeof v.key === 'string' && v.key.trim() === trimmedKey)
+    )
+    const ok = await requestStore.saveCurrent({ silent: true })
+    if (ok) {
+      revision.value++
+      syncLocalStateForScope('request')
+      emit('saved', {
+        key: trimmedKey,
+        value: inspection.value.effectiveValue ?? '',
+        scopeId: 'request'
+      })
+    }
+  } catch (err) {
+    uiStore.showToast(String(err))
+  } finally {
+    saving.value = false
+  }
+}
+
+const handleSelectValue = async (val: string) => {
+  inputValue.value = val
+  await handleSave()
+}
+
 const handleSave = async () => {
-  if (saving.value) return
+  if (saving.value || isCurrentScopeReadonly.value) return
   const trimmedKey = props.variableName.trim()
   if (!trimmedKey) return
 
@@ -237,9 +391,32 @@ const handleSave = async () => {
   if (!scopeOpt) return
 
   const newVal = inputValue.value
+  const varMeta = { type: inputType.value, options: inputOptions.value }
   saving.value = true
 
   try {
+    if (scopeOpt.kind === 'request') {
+      if (!requestStore.current) return
+      if (!Array.isArray(requestStore.current.variables)) {
+        requestStore.current.variables = []
+      }
+      const isPureOverride =
+        inputType.value === inspection.value.parentInheritedType &&
+        areStringArraysEqual(inputOptions.value, inspection.value.parentInheritedOptions)
+      requestStore.current.variables = upsertVariable(
+        requestStore.current.variables,
+        trimmedKey,
+        newVal,
+        isPureOverride ? { pureValueOverride: true } : varMeta
+      )
+      const ok = await requestStore.saveCurrent({ silent: true })
+      if (ok) {
+        revision.value++
+        emit('saved', { key: trimmedKey, value: newVal, scopeId: scopeOpt.id })
+      }
+      return
+    }
+
     if (scopeOpt.kind === 'path-param') {
       if (!requestStore.current) return
       if (!Array.isArray(requestStore.current.path_params)) {
@@ -248,7 +425,8 @@ const handleSave = async () => {
       requestStore.current.path_params = upsertVariable(
         requestStore.current.path_params,
         trimmedKey,
-        newVal
+        newVal,
+        varMeta
       )
       requestStore.scheduleAutoSave()
       revision.value++
@@ -261,7 +439,7 @@ const handleSave = async () => {
       if (!activeColl) return
 
       const collId = activeColl.id || collectionStore.activeCollectionId || 'default'
-      const nextVars = upsertVariable(activeColl.variables as any, trimmedKey, newVal)
+      const nextVars = upsertVariable(activeColl.variables as any, trimmedKey, newVal, varMeta)
       const ok = await collectionStore.updateCollectionVariables(collId, nextVars)
       if (ok) {
         revision.value++
@@ -277,7 +455,7 @@ const handleSave = async () => {
       const targetEnv = envStore.environments.find(e => e.id === envId)
       if (!targetEnv) return
 
-      const nextVars = upsertVariable(targetEnv.variables as any, trimmedKey, newVal)
+      const nextVars = upsertVariable(targetEnv.variables as any, trimmedKey, newVal, varMeta)
       const payloadEnv = {
         ...targetEnv,
         variables: nextVars
@@ -305,7 +483,7 @@ const handleSave = async () => {
       folderData.id = folderData.id || folderId
 
       if (scopeOpt.kind === 'folder-global') {
-        folderData.variables = upsertVariable(folderData.variables, trimmedKey, newVal)
+        folderData.variables = upsertVariable(folderData.variables, trimmedKey, newVal, varMeta)
       } else {
         const envId = scopeOpt.envId || envStore.activeEnvId
         if (!envId) return
@@ -315,7 +493,8 @@ const handleSave = async () => {
         folderData.folder_envs[envId] = upsertVariable(
           folderData.folder_envs[envId],
           trimmedKey,
-          newVal
+          newVal,
+          varMeta
         )
       }
 
@@ -399,14 +578,27 @@ const handleSave = async () => {
           <label class="text-[11px] font-medium text-text-secondary">
             Phạm vi lưu trữ (Scope)
           </label>
-          <button
-            type="button"
-            data-test="toggle-all-env-scopes"
-            class="text-[10px] font-medium text-brand-primary hover:underline cursor-pointer outline-none"
-            @click="showAllEnvs = !showAllEnvs"
-          >
-            {{ showAllEnvs ? 'Thu gọn' : 'Tất cả Env/Folder' }}
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              v-if="hasRequestOverride"
+              type="button"
+              data-test="variable-reset-request-override-btn"
+              :disabled="saving || isCurrentScopeReadonly"
+              title="Xóa giá trị riêng của Request này để dùng mặc định từ Env/Folder"
+              class="text-[10px] font-medium text-amber-400 hover:underline cursor-pointer outline-none disabled:opacity-50"
+              @click="handleClearRequestOverride"
+            >
+              Bỏ ghi đè
+            </button>
+            <button
+              type="button"
+              data-test="toggle-all-env-scopes"
+              class="text-[10px] font-medium text-brand-primary hover:underline cursor-pointer outline-none"
+              @click="showAllEnvs = !showAllEnvs"
+            >
+              {{ showAllEnvs ? 'Thu gọn' : 'Tất cả Env/Folder' }}
+            </button>
+          </div>
         </div>
         <CustomSelect
           v-model="selectedScopeId"
@@ -418,28 +610,52 @@ const handleSave = async () => {
         />
       </div>
 
-      <!-- Value Input + Save Button -->
+      <!-- Value Input / Select + Save Button -->
       <div class="flex items-center gap-1.5">
-        <input
-          v-model="inputValue"
-          data-test="variable-value-input"
-          type="text"
-          :placeholder="inputPlaceholder"
-          class="flex-1 min-w-0 bg-surface-input border border-border-default rounded px-2.5 py-1.5 text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary"
-          spellcheck="false"
-          autocomplete="off"
-          @keydown.enter.prevent="handleSave"
-          @keydown.esc.stop.prevent="emit('close')"
-        />
+        <KvpValueSelectControl
+          class="flex-1 min-w-0"
+          :model-value="inputValue"
+          :type="inputType"
+          :options="inputOptions"
+          :readonly="isCurrentScopeReadonly"
+          :disabled="isCurrentScopeReadonly"
+          :compact="true"
+          @update:model-value="val => { inputValue = val }"
+          @update:type="nextType => { inputType = nextType }"
+          @update:options="nextOpts => { inputOptions = nextOpts }"
+          @select="handleSelectValue"
+          @portal-mouseenter="emit('mouseenter')"
+          @portal-mouseleave="emit('mouseleave')"
+        >
+          <input
+            v-model="inputValue"
+            :readonly="isCurrentScopeReadonly"
+            data-test="variable-value-input"
+            type="text"
+            :placeholder="inputPlaceholder"
+            class="flex-1 min-w-0 bg-surface-input border border-border-default rounded px-2.5 py-1.5 text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary"
+            :class="{ 'opacity-60 cursor-not-allowed': isCurrentScopeReadonly }"
+            spellcheck="false"
+            autocomplete="off"
+            @keydown.enter.prevent="handleSave"
+            @keydown.esc.stop.prevent="emit('close')"
+          />
+        </KvpValueSelectControl>
         <button
           type="button"
           data-test="variable-save-btn"
-          :disabled="saving"
-          class="px-2.5 py-1.5 rounded bg-brand-primary text-white text-xs font-medium hover:bg-brand-hover transition-colors shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
-          :class="{ 'opacity-50 cursor-not-allowed': saving }"
+          :disabled="saving || isCurrentScopeReadonly"
+          class="px-2.5 py-1.5 rounded bg-brand-primary text-white text-xs font-medium hover:bg-brand-hover transition-colors shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary flex items-center gap-1.5"
+          :class="{ 'opacity-50 cursor-not-allowed': saving || isCurrentScopeReadonly }"
           @click="handleSave"
         >
-          {{ saving ? '...' : 'Lưu' }}
+          <span
+            v-if="hasPendingChanges && !saving"
+            data-test="variable-save-dirty-dot"
+            class="w-1.5 h-1.5 rounded-full bg-amber-300 shrink-0"
+            aria-hidden="true"
+          ></span>
+          <span>{{ saving ? '...' : 'Lưu' }}</span>
         </button>
       </div>
     </div>

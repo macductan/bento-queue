@@ -1,19 +1,39 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"hecto-api/model"
+	"hecto-api/service"
+	"hecto-api/storage"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv(mockInternalDaemonEnv) == "1" {
+		main()
+		return
+	}
+	os.Exit(m.Run())
+}
 
 func execCLI(t *testing.T, dataDir string, args ...string) (int, string, string) {
 	t.Helper()
@@ -869,4 +889,2044 @@ func TestFlowCLI_CRUD_Folder_ShorthandSteps_NodesJSON_And_Run(t *testing.T) {
 	}
 }
 
+func findFreeMockPort(t *testing.T) int {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to allocate free port: %v", err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		if port >= 1024 && port <= 65535 {
+			return port
+		}
+	}
+	t.Fatal("failed to allocate free port in range 1024..65535")
+	return 0
+}
 
+func TestMockCLI_Status_Config_RouteCRUD_And_Validation(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// 1. agent-guide contains hecto mock documentation
+	code, guideOut, _ := execCLI(t, dataDir, "agent-guide")
+	if code != 0 {
+		t.Fatalf("agent-guide failed with code=%d", code)
+	}
+	for _, needle := range []string{"hecto mock", "mock-daemon.json", "--daemon", "MOCK_ROUTE_NOT_FOUND"} {
+		if !strings.Contains(guideOut, needle) {
+			t.Fatalf("expected agent-guide to contain %q", needle)
+		}
+	}
+
+	// 2. Initial status without mock-server.json or mock-daemon.json -> running: false, port: 4010, routes: []
+	code, stInit, _ := execCLIJSON(t, dataDir, "mock", "status")
+	if code != 0 || !stInit.Success {
+		t.Fatalf("initial mock status failed: code=%d res=%+v", code, stInit)
+	}
+	stInitMap := stInit.Data.(map[string]interface{})
+	if stInitMap["running"] != false || int(stInitMap["port"].(float64)) != 4010 {
+		t.Fatalf("unexpected initial mock status: %+v", stInitMap)
+	}
+	if routes, ok := stInitMap["routes"].([]interface{}); !ok || len(routes) != 0 {
+		t.Fatalf("expected empty non-nil routes slice, got %+v", stInitMap["routes"])
+	}
+
+	// 3. Stale PID in mock-daemon.json is cleaned up automatically by status
+	deadCmd := exec.Command("true")
+	if err := deadCmd.Run(); err != nil {
+		t.Fatalf("failed running short-lived command for stale PID: %v", err)
+	}
+	staleDaemonPath := filepath.Join(dataDir, "mock-daemon.json")
+	stalePayload := fmt.Sprintf(`{"pid":%d,"port":4010,"base_url":"http://127.0.0.1:4010","collection_id":"default","coll_root":%q}`,
+		deadCmd.Process.Pid, filepath.Join(dataDir, "collections", "default"))
+	if err := os.WriteFile(staleDaemonPath, []byte(stalePayload), 0644); err != nil {
+		t.Fatalf("failed writing stale mock-daemon.json: %v", err)
+	}
+	code, stAfterStale, _ := execCLIJSON(t, dataDir, "mock", "status")
+	if code != 0 || !stAfterStale.Success {
+		t.Fatalf("mock status after stale PID failed: %+v", stAfterStale)
+	}
+	if stAfterStale.Data.(map[string]interface{})["running"] != false {
+		t.Fatalf("expected running=false for stale PID, got %+v", stAfterStale.Data)
+	}
+	if _, err := os.Stat(staleDaemonPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale mock-daemon.json to be removed, stat err=%v", err)
+	}
+
+	// 4. mock config --port validation and compatibility with MockServerService.GetStatus
+	for _, badPort := range []string{"0", "80", "1023", "65536"} {
+		cBad, resBad, _ := execCLIJSON(t, dataDir, "mock", "config", "--port", badPort)
+		if cBad == 0 || resBad.Success || resBad.Error == nil || resBad.Error.Code != model.ErrValidation {
+			t.Fatalf("expected VALIDATION for --port %s, got code=%d res=%+v", badPort, cBad, resBad)
+		}
+	}
+	portCfg := findFreeMockPort(t)
+	code, cfgRes, _ := execCLIJSON(t, dataDir, "mock", "config", "-p", strconv.Itoa(portCfg))
+	if code != 0 || !cfgRes.Success {
+		t.Fatalf("mock config -p failed: %+v", cfgRes)
+	}
+	if int(cfgRes.Data.(map[string]interface{})["port"].(float64)) != portCfg {
+		t.Fatalf("expected configured port %d, got %+v", portCfg, cfgRes.Data)
+	}
+
+	// Read-only mock config (no --port) returns existing config
+	code, cfgReadRes, _ := execCLIJSON(t, dataDir, "mock", "config")
+	if code != 0 || !cfgReadRes.Success || int(cfgReadRes.Data.(map[string]interface{})["port"].(float64)) != portCfg {
+		t.Fatalf("read-only mock config failed: code=%d res=%+v", code, cfgReadRes)
+	}
+
+	// 5. Route create with @file, ANY method, CleanMockPath, flexible flags, and boolean flags
+	bodyFile := filepath.Join(t.TempDir(), "mock-body.json")
+	if err := os.WriteFile(bodyFile, []byte(`{"id":42,"from_file":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	code, rCreate1, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "create",
+		"--method", "any",
+		"--path", "api/users/:id/",
+		"--status-code", "201",
+		"--delay-ms", "15",
+		"--header", "X-Mock: v1",
+		"--body", "@"+bodyFile,
+		"--description", "Initial desc",
+	)
+	if code != 0 || !rCreate1.Success {
+		t.Fatalf("mock route create 1 failed: %+v", rCreate1)
+	}
+	r1Map := rCreate1.Data.(map[string]interface{})
+	r1ID := r1Map["id"].(string)
+	if r1Map["method"] != "ANY" || r1Map["path"] != "/api/users/:id" ||
+		int(r1Map["status_code"].(float64)) != 201 ||
+		int(r1Map["delay_ms"].(float64)) != 15 ||
+		r1Map["enabled"] != true ||
+		r1Map["body"] != `{"id":42,"from_file":true}` ||
+		r1Map["description"] != "Initial desc" {
+		t.Fatalf("unexpected created route 1 fields: %+v", r1Map)
+	}
+
+	// Verify boolean flag --disabled does NOT swallow --json or positional args
+	code, rCreate2, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "create",
+		"--disabled",
+		"--path", "/api/disabled",
+	)
+	if code != 0 || !rCreate2.Success {
+		t.Fatalf("mock route create --disabled failed: %+v", rCreate2)
+	}
+	r2Map := rCreate2.Data.(map[string]interface{})
+	if r2Map["enabled"] != false || r2Map["method"] != "GET" || int(r2Map["status_code"].(float64)) != 200 {
+		t.Fatalf("unexpected disabled route defaults: %+v", r2Map)
+	}
+
+	// Verify MockServerService.GetStatus reads identical schema
+	fs := storage.NewFileSystem()
+	mockSvc := service.NewMockServerService(fs, slog.Default())
+	svcStatusRes := mockSvc.GetStatus(filepath.Join(dataDir, "collections", "default"))
+	if !svcStatusRes.Success {
+		t.Fatalf("MockServerService.GetStatus failed: %+v", svcStatusRes)
+	}
+	svcStatus := svcStatusRes.Data.(model.MockServerStatus)
+	if svcStatus.Port != portCfg || len(svcStatus.Routes) != 2 {
+		t.Fatalf("MockServerService.GetStatus mismatch: %+v", svcStatus)
+	}
+	r0 := svcStatus.Routes[0]
+	if r0.ID != r1ID || r0.Method != "ANY" || r0.Path != "/api/users/:id" ||
+		r0.StatusCode != 201 || r0.DelayMs != 15 || !r0.Enabled ||
+		r0.Body != `{"id":42,"from_file":true}` || r0.Description != "Initial desc" ||
+		len(r0.Headers) != 1 || r0.Headers[0].Key != "X-Mock" || r0.Headers[0].Value != "v1" || !r0.Headers[0].Enabled {
+		t.Fatalf("MockServerService.GetStatus route[0] schema mismatch: %+v", r0)
+	}
+
+	// 6. Route list & get by ID or "METHOD /path" (with flexible flag position & aliases)
+	code, rCreateBool, _ := execCLIJSON(t, dataDir,
+		"mocks", "routes", "add",
+		"--path", "/api/bool-last",
+		"--enabled",
+	)
+	if code != 0 || !rCreateBool.Success || rCreateBool.Data.(map[string]interface{})["enabled"] != true {
+		t.Fatalf("mock route create with trailing --enabled before --json failed: code=%d res=%+v", code, rCreateBool)
+	}
+	rBoolID := rCreateBool.Data.(map[string]interface{})["id"].(string)
+
+	code, rList, _ := execCLIJSON(t, dataDir, "mocks", "routes", "ls")
+	if code != 0 || !rList.Success || len(rList.Data.([]interface{})) != 3 {
+		t.Fatalf("expected 3 routes in list via aliases, got %+v", rList)
+	}
+	code, rGetBySel, _ := execCLIJSON(t, dataDir, "mock", "route", "show", "any /api/users/:id/")
+	if code != 0 || !rGetBySel.Success || rGetBySel.Data.(map[string]interface{})["id"] != r1ID {
+		t.Fatalf("route get by 'METHOD /path' failed: %+v", rGetBySel)
+	}
+
+	// 7. Route update Read-Merge-Write (FlagSet.Visit, "" clears field, flexible flag order)
+	code, rUpd1, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "update", "ANY /api/users/:id",
+		"--status-code", "202",
+		"--set-header", "X-Mock: v2",
+		"--set-header", "X-Extra: yes",
+	)
+	if code != 0 || !rUpd1.Success {
+		t.Fatalf("mock route update 1 failed: %+v", rUpd1)
+	}
+	u1Map := rUpd1.Data.(map[string]interface{})
+	if int(u1Map["status_code"].(float64)) != 202 ||
+		u1Map["body"] != `{"id":42,"from_file":true}` ||
+		u1Map["description"] != "Initial desc" ||
+		u1Map["enabled"] != true ||
+		len(u1Map["headers"].([]interface{})) != 2 {
+		t.Fatalf("Read-Merge-Write failed on route update 1: %+v", u1Map)
+	}
+
+	// Test update with --method, uncleaned --path, --delay, --status alias overriding --status-code, --desc, --body @file, header dedupe + case-insensitive unset
+	updBodyFile := filepath.Join(t.TempDir(), "upd-body.json")
+	if err := os.WriteFile(updBodyFile, []byte(`{"patched":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	code, rUpdAlias, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "patch", rBoolID,
+		"--method", "put",
+		"--path", "api/patched/",
+		"--status-code", "201",
+		"--status", "204",
+		"--delay", "25",
+		"--desc", "Patched via alias",
+		"--body", "@"+updBodyFile,
+		"--set-header", " X-Dup : one ",
+		"--set-header", "x-dup: two",
+	)
+	if code != 0 || !rUpdAlias.Success {
+		t.Fatalf("mock route patch alias update failed: %+v", rUpdAlias)
+	}
+	uaMap := rUpdAlias.Data.(map[string]interface{})
+	if uaMap["method"] != "PUT" || uaMap["path"] != "/api/patched" ||
+		int(uaMap["status_code"].(float64)) != 204 ||
+		int(uaMap["delay_ms"].(float64)) != 25 ||
+		uaMap["description"] != "Patched via alias" ||
+		uaMap["body"] != `{"patched":true}` ||
+		len(uaMap["headers"].([]interface{})) != 1 {
+		t.Fatalf("unexpected route patch alias fields: %+v", uaMap)
+	}
+	code, rUpdUnset, _ := execCLIJSON(t, dataDir, "mock", "route", "update", rBoolID, "--unset-header", "X-DUP")
+	if code != 0 || !rUpdUnset.Success || len(rUpdUnset.Data.(map[string]interface{})["headers"].([]interface{})) != 0 {
+		t.Fatalf("expected case-insensitive header unset to clear X-Dup, got %+v", rUpdUnset)
+	}
+	code, rDelAlias, _ := execCLIJSON(t, dataDir, "mock", "route", "rm", rBoolID)
+	if code != 0 || !rDelAlias.Success {
+		t.Fatalf("mock route rm alias failed: %+v", rDelAlias)
+	}
+
+	// Clear body & description with "", unset header, disable then re-enable
+	code, rUpd2, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "update", r1ID,
+		"--body", "",
+		"--description", "",
+		"--unset-header", "X-Extra",
+		"--disabled",
+	)
+	if code != 0 || !rUpd2.Success {
+		t.Fatalf("mock route update 2 failed: %+v", rUpd2)
+	}
+	u2Map := rUpd2.Data.(map[string]interface{})
+	if u2Map["body"] != "" || u2Map["enabled"] != false || len(u2Map["headers"].([]interface{})) != 1 {
+		t.Fatalf("expected body cleared, disabled, and 1 header left; got %+v", u2Map)
+	}
+	if descVal, exists := u2Map["description"]; exists && descVal != "" {
+		t.Fatalf("expected description cleared, got %v", descVal)
+	}
+
+	// Re-enable with flag placed BEFORE positional selector AND trailing --enabled before --json
+	code, rUpd3, _ := execCLIJSON(t, dataDir, "mock", "route", "update", "--enabled", r1ID)
+	if code != 0 || !rUpd3.Success || rUpd3.Data.(map[string]interface{})["enabled"] != true {
+		t.Fatalf("expected --enabled before selector to re-enable route, got code=%d res=%+v", code, rUpd3)
+	}
+	code, rUpd4, _ := execCLIJSON(t, dataDir, "mock", "route", "update", r1ID, "--enabled")
+	if code != 0 || !rUpd4.Success || rUpd4.Data.(map[string]interface{})["enabled"] != true {
+		t.Fatalf("expected trailing --enabled before --json to succeed, got code=%d res=%+v", code, rUpd4)
+	}
+
+	// 8. Validation & NOT_FOUND error cases + duplicate selector VALIDATION with IDs
+	errCases := []struct {
+		args []string
+		code string
+	}{
+		{[]string{"mock", "start", "--port", "0"}, model.ErrValidation},
+		{[]string{"mock", "start", "--port", "1023"}, model.ErrValidation},
+		{[]string{"mock", "status", "unexpected-pos"}, model.ErrValidation},
+		{[]string{"mock", "config", "unexpected-pos"}, model.ErrValidation},
+		{[]string{"mock", "start", "unexpected-pos"}, model.ErrValidation},
+		{[]string{"mock", "stop", "unexpected-pos"}, model.ErrValidation},
+		{[]string{"mock", "route", "list", "unexpected-pos"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "unexpected-pos"}, model.ErrValidation},
+		{[]string{"mock", "route", "get", r1ID, "extra-pos"}, model.ErrValidation},
+		{[]string{"mock", "route", "update", r1ID, "extra-pos", "--desc", "x"}, model.ErrValidation},
+		{[]string{"mock", "route", "delete", r1ID, "extra-pos"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--method", "BAD"}, model.ErrValidation}, // missing --path
+		{[]string{"mock", "route", "create", "--path", "/x", "--method", "BREW"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "--status-code", "99"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "--status-code", "600"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "--delay-ms", "-1"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "--delay-ms", "30001"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "--enabled", "--disabled"}, model.ErrValidation},
+		{[]string{"mock", "route", "create", "--path", "/x", "--body", "@/nonexistent/file.json"}, model.ErrNotFound},
+		{[]string{"mock", "route", "get", "GET /does-not-exist"}, model.ErrNotFound},
+		{[]string{"mock", "route", "delete", "GET /does-not-exist"}, model.ErrNotFound},
+		{[]string{"mock", "route", "update", r1ID}, model.ErrValidation}, // no update flags
+		{[]string{"mock", "route", "update", r1ID, "--method", ""}, model.ErrValidation},
+		{[]string{"mock", "route", "update", r1ID, "--path", ""}, model.ErrValidation},
+		{[]string{"mock", "route", "update", r1ID, "--unset-header", ""}, model.ErrValidation},
+		{[]string{"mock", "status", "-c", "no-such-collection"}, model.ErrNotFound},
+	}
+	for _, tc := range errCases {
+		ec, res, _ := execCLIJSON(t, dataDir, tc.args...)
+		if ec == 0 || res.Success || res.Error == nil || res.Error.Code != tc.code {
+			t.Fatalf("args %v: expected error code %s, got code=%d res=%+v", tc.args, tc.code, ec, res)
+		}
+	}
+
+	// Out-of-range port persisted in mock-server.json -> mock start --daemon without --port fails VALIDATION
+	badCfgPath := filepath.Join(dataDir, "collections", "default", "mock-server.json")
+	if err := os.WriteFile(badCfgPath, []byte(`{"port":80,"routes":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	codeBadDiskPort, resBadDiskPort, _ := execCLIJSON(t, dataDir, "mock", "start", "--daemon")
+	if codeBadDiskPort == 0 || resBadDiskPort.Error == nil || resBadDiskPort.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION for invalid port in mock-server.json, got code=%d res=%+v", codeBadDiskPort, resBadDiskPort)
+	}
+	_, _, _ = execCLIJSON(t, dataDir, "mock", "config", "--port", strconv.Itoa(portCfg))
+
+	// Duplicate selector check -> VALIDATION listing both IDs
+	_, dupA, _ := execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/dup")
+	_, dupB, _ := execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/dup/")
+	dupAID := dupA.Data.(map[string]interface{})["id"].(string)
+	dupBID := dupB.Data.(map[string]interface{})["id"].(string)
+
+	cDup, resDup, _ := execCLIJSON(t, dataDir, "mock", "route", "get", "GET /dup")
+	if cDup == 0 || resDup.Success || resDup.Error == nil || resDup.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION for ambiguous route selector, got code=%d res=%+v", cDup, resDup)
+	}
+	if !strings.Contains(resDup.Error.Message, dupAID) || !strings.Contains(resDup.Error.Message, dupBID) {
+		t.Fatalf("expected ambiguous error message to contain both IDs %s and %s, got: %s", dupAID, dupBID, resDup.Error.Message)
+	}
+
+	// 9. Route delete
+	code, delRes, _ := execCLIJSON(t, dataDir, "mock", "route", "delete", dupAID)
+	if code != 0 || !delRes.Success || delRes.Data.(map[string]interface{})["deleted_id"] != dupAID {
+		t.Fatalf("mock route delete failed: %+v", delRes)
+	}
+	code, getAfterDel, _ := execCLIJSON(t, dataDir, "mock", "route", "get", dupAID)
+	if code == 0 || getAfterDel.Error == nil || getAfterDel.Error.Code != model.ErrNotFound {
+		t.Fatalf("expected NOT_FOUND after deleting route, got %+v", getAfterDel)
+	}
+}
+
+func TestMockCLI_Daemon_SingleInstance_HotReload_HTTP_Foreground_And_Stop(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Cleanup(func() {
+		_, _, _ = execCLIJSON(t, dataDir, "mock", "stop")
+	})
+
+	// 1. Setup routes in default collection and create second collection CollB
+	_, crRoute1, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "create",
+		"--method", "GET",
+		"--path", "/api/users/:id",
+		"--status-code", "200",
+		"--header", "X-Mock-Hdr: user-ok",
+		"--body", `{"id":42,"role":"user"}`,
+	)
+	if !crRoute1.Success {
+		t.Fatalf("create user route failed: %+v", crRoute1)
+	}
+	_, crRouteAny, _ := execCLIJSON(t, dataDir,
+		"mock", "route", "create",
+		"--method", "ANY",
+		"--path", "/api/any",
+		"--status-code", "200",
+		"--body", `{"any":true}`,
+	)
+	if !crRouteAny.Success {
+		t.Fatalf("create ANY route failed: %+v", crRouteAny)
+	}
+	_, crCollB, _ := execCLIJSON(t, dataDir, "collection", "create", "--name", "CollB")
+	if !crCollB.Success {
+		t.Fatalf("create CollB failed: %+v", crCollB)
+	}
+
+	// 2. Configure port and start daemon WITHOUT --port (and with --daemon directly before --json)
+	port1 := findFreeMockPort(t)
+	_, cfg1, _ := execCLIJSON(t, dataDir, "mock", "config", "--port", strconv.Itoa(port1))
+	if !cfg1.Success {
+		t.Fatalf("mock config --port failed: %+v", cfg1)
+	}
+	code, start1, rawStart1 := execCLIJSON(t, dataDir, "mock", "start", "--daemon")
+	if code != 0 || !start1.Success {
+		t.Fatalf("mock start --daemon failed: code=%d res=%+v raw=%s", code, start1, rawStart1)
+	}
+	s1Map := start1.Data.(map[string]interface{})
+	pid1 := int(s1Map["pid"].(float64))
+	baseURL1 := s1Map["base_url"].(string)
+	if s1Map["running"] != true || pid1 <= 0 || int(s1Map["port"].(float64)) != port1 || baseURL1 != fmt.Sprintf("http://127.0.0.1:%d", port1) {
+		t.Fatalf("unexpected start --daemon output: %+v", s1Map)
+	}
+
+	// Verify active collection `mock status` returns running: true, pid, port, base_url, started_at, no active_daemon
+	code, stActive, _ := execCLIJSON(t, dataDir, "mock", "status")
+	if code != 0 || !stActive.Success {
+		t.Fatalf("active mock status failed: %+v", stActive)
+	}
+	stActiveMap := stActive.Data.(map[string]interface{})
+	if stActiveMap["running"] != true ||
+		int(stActiveMap["pid"].(float64)) != pid1 ||
+		int(stActiveMap["port"].(float64)) != port1 ||
+		stActiveMap["base_url"] != baseURL1 ||
+		strings.TrimSpace(fmt.Sprint(stActiveMap["started_at"])) == "" {
+		t.Fatalf("unexpected active mock status: %+v", stActiveMap)
+	}
+	if _, hasActiveDaemon := stActiveMap["active_daemon"]; hasActiveDaemon {
+		t.Fatalf("expected no active_daemon on active collection status, got %+v", stActiveMap["active_daemon"])
+	}
+
+	// Changing configured port while daemon runs exposes configured_port while preserving live port
+	newCfgPort := findFreeMockPort(t)
+	code, cfgWhileRunning, _ := execCLIJSON(t, dataDir, "mock", "config", "--port", strconv.Itoa(newCfgPort))
+	if code != 0 || !cfgWhileRunning.Success {
+		t.Fatalf("mock config while daemon running failed: %+v", cfgWhileRunning)
+	}
+	cfgRunMap := cfgWhileRunning.Data.(map[string]interface{})
+	if int(cfgRunMap["port"].(float64)) != port1 || int(cfgRunMap["configured_port"].(float64)) != newCfgPort {
+		t.Fatalf("expected port=%d and configured_port=%d while running, got %+v", port1, newCfgPort, cfgRunMap)
+	}
+
+	// Verify mock-daemon.json is in <configDir> ONLY, never inside <collection>/
+	if _, err := os.Stat(filepath.Join(dataDir, "mock-daemon.json")); err != nil {
+		t.Fatalf("expected mock-daemon.json in configDir, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "collections", "default", "mock-daemon.json")); !os.IsNotExist(err) {
+		t.Fatalf("mock-daemon.json must NOT be inside collection directory")
+	}
+
+	// 3. Test HTTP responses: :id param, ANY method, *, /, delay_ms, disabled=404, CORS, and 404 MOCK_ROUTE_NOT_FOUND
+	_, _, _ = execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/", "--body", `{"root":true}`)
+	_, _, _ = execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/files/*", "--body", `{"wildcard":true}`)
+	_, _, _ = execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/api/disabled-rt", "--disabled", "--body", `{"off":true}`)
+	_, _, _ = execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/api/slow", "--delay-ms", "80", "--body", `{"slow":true}`)
+	// Wait briefly for hot-reload of newly added routes
+	waitHTTPStatus(t, baseURL1+"/api/slow", 200)
+
+	respRoot, err := http.Get(baseURL1 + "/")
+	if err != nil {
+		t.Fatalf("HTTP GET / failed: %v", err)
+	}
+	bRoot, _ := io.ReadAll(respRoot.Body)
+	_ = respRoot.Body.Close()
+	if respRoot.StatusCode != 200 || string(bRoot) != `{"root":true}` {
+		t.Fatalf("unexpected GET / response: status=%d body=%s", respRoot.StatusCode, string(bRoot))
+	}
+
+	respWild, err := http.Get(baseURL1 + "/files/logo.png")
+	if err != nil {
+		t.Fatalf("HTTP GET /files/logo.png failed: %v", err)
+	}
+	bWild, _ := io.ReadAll(respWild.Body)
+	_ = respWild.Body.Close()
+	if respWild.StatusCode != 200 || string(bWild) != `{"wildcard":true}` {
+		t.Fatalf("unexpected GET /files/* response: status=%d body=%s", respWild.StatusCode, string(bWild))
+	}
+
+	respDis, err := http.Get(baseURL1 + "/api/disabled-rt")
+	if err != nil {
+		t.Fatalf("HTTP GET /api/disabled-rt failed: %v", err)
+	}
+	bDis, _ := io.ReadAll(respDis.Body)
+	_ = respDis.Body.Close()
+	if respDis.StatusCode != 404 || !strings.Contains(string(bDis), "MOCK_ROUTE_NOT_FOUND") {
+		t.Fatalf("expected 404 for disabled route, got status=%d body=%s", respDis.StatusCode, string(bDis))
+	}
+
+	delayStart := time.Now()
+	respSlow, err := http.Get(baseURL1 + "/api/slow")
+	delayElapsed := time.Since(delayStart)
+	if err != nil {
+		t.Fatalf("HTTP GET /api/slow failed: %v", err)
+	}
+	_ = respSlow.Body.Close()
+	if respSlow.StatusCode != 200 || delayElapsed < 65*time.Millisecond {
+		t.Fatalf("expected delay_ms=80 to sleep >=65ms and return 200, got status=%d elapsed=%v", respSlow.StatusCode, delayElapsed)
+	}
+	resp1, err := http.Get(baseURL1 + "/api/users/42")
+	if err != nil {
+		t.Fatalf("HTTP GET :id failed: %v", err)
+	}
+	b1, _ := io.ReadAll(resp1.Body)
+	_ = resp1.Body.Close()
+	if resp1.StatusCode != 200 || resp1.Header.Get("X-Mock-Hdr") != "user-ok" ||
+		resp1.Header.Get("Access-Control-Allow-Origin") != "*" ||
+		string(b1) != `{"id":42,"role":"user"}` {
+		t.Fatalf("unexpected HTTP GET :id response: status=%d hdr=%v body=%s", resp1.StatusCode, resp1.Header, string(b1))
+	}
+
+	reqAny, _ := http.NewRequest(http.MethodPatch, baseURL1+"/api/any", nil)
+	respAny, err := http.DefaultClient.Do(reqAny)
+	if err != nil {
+		t.Fatalf("HTTP PATCH /api/any failed: %v", err)
+	}
+	bAny, _ := io.ReadAll(respAny.Body)
+	_ = respAny.Body.Close()
+	if respAny.StatusCode != 200 || string(bAny) != `{"any":true}` {
+		t.Fatalf("unexpected ANY route response: status=%d body=%s", respAny.StatusCode, string(bAny))
+	}
+
+	resp404, err := http.Get(baseURL1 + "/api/unknown")
+	if err != nil {
+		t.Fatalf("HTTP GET /api/unknown failed: %v", err)
+	}
+	b404, _ := io.ReadAll(resp404.Body)
+	_ = resp404.Body.Close()
+	if resp404.StatusCode != 404 || !strings.Contains(string(b404), "MOCK_ROUTE_NOT_FOUND") {
+		t.Fatalf("expected 404 MOCK_ROUTE_NOT_FOUND, got status=%d body=%s", resp404.StatusCode, string(b404))
+	}
+
+	reqOpt, _ := http.NewRequest(http.MethodOptions, baseURL1+"/api/unknown", nil)
+	respOpt, err := http.DefaultClient.Do(reqOpt)
+	if err != nil {
+		t.Fatalf("HTTP OPTIONS failed: %v", err)
+	}
+	_ = respOpt.Body.Close()
+	if respOpt.StatusCode != 204 || respOpt.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("expected 204 CORS preflight response, got status=%d hdr=%v", respOpt.StatusCode, respOpt.Header)
+	}
+
+	// 4. Hot-reload: add and update a route while daemon is running and verify HTTP serves updates without restart
+	code, hotCreate, _ := execCLIJSON(t, dataDir, "mock", "route", "create", "--method", "GET", "--path", "/api/hot", "--status-code", "202", "--body", `{"hot":true}`)
+	if code != 0 || !hotCreate.Success {
+		t.Fatalf("hot route create failed: %+v", hotCreate)
+	}
+	hotOK := false
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rHot, err := http.Get(baseURL1 + "/api/hot")
+		if err == nil {
+			bh, _ := io.ReadAll(rHot.Body)
+			_ = rHot.Body.Close()
+			if rHot.StatusCode == 202 && string(bh) == `{"hot":true}` {
+				hotOK = true
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if !hotOK {
+		t.Fatalf("hot-reload did not pick up new /api/hot route within 3s")
+	}
+
+	code, hotUpd, _ := execCLIJSON(t, dataDir, "mock", "route", "update", "GET /api/hot", "--status-code", "203", "--body", `{"hot":"updated"}`)
+	if code != 0 || !hotUpd.Success {
+		t.Fatalf("hot route update failed: %+v", hotUpd)
+	}
+	hotUpdOK := false
+	deadlineUpd := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadlineUpd) {
+		rHot2, err := http.Get(baseURL1 + "/api/hot")
+		if err == nil {
+			bh2, _ := io.ReadAll(rHot2.Body)
+			_ = rHot2.Body.Close()
+			if rHot2.StatusCode == 203 && string(bh2) == `{"hot":"updated"}` {
+				hotUpdOK = true
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if !hotUpdOK {
+		t.Fatalf("hot-reload did not pick up updated /api/hot route within 3s")
+	}
+
+	// Delete /api/hot while daemon runs -> hot-reload stops serving it (404)
+	code, hotDel, _ := execCLIJSON(t, dataDir, "mock", "route", "delete", "GET /api/hot")
+	if code != 0 || !hotDel.Success {
+		t.Fatalf("hot route delete failed: %+v", hotDel)
+	}
+	waitHTTPStatus(t, baseURL1+"/api/hot", 404)
+
+	// 5. Cross-collection status: status -c CollB must report running: false + active_daemon metadata
+	code, stCollB, _ := execCLIJSON(t, dataDir, "-c", "CollB", "mock", "status")
+	if code != 0 || !stCollB.Success {
+		t.Fatalf("status -c CollB failed: %+v", stCollB)
+	}
+	stCollBMap := stCollB.Data.(map[string]interface{})
+	if stCollBMap["running"] != false || int(stCollBMap["port"].(float64)) != 4010 {
+		t.Fatalf("expected running=false, port=4010 for CollB, got %+v", stCollBMap)
+	}
+	activeDaemon, ok := stCollBMap["active_daemon"].(map[string]interface{})
+	if !ok || int(activeDaemon["pid"].(float64)) != pid1 || activeDaemon["collection_id"] != "default" {
+		t.Fatalf("expected active_daemon metadata pointing to default pid %d, got %+v", pid1, stCollBMap)
+	}
+
+	// 6. Single Active Instance: `mock serve --daemon -c CollB` must stop old daemon on default first
+	port2 := findFreeMockPort(t)
+	code, start2, _ := execCLIJSON(t, dataDir, "-c", "CollB", "mock", "serve", "--daemon", "--port", strconv.Itoa(port2))
+	if code != 0 || !start2.Success {
+		t.Fatalf("mock serve --daemon -c CollB failed: %+v", start2)
+	}
+	s2Map := start2.Data.(map[string]interface{})
+	pid2 := int(s2Map["pid"].(float64))
+	if pid2 <= 0 || pid2 == pid1 || int(s2Map["port"].(float64)) != port2 {
+		t.Fatalf("unexpected CollB daemon status: %+v", s2Map)
+	}
+	if isProcessAlive(pid1) {
+		t.Fatalf("expected old daemon pid %d to be stopped when new daemon started", pid1)
+	}
+	code, stDefaultAfter, _ := execCLIJSON(t, dataDir, "mock", "status")
+	if code != 0 || stDefaultAfter.Data.(map[string]interface{})["running"] != false {
+		t.Fatalf("expected default collection status running=false after CollB took over, got %+v", stDefaultAfter)
+	}
+
+	// 7. Foreground mode via subprocess (`mock start --port <port3> --json`), stops CollB daemon, flushes 1 JSON line, handles SIGTERM
+	port3 := findFreeMockPort(t)
+	fgCmd := exec.Command(os.Args[0], "--data-dir", dataDir, "mock", "start", "--port", strconv.Itoa(port3), "--json")
+	fgEnv := append(os.Environ(), mockInternalDaemonEnv+"=1")
+	fgCmd.Env = fgEnv
+	fgStdout, err := fgCmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fgCmd.Start(); err != nil {
+		t.Fatalf("failed starting foreground mock subprocess: %v", err)
+	}
+	fgWaitDone := make(chan error, 1)
+	go func() {
+		fgWaitDone <- fgCmd.Wait()
+	}()
+
+	lineCh := make(chan string, 1)
+	go func() {
+		reader := bufio.NewReader(fgStdout)
+		line, _ := reader.ReadString('\n')
+		lineCh <- line
+	}()
+
+	var fgLine string
+	select {
+	case fgLine = <-lineCh:
+	case <-time.After(5 * time.Second):
+		_ = fgCmd.Process.Kill()
+		t.Fatal("timed out waiting for 1-line JSON banner from foreground mock start")
+	}
+
+	var fgRes model.Result
+	if err := json.Unmarshal([]byte(strings.TrimSpace(fgLine)), &fgRes); err != nil || !fgRes.Success {
+		_ = fgCmd.Process.Kill()
+		t.Fatalf("expected valid 1-line JSON from foreground mock start, got %q (err=%v)", fgLine, err)
+	}
+	if isProcessAlive(pid2) {
+		_ = fgCmd.Process.Kill()
+		t.Fatalf("expected foreground start to stop old CollB daemon pid %d", pid2)
+	}
+
+	respFG, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/users/42", port3))
+	if err != nil {
+		_ = fgCmd.Process.Kill()
+		t.Fatalf("HTTP GET to foreground mock failed: %v", err)
+	}
+	_ = respFG.Body.Close()
+	if respFG.StatusCode != 200 {
+		_ = fgCmd.Process.Kill()
+		t.Fatalf("expected 200 from foreground mock, got %d", respFG.StatusCode)
+	}
+
+	if err := fgCmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("failed sending SIGTERM to foreground mock: %v", err)
+	}
+	select {
+	case wErr := <-fgWaitDone:
+		if wErr != nil {
+			t.Fatalf("expected foreground mock to exit cleanly on SIGTERM, got: %v", wErr)
+		}
+	case <-time.After(5 * time.Second):
+		_ = fgCmd.Process.Kill()
+		t.Fatal("timed out waiting for foreground mock exit after SIGTERM")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "mock-daemon.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected mock-daemon.json removed on foreground SIGTERM, stat err=%v", err)
+	}
+
+	// 8. Busy port held by external listener -> IO_ERROR (must NOT switch port)
+	busyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busyLn.Close()
+	busyPort := busyLn.Addr().(*net.TCPAddr).Port
+
+	codeBusy, resBusy, _ := execCLIJSON(t, dataDir, "mock", "start", "--daemon", "--port", strconv.Itoa(busyPort))
+	if codeBusy == 0 || resBusy.Success || resBusy.Error == nil || resBusy.Error.Code != model.ErrIO {
+		t.Fatalf("expected IO_ERROR when port %d is busy, got code=%d res=%+v", busyPort, codeBusy, resBusy)
+	}
+
+	// 9. Start again with -p alias and verify `mock stop` cleans up process and mock-daemon.json
+	port4 := findFreeMockPort(t)
+	code, start4, _ := execCLIJSON(t, dataDir, "mock", "start", "--daemon", "-p", strconv.Itoa(port4))
+	if code != 0 || !start4.Success {
+		t.Fatalf("mock start 4 failed: %+v", start4)
+	}
+	pid4 := int(start4.Data.(map[string]interface{})["pid"].(float64))
+	baseURL4 := start4.Data.(map[string]interface{})["base_url"].(string)
+
+	code, stopRes, _ := execCLIJSON(t, dataDir, "mock", "stop")
+	if code != 0 || !stopRes.Success {
+		t.Fatalf("mock stop failed: %+v", stopRes)
+	}
+	stopMap := stopRes.Data.(map[string]interface{})
+	if stopMap["running"] != false || stopMap["stopped"] != true {
+		t.Fatalf("unexpected mock stop output: %+v", stopMap)
+	}
+	if isProcessAlive(pid4) {
+		t.Fatalf("expected daemon pid %d to be terminated after mock stop", pid4)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "mock-daemon.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected mock-daemon.json removed after mock stop, stat err=%v", err)
+	}
+	if _, err := http.Get(baseURL4 + "/api/users/42"); err == nil {
+		t.Fatalf("expected HTTP connection failure after mock stop")
+	}
+
+	// Idempotent stop when already stopped -> stopped: false
+	code, stopAgain, _ := execCLIJSON(t, dataDir, "mock", "stop")
+	if code != 0 || !stopAgain.Success || stopAgain.Data.(map[string]interface{})["stopped"] != false {
+		t.Fatalf("expected stopped=false on repeated mock stop, got code=%d res=%+v", code, stopAgain)
+	}
+}
+
+func waitHTTPStatus(t *testing.T, url string, wantStatus int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == wantStatus {
+				return
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s to return HTTP %d", url, wantStatus)
+}
+
+func TestMockCLI_RelativeDataDir_RecycledPID_NonJSONBanner_And_HandshakeError(t *testing.T) {
+	// 1. Relative --data-dir works across different CWD
+	baseDir := t.TempDir()
+	relDataDir := filepath.Join(baseDir, "rel-data")
+	otherCwd := filepath.Join(baseDir, "other-cwd")
+	if err := os.MkdirAll(otherCwd, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(baseDir)
+	t.Cleanup(func() {
+		_, _, _ = execCLIJSON(t, relDataDir, "mock", "stop")
+	})
+
+	portRel := findFreeMockPort(t)
+	code, relStart, _ := execCLIJSON(t, "./rel-data", "mock", "start", "--daemon", "--port", strconv.Itoa(portRel))
+	if code != 0 || !relStart.Success {
+		t.Fatalf("relative --data-dir start failed: %+v", relStart)
+	}
+	t.Chdir(otherCwd)
+	code, relStatus, _ := execCLIJSON(t, "../rel-data", "mock", "status")
+	if code != 0 || !relStatus.Success || relStatus.Data.(map[string]interface{})["running"] != true {
+		t.Fatalf("expected running=true from another CWD with relative --data-dir, got code=%d res=%+v", code, relStatus)
+	}
+	_, _, _ = execCLIJSON(t, relDataDir, "mock", "stop")
+
+	// 2. Recycled/live non-listening PID in mock-daemon.json is treated as stale and cleaned up without killing it
+	liveCmd := exec.Command("sleep", "5")
+	if err := liveCmd.Start(); err != nil {
+		t.Fatalf("failed starting live helper process: %v", err)
+	}
+	defer func() {
+		if liveCmd.Process != nil {
+			_ = liveCmd.Process.Kill()
+			_ = liveCmd.Wait()
+		}
+	}()
+	deadPort := findFreeMockPort(t)
+	daemonPath := filepath.Join(relDataDir, "mock-daemon.json")
+	recycledPayload := fmt.Sprintf(`{"pid":%d,"port":%d,"base_url":"http://127.0.0.1:%d","collection_id":"default","coll_root":%q}`,
+		liveCmd.Process.Pid, deadPort, deadPort, filepath.Join(relDataDir, "collections", "default"))
+	if err := os.WriteFile(daemonPath, []byte(recycledPayload), 0644); err != nil {
+		t.Fatal(err)
+	}
+	code, stRecycled, _ := execCLIJSON(t, relDataDir, "mock", "status")
+	if code != 0 || !stRecycled.Success || stRecycled.Data.(map[string]interface{})["running"] != false {
+		t.Fatalf("expected running=false for recycled PID on closed port, got code=%d res=%+v", code, stRecycled)
+	}
+	if _, err := os.Stat(daemonPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale recycled-PID mock-daemon.json removed, stat err=%v", err)
+	}
+	if !isProcessAlive(liveCmd.Process.Pid) {
+		t.Fatalf("status must NOT kill unrelated live process %d", liveCmd.Process.Pid)
+	}
+
+	// 3. Non-JSON foreground banner & graceful SIGTERM exit
+	portBanner := findFreeMockPort(t)
+	fgCmd := exec.Command(os.Args[0], "--data-dir", relDataDir, "mock", "start", "--port", strconv.Itoa(portBanner))
+	fgCmd.Env = append(os.Environ(), mockInternalDaemonEnv+"=1")
+	fgStdout, err := fgCmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fgCmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	bannerDone := make(chan string, 1)
+	go func() {
+		r := bufio.NewReader(fgStdout)
+		line, _ := r.ReadString('\n')
+		bannerDone <- line
+	}()
+	var banner string
+	select {
+	case banner = <-bannerDone:
+	case <-time.After(5 * time.Second):
+		_ = fgCmd.Process.Kill()
+		_ = fgCmd.Wait()
+		t.Fatal("timed out waiting for non-JSON foreground banner")
+	}
+	if !strings.Contains(banner, "Mock server listening at") || !strings.Contains(banner, strconv.Itoa(portBanner)) {
+		_ = fgCmd.Process.Kill()
+		_ = fgCmd.Wait()
+		t.Fatalf("unexpected non-JSON foreground banner: %q", banner)
+	}
+	if err := fgCmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := fgCmd.Wait(); err != nil {
+		t.Fatalf("expected clean exit on SIGTERM, got: %v", err)
+	}
+
+	// 4. writeDaemonHandshakeError propagates early runCLI errors over FD 3
+	rPipe, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errCmd := exec.Command(os.Args[0], "--data-dir", relDataDir, "-c", "missing-collection-for-hs", "mock", "start")
+	errCmd.ExtraFiles = []*os.File{wPipe}
+	errCmd.Env = append(os.Environ(), mockInternalDaemonEnv+"=1", mockDaemonHandshakeFDEnv+"=3")
+	if err := errCmd.Start(); err != nil {
+		_ = rPipe.Close()
+		_ = wPipe.Close()
+		t.Fatal(err)
+	}
+	_ = wPipe.Close()
+	hs, hsErr := readDaemonHandshake(rPipe, 5*time.Second)
+	_ = errCmd.Wait()
+	if hsErr != nil {
+		t.Fatalf("expected structured handshake error, got read err: %v", hsErr)
+	}
+	if hs.Success || hs.Error == nil || hs.Error.Code != model.ErrNotFound {
+		t.Fatalf("expected ErrNotFound via handshake FD 3, got %+v", hs)
+	}
+}
+
+func TestAgentGuide_TOC_And_SectionExtraction(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// 1. Default without flags and `skill` alias return full SKILL.md
+	code, fullOut, _ := execCLI(t, tmpDir, "agent-guide")
+	if code != 0 || fullOut != skillMD {
+		t.Fatalf("expected full skillMD for `agent-guide`, got code=%d len=%d want=%d", code, len(fullOut), len(skillMD))
+	}
+	code, skillAliasOut, _ := execCLI(t, tmpDir, "skill")
+	if code != 0 || skillAliasOut != skillMD {
+		t.Fatalf("expected full skillMD for `skill` alias, got code=%d", code)
+	}
+	code, fullJSONRes, _ := execCLIJSON(t, tmpDir, "agent-guide")
+	if code != 0 || !fullJSONRes.Success || fullJSONRes.Data.(map[string]interface{})["content"] != skillMD {
+		t.Fatalf("expected full skillMD in JSON mode, got code=%d res=%+v", code, fullJSONRes)
+	}
+
+	// 2. --toc and --list (text and --json)
+	code, tocOut, _ := execCLI(t, tmpDir, "agent-guide", "--toc")
+	if code != 0 {
+		t.Fatalf("agent-guide --toc failed with code %d", code)
+	}
+	if len(tocOut) >= len(skillMD)/4 {
+		t.Fatalf("expected --toc to be concise (<25%% of full guide), got %d vs %d", len(tocOut), len(skillMD))
+	}
+	for _, mustContain := range []string{"[1]", "[3.4]", "[6]", "[7]", "flow", "mock", "core -> 1, 2, 3"} {
+		if !strings.Contains(tocOut, mustContain) {
+			t.Errorf("expected TOC output to contain %q, got:\n%s", mustContain, tocOut)
+		}
+	}
+
+	code, listOut, _ := execCLI(t, tmpDir, "agent-guide", "--list")
+	if code != 0 || listOut != tocOut {
+		t.Fatalf("expected --list to match --toc, got code=%d", code)
+	}
+
+	code, listJSONRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--list")
+	if code != 0 || !listJSONRes.Success {
+		t.Fatalf("agent-guide --list --json failed: %+v", listJSONRes)
+	}
+
+	code, tocJSONRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--toc")
+	if code != 0 || !tocJSONRes.Success {
+		t.Fatalf("agent-guide --toc --json failed: %+v", tocJSONRes)
+	}
+	tocMap := tocJSONRes.Data.(map[string]interface{})
+	tocItems := tocMap["sections"].([]interface{})
+	if len(tocItems) < 15 {
+		t.Fatalf("expected at least 15 numbered sections/subsections in TOC, got %d", len(tocItems))
+	}
+	firstTOC := tocItems[0].(map[string]interface{})
+	if firstTOC["id"] != "1" || firstTOC["title"] == "" || len(firstTOC["aliases"].([]interface{})) == 0 {
+		t.Fatalf("unexpected TOC entry schema: %+v", firstTOC)
+	}
+	compAliases := tocMap["composite_aliases"].(map[string]interface{})
+	coreIDs := compAliases["core"].([]interface{})
+	if len(coreIDs) != 3 || coreIDs[0] != "1" || coreIDs[1] != "2" || coreIDs[2] != "3" {
+		t.Fatalf("expected composite_aliases.core = [1, 2, 3], got %+v", compAliases)
+	}
+
+	// Verify new aliases resolve cleanly (`agent-guide`, `compact`, `flow-commands`, `mock-schemas`)
+	for alias, expectedSub := range map[string]string{
+		"agent-guide":   "### 3.5.",
+		"compact":       "## 4. Scripting",
+		"flow-commands": "### 6.1.",
+		"mock-schemas":  "### 7.2.",
+	} {
+		code, aliasOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", alias)
+		if code != 0 || !strings.Contains(aliasOut, expectedSub) {
+			t.Fatalf("expected --section %q to include %q, got code=%d out:\n%s", alias, expectedSub, code, aliasOut)
+		}
+	}
+
+	// 3. --section single alias (`flow`), comma-separated (`3.4,6`), repeated flags, and `core`
+	code, flowSecRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--section", "flow")
+	if code != 0 || !flowSecRes.Success {
+		t.Fatalf("agent-guide --section flow --json failed: %+v", flowSecRes)
+	}
+	flowSecMap := flowSecRes.Data.(map[string]interface{})
+	flowContent := flowSecMap["content"].(string)
+	if len(flowContent) >= len(skillMD)/3 {
+		t.Fatalf("expected --section flow to be compact, got %d bytes vs full %d", len(flowContent), len(skillMD))
+	}
+	if !strings.Contains(flowContent, "## 6. API Flow Orchestration") || strings.Contains(flowContent, "## 7. Local Mock") || strings.Contains(flowContent, "## 1. Golden Rules") {
+		t.Fatalf("unexpected content bounds for --section flow:\n%s", flowContent)
+	}
+
+	code, multiOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", "3.4,6")
+	if code != 0 {
+		t.Fatalf("agent-guide --section 3.4,6 failed: %d", code)
+	}
+	if !strings.Contains(multiOut, "### 3.4. `req`") || !strings.Contains(multiOut, "## 6. API Flow Orchestration") || strings.Contains(multiOut, "### 3.1.") {
+		t.Fatalf("unexpected --section 3.4,6 content:\n%s", multiOut)
+	}
+
+	code, repOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", "req", "--section", "mock")
+	if code != 0 {
+		t.Fatalf("repeated --section failed: %d", code)
+	}
+	if !strings.Contains(repOut, "### 3.4. `req`") || !strings.Contains(repOut, "## 7. Local Mock HTTP Server") {
+		t.Fatalf("unexpected repeated --section content:\n%s", repOut)
+	}
+
+	code, coreOut, _ := execCLI(t, tmpDir, "agent-guide", "--section", "CORE")
+	if code != 0 {
+		t.Fatalf("agent-guide --section CORE failed: %d", code)
+	}
+	if !strings.Contains(coreOut, "## 1.") || !strings.Contains(coreOut, "## 2.") || !strings.Contains(coreOut, "## 3.") || strings.Contains(coreOut, "## 4.") {
+		t.Fatalf("unexpected --section CORE content:\n%s", coreOut)
+	}
+
+	// 4. Parent-child deduplication (`3,req`, `req,3`, and `core,3.4`)
+	for _, sel := range []string{"3,req", "req,3"} {
+		code, dedupRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--section", sel)
+		if code != 0 || !dedupRes.Success {
+			t.Fatalf("--section %s failed: %+v", sel, dedupRes)
+		}
+		secList := dedupRes.Data.(map[string]interface{})["sections"].([]interface{})
+		if len(secList) != 1 || secList[0] != "3" {
+			t.Fatalf("expected parent section '3' only for %q, got %+v", sel, secList)
+		}
+		content := dedupRes.Data.(map[string]interface{})["content"].(string)
+		if strings.Count(content, "### 3.4. `req`") != 1 {
+			t.Fatalf("expected subsection 3.4 exactly once for %q, got count=%d", sel, strings.Count(content, "### 3.4. `req`"))
+		}
+	}
+	code, coreDedupRes, _ := execCLIJSON(t, tmpDir, "agent-guide", "--section", "core,3.4")
+	if code != 0 || !coreDedupRes.Success {
+		t.Fatalf("--section core,3.4 failed: %+v", coreDedupRes)
+	}
+	coreDedupList := coreDedupRes.Data.(map[string]interface{})["sections"].([]interface{})
+	if len(coreDedupList) != 3 || coreDedupList[0] != "1" || coreDedupList[1] != "2" || coreDedupList[2] != "3" {
+		t.Fatalf("expected core,3.4 to deduplicate to [1, 2, 3], got %+v", coreDedupList)
+	}
+
+	// 5. Validation errors: empty, unknown, conflict (--toc + --section), unexpected positional
+	errCases := [][]string{
+		{"agent-guide", "--section", ""},
+		{"agent-guide", "--section", "req,"},
+		{"agent-guide", "--section", "nonexistent-section"},
+		{"agent-guide", "--toc", "--section", "flow"},
+		{"agent-guide", "extra-positional"},
+	}
+	for _, args := range errCases {
+		code, errRes, _ := execCLIJSON(t, tmpDir, args...)
+		if code != 1 || errRes.Success || errRes.Error == nil || errRes.Error.Code != model.ErrValidation {
+			t.Fatalf("expected VALIDATION error (exit 1) for args %v, got code=%d res=%+v", args, code, errRes)
+		}
+	}
+}
+
+func TestRun_Compact_Redact_And_MaxBodyUTF8(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Multi-byte Vietnamese text (>700 bytes) to exercise UTF-8 rune boundary truncation and default 500B compact cap.
+	longUTF8Payload := strings.Repeat("Dữ liệu tiếng Việt thử nghiệm cắt chuỗi đa byte ", 16)
+	longBodyJSON := fmt.Sprintf(`{"token":"real-jwt-abc123","message":%q}`, longUTF8Payload)
+
+	var followUpAuthHeader string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/followup" {
+			followUpAuthHeader = r.Header.Get("Authorization")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		if r.URL.Path == "/script-err" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":false}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Set-Cookie", "sid=topsecret-cookie; HttpOnly")
+		w.Header().Set("X-Custom-Info", "ok")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(longBodyJSON))
+	}))
+	defer ts.Close()
+
+	_, _, _ = execCLIJSON(t, dataDir, "env", "create", "--name", "Stage", "--var", "base_url="+ts.URL, "--activate")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "AuthFlow")
+
+	postScript := `
+		const d = ha.response.json();
+		ha.folderVariables.set("token", d.token);
+		ha.folderVariables.set("public_note", "hello-world");
+		ha.variables.set("api_secret", "env-sec-999");
+		ha.env("Stage").set("stage_token", "stg-tok-111");
+		ha.folderEnv.set("folder_env_secret", "fe-sec-222");
+		ha.collectionVariables.set("coll_password", "pw-coll");
+		ha.folderAuth.setBearer("bearer-folder-777");
+		ha.folderAuthEnv.setBearer("fe-bearer-333");
+		ha.collectionAuth.setBasic("colluser", "coll-basic-pw");
+		ha.collectionAuth.setApiKey("X-Coll-Key", "coll-apikey-val", "header", "Stage");
+		ha.test("Body exists", () => { if (!d.token) throw new Error("missing token"); });
+		console.log("login completed");
+	`
+	_, rLogin, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "Login",
+		"--method", "POST",
+		"--url", "{{base_url}}/login",
+		"--header", "Authorization: Bearer initial-req-secret",
+		"--header", "X-Api-Key: secret-api-key-123",
+		"--header", "X-Custom-Auth: custom-auth-secret",
+		"--header", "Cookie: session=raw-cookie-val",
+		"--header", "X-Public-Trace: trace-123",
+		"--post-script", postScript,
+	)
+	if !rLogin.Success {
+		t.Fatalf("req create Login failed: %+v", rLogin)
+	}
+
+	_, rFollow, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "FollowUp",
+		"--method", "GET",
+		"--url", "{{base_url}}/followup",
+		"--header", "Authorization: Bearer {{token}}",
+	)
+	if !rFollow.Success {
+		t.Fatalf("req create FollowUp failed: %+v", rFollow)
+	}
+
+	_, rScriptErr, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "ScriptErr",
+		"--method", "GET",
+		"--url", "{{base_url}}/script-err",
+		"--post-script", `throw new Error("boom-script-err");`,
+	)
+	if !rScriptErr.Success {
+		t.Fatalf("req create ScriptErr failed: %+v", rScriptErr)
+	}
+
+	_, rQueryAPIKey, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "QueryAndBodySecrets",
+		"--method", "POST",
+		"--url", "{{base_url}}/followup?public=1",
+		"--auth-type", "apiKey",
+		"--auth-key", "X-Partner-ID",
+		"--auth-val", "partner-query-secret",
+		"--auth-in", "query",
+		"--urlencoded", "client_secret=form-sec-val",
+		"--urlencoded", "grant_type=client_credentials",
+	)
+	if !rQueryAPIKey.Success {
+		t.Fatalf("req create QueryAndBodySecrets failed: %+v", rQueryAPIKey)
+	}
+
+	_, rFormData, _ := execCLIJSON(t, dataDir,
+		"req", "create",
+		"--folder", "AuthFlow",
+		"--name", "FormSecret",
+		"--method", "POST",
+		"--url", "{{base_url}}/followup",
+		"--form", "password=multipart-pw-val",
+		"--form", "username=alice",
+	)
+	if !rFormData.Success {
+		t.Fatalf("req create FormSecret failed: %+v", rFormData)
+	}
+
+	// 1. Default `hecto run --json` keeps backward-compatible fields and omits removed `response` field
+	code, defRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login")
+	if code != 0 || !defRes.Success {
+		t.Fatalf("default run failed: %+v", defRes)
+	}
+	defData := defRes.Data.(map[string]interface{})
+	if _, hasResp := defData["response"]; hasResp {
+		t.Fatalf("expected duplicate `response` field to be removed from RunOutput, got keys in %+v", defData)
+	}
+	for _, expectedKey := range []string{"request", "resolved_request", "headers", "console_logs", "scoped_auth_updates"} {
+		if _, ok := defData[expectedKey]; !ok {
+			t.Fatalf("expected default RunOutput to keep %q", expectedKey)
+		}
+	}
+
+	// 2. `--redact` (placed right before `--json`) masks headers, env_updates, scoped_env_updates, scoped_auth_updates, query/urlencoded/FormData secrets on stdout while keeping real secrets on disk
+	code, redRes, rawRedStdout := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--redact")
+	if code != 0 || !redRes.Success {
+		t.Fatalf("run --redact failed: %+v", redRes)
+	}
+	for _, leaked := range []string{
+		"initial-req-secret", "secret-api-key-123", "custom-auth-secret", "raw-cookie-val",
+		"topsecret-cookie", "env-sec-999", "stg-tok-111", "fe-sec-222", "pw-coll",
+		"bearer-folder-777", "fe-bearer-333", "coll-basic-pw", "coll-apikey-val",
+	} {
+		if strings.Contains(rawRedStdout, leaked) {
+			t.Fatalf("expected secret %q to be redacted from stdout, got:\n%s", leaked, rawRedStdout)
+		}
+	}
+	redData := redRes.Data.(map[string]interface{})
+	respHeaders := redData["headers"].(map[string]interface{})
+	if respHeaders["Set-Cookie"].([]interface{})[0] != redactedSecretPlaceholder {
+		t.Errorf("expected Set-Cookie redacted, got %+v", respHeaders["Set-Cookie"])
+	}
+	if respHeaders["X-Custom-Info"].([]interface{})[0] != "ok" {
+		t.Errorf("expected non-sensitive response header preserved, got %+v", respHeaders["X-Custom-Info"])
+	}
+	resolvedHeaders := redData["resolved_request"].(map[string]interface{})["headers"].([]interface{})
+	seenPublicTrace := false
+	for _, h := range resolvedHeaders {
+		hm := h.(map[string]interface{})
+		switch hm["key"] {
+		case "Authorization", "X-Api-Key", "X-Custom-Auth", "Cookie":
+			if hm["value"] != redactedSecretPlaceholder {
+				t.Errorf("expected %s redacted, got %v", hm["key"], hm["value"])
+			}
+		case "X-Public-Trace":
+			seenPublicTrace = true
+			if hm["value"] != "trace-123" {
+				t.Errorf("expected X-Public-Trace preserved, got %v", hm["value"])
+			}
+		}
+	}
+	if !seenPublicTrace {
+		t.Errorf("missing X-Public-Trace in resolved_request.headers")
+	}
+	if redData["env_updates"].(map[string]interface{})["api_secret"] != redactedSecretPlaceholder {
+		t.Errorf("expected env_updates.api_secret redacted, got %+v", redData["env_updates"])
+	}
+	scopedEnv := redData["scoped_env_updates"].(map[string]interface{})
+	if scopedEnv["collection"].(map[string]interface{})["coll_password"] != redactedSecretPlaceholder {
+		t.Errorf("expected collection coll_password redacted, got %+v", scopedEnv)
+	}
+	globalEnvs := scopedEnv["globalEnvs"].(map[string]interface{})
+	for _, m := range globalEnvs {
+		if m.(map[string]interface{})["stage_token"] != redactedSecretPlaceholder {
+			t.Errorf("expected GlobalEnvs stage_token redacted, got %+v", globalEnvs)
+		}
+	}
+	fgNearest := scopedEnv["folderGlobals"].(map[string]interface{})["__nearest__"].(map[string]interface{})
+	if fgNearest["token"] != redactedSecretPlaceholder || fgNearest["public_note"] != "hello-world" {
+		t.Errorf("unexpected folderGlobals redaction: %+v", fgNearest)
+	}
+	folderEnvs := scopedEnv["folderEnvs"].([]interface{})
+	if folderEnvs[0].(map[string]interface{})["value"] != redactedSecretPlaceholder {
+		t.Errorf("expected FolderEnvs folder_env_secret redacted, got %+v", folderEnvs)
+	}
+	scopedAuth := redData["scoped_auth_updates"].(map[string]interface{})
+	fgAuth := scopedAuth["folderGlobals"].(map[string]interface{})["__nearest__"].(map[string]interface{})
+	if fgAuth["bearer"].(map[string]interface{})["token"] != redactedSecretPlaceholder {
+		t.Errorf("expected scoped_auth_updates bearer.token redacted, got %+v", fgAuth)
+	}
+	if scopedAuth["collectionGlobal"].(map[string]interface{})["basic"].(map[string]interface{})["password"] != redactedSecretPlaceholder {
+		t.Errorf("expected collectionGlobal basic.password redacted, got %+v", scopedAuth["collectionGlobal"])
+	}
+	collEnvsAuth := scopedAuth["collectionEnvs"].([]interface{})
+	if collEnvsAuth[0].(map[string]interface{})["auth"].(map[string]interface{})["apiKey"].(map[string]interface{})["value"] != redactedSecretPlaceholder {
+		t.Errorf("expected collectionEnvs apiKey.value redacted, got %+v", collEnvsAuth)
+	}
+	feAuth := scopedAuth["folderEnvs"].([]interface{})
+	if feAuth[0].(map[string]interface{})["auth"].(map[string]interface{})["bearer"].(map[string]interface{})["token"] != redactedSecretPlaceholder {
+		t.Errorf("expected folderEnvs bearer.token redacted, got %+v", feAuth)
+	}
+
+	// Verify query API key + urlencoded + FormData redaction
+	code, qRes, rawQStdout := execCLIJSON(t, dataDir, "run", "AuthFlow/QueryAndBodySecrets", "--redact")
+	if code != 0 || !qRes.Success {
+		t.Fatalf("QueryAndBodySecrets --redact failed: %+v", qRes)
+	}
+	if strings.Contains(rawQStdout, "partner-query-secret") || strings.Contains(rawQStdout, "form-sec-val") {
+		t.Fatalf("expected query apiKey and urlencoded secret redacted, got:\n%s", rawQStdout)
+	}
+	if !strings.Contains(rawQStdout, "public=1") || !strings.Contains(rawQStdout, "grant_type=client_credentials") {
+		t.Fatalf("expected non-sensitive query/urlencoded params preserved, got:\n%s", rawQStdout)
+	}
+
+	code, fdRes, rawFDStdout := execCLIJSON(t, dataDir, "run", "AuthFlow/FormSecret", "--redact")
+	if code != 0 || !fdRes.Success {
+		t.Fatalf("FormSecret --redact failed: %+v", fdRes)
+	}
+	if strings.Contains(rawFDStdout, "multipart-pw-val") || !strings.Contains(rawFDStdout, "alice") {
+		t.Fatalf("expected FormData password redacted and username preserved, got:\n%s", rawFDStdout)
+	}
+
+	// Verify real token persisted on disk and works in follow-up request
+	_, folderAfter, _ := execCLIJSON(t, dataDir, "folder", "get", "AuthFlow")
+	diskVars := folderAfter.Data.(map[string]interface{})["variables"].([]interface{})
+	foundRealToken := false
+	for _, item := range diskVars {
+		m := item.(map[string]interface{})
+		if m["key"] == "token" && m["value"] == "real-jwt-abc123" {
+			foundRealToken = true
+		}
+	}
+	if !foundRealToken {
+		t.Fatalf("expected real token persisted on disk after --redact, got %+v", diskVars)
+	}
+	code, followRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/FollowUp", "--compact")
+	if code != 0 || !followRes.Success {
+		t.Fatalf("follow-up run failed: %+v", followRes)
+	}
+	if followUpAuthHeader != "Bearer real-jwt-abc123" {
+		t.Fatalf("expected follow-up request to send real token from disk, got %q", followUpAuthHeader)
+	}
+
+	// 3. `--max-body` UTF-8 rune-safe truncation & negative validation
+	code, truncRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--max-body", "100")
+	if code != 0 || !truncRes.Success {
+		t.Fatalf("run --max-body 100 failed: %+v", truncRes)
+	}
+	truncData := truncRes.Data.(map[string]interface{})
+	truncBody := truncData["body"].(string)
+	if truncData["body_truncated"] != true {
+		t.Fatalf("expected body_truncated=true, got %v", truncData["body_truncated"])
+	}
+	if !utf8.ValidString(truncBody) {
+		t.Fatalf("truncated body is not valid UTF-8: %q", truncBody)
+	}
+	wantSuffix := fmt.Sprintf("... [truncated, total %d bytes]", len(longBodyJSON))
+	if !strings.HasSuffix(truncBody, wantSuffix) {
+		t.Fatalf("expected suffix %q, got %q", wantSuffix, truncBody)
+	}
+	prefix := strings.TrimSuffix(truncBody, wantSuffix)
+	if len(prefix) > 100 || len(prefix) == 0 {
+		t.Fatalf("expected prefix byte length in 1..100, got %d", len(prefix))
+	}
+
+	code, negErrRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--max-body", "-1")
+	if code != 1 || negErrRes.Success || negErrRes.Error == nil || negErrRes.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION for --max-body -1, got code=%d res=%+v", code, negErrRes)
+	}
+
+	// 4. `--compact` omits duplicate/auth fields, auto-redacts, defaults 500B truncation, and supports --max-body 0 / 2000 overrides
+	code, cmpRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--compact")
+	if code != 0 || !cmpRes.Success {
+		t.Fatalf("run --compact failed: %+v", cmpRes)
+	}
+	cmpData := cmpRes.Data.(map[string]interface{})
+	for _, omitted := range []string{"request", "resolved_request", "headers", "console_logs", "scoped_auth_updates"} {
+		if _, exists := cmpData[omitted]; exists {
+			t.Fatalf("expected %q to be omitted in --compact output, got %+v", omitted, cmpData)
+		}
+	}
+	for _, kept := range []string{"status_code", "status_text", "time_ms", "size_bytes", "body", "body_truncated", "script_tests", "script_logs", "env_updates", "scoped_env_updates"} {
+		if _, exists := cmpData[kept]; !exists {
+			t.Fatalf("expected %q to be kept in --compact output, got %+v", kept, cmpData)
+		}
+	}
+	cmpBody := cmpData["body"].(string)
+	if !utf8.ValidString(cmpBody) || !strings.HasSuffix(cmpBody, wantSuffix) {
+		t.Fatalf("unexpected --compact body truncation: %q", cmpBody)
+	}
+	if len(strings.TrimSuffix(cmpBody, wantSuffix)) > defaultCompactMaxBody {
+		t.Fatalf("expected --compact prefix <= %d bytes", defaultCompactMaxBody)
+	}
+	if cmpData["env_updates"].(map[string]interface{})["api_secret"] != redactedSecretPlaceholder {
+		t.Fatalf("expected --compact to auto-redact env_updates, got %+v", cmpData["env_updates"])
+	}
+
+	// Override --max-body 0 with --compact (flags before positional)
+	code, zeroRes, _ := execCLIJSON(t, dataDir, "run", "--compact", "--max-body", "0", "AuthFlow/Login")
+	if code != 0 || !zeroRes.Success {
+		t.Fatalf("run --compact --max-body 0 failed: %+v", zeroRes)
+	}
+	zeroData := zeroRes.Data.(map[string]interface{})
+	if zeroData["body_truncated"] != true || zeroData["body"] != wantSuffix {
+		t.Fatalf("expected 0-byte body prefix with suffix %q, got %+v", wantSuffix, zeroData)
+	}
+
+	// Override --max-body 2000 with --compact (no truncation)
+	code, fullCapRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/Login", "--compact", "--max-body", "2000")
+	if code != 0 || !fullCapRes.Success {
+		t.Fatalf("run --compact --max-body 2000 failed: %+v", fullCapRes)
+	}
+	fullCapData := fullCapRes.Data.(map[string]interface{})
+	if _, hasTrunc := fullCapData["body_truncated"]; hasTrunc {
+		t.Fatalf("expected body_truncated omitted when body <= max-body, got %+v", fullCapData)
+	}
+	if fullCapData["body"] != longBodyJSON {
+		t.Fatalf("expected full body when --max-body 2000")
+	}
+
+	// Script error preserved in --compact mode
+	code, scriptErrRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/ScriptErr", "--compact")
+	if code != 0 || !scriptErrRes.Success {
+		t.Fatalf("run ScriptErr --compact failed: %+v", scriptErrRes)
+	}
+	if !strings.Contains(scriptErrRes.Data.(map[string]interface{})["script_error"].(string), "boom-script-err") {
+		t.Fatalf("expected script_error preserved in --compact, got %+v", scriptErrRes.Data)
+	}
+
+	// Network error returns exit code 1 even with --compact, and redacts sensitive URL query/userinfo from error message
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create", "--folder", "AuthFlow", "--name", "NetErr", "--method", "GET", "--url", "http://user:urlpass@127.0.0.1:1/unreachable?api_key=leak-in-err&keep=1")
+	code, netErrRes, rawNetErr := execCLIJSON(t, dataDir, "run", "AuthFlow/NetErr", "--compact")
+	if code != 1 || netErrRes.Success || netErrRes.Error == nil {
+		t.Fatalf("expected exit 1 and error on network failure in --compact, got code=%d res=%+v", code, netErrRes)
+	}
+	if strings.Contains(rawNetErr, "urlpass") || strings.Contains(rawNetErr, "leak-in-err") {
+		t.Fatalf("expected sensitive URL secrets redacted in error message, got:\n%s", rawNetErr)
+	}
+
+	// Non-JSON compact run + empty script_tests/script_logs omitted + extra positional rejected
+	code, nonJSONCompact, _ := execCLI(t, dataDir, "run", "AuthFlow/FollowUp", "--compact")
+	if code != 0 || strings.Contains(nonJSONCompact, `"script_tests"`) || strings.Contains(nonJSONCompact, `"script_logs"`) {
+		t.Fatalf("expected exit 0 and empty script_tests/script_logs omitted in non-JSON compact, got code=%d out:\n%s", code, nonJSONCompact)
+	}
+	code, extraPosRes, _ := execCLIJSON(t, dataDir, "run", "AuthFlow/FollowUp", "extra-arg")
+	if code != 1 || extraPosRes.Success || extraPosRes.Error == nil || extraPosRes.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION for extra positional arg on `hecto run`, got code=%d res=%+v", code, extraPosRes)
+	}
+}
+
+func TestFlowRun_Compact_Redact_And_MaxBody(t *testing.T) {
+	dataDir := t.TempDir()
+
+	longPassPad := strings.Repeat("ok-utf8-đoạn-dài-", 45)
+	longFailPad := strings.Repeat("lỗi-utf8-đoạn-dài-", 45)
+	var seenProfileAuth string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/login":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"token":"flow-secret-tok","pad":%q}`, longPassPad)))
+		case "/profile":
+			seenProfileAuth = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"user":"alice","pad":%q}`, longPassPad)))
+		case "/fail":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"broken","detail":%q}`, longFailPad)))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	_, _, _ = execCLIJSON(t, dataDir, "env", "create", "--name", "FlowEnv", "--var", "base_url="+ts.URL, "--activate")
+	_, _, _ = execCLIJSON(t, dataDir, "folder", "create", "--name", "API")
+
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "Login", "--method", "POST", "--url", "{{base_url}}/login",
+		"--header", "X-Client-Secret: flow-client-secret",
+		"--post-script", `const b = ha.response.json(); ha.variables.set("jwt_token", b.token); ha.variables.set("public_step", "step1-ok");`,
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "Profile", "--method", "GET", "--url", "{{base_url}}/profile",
+		"--header", "Authorization: Bearer {{jwt_token}}",
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "FailStep", "--method", "GET", "--url", "{{base_url}}/fail",
+		"--post-script", `ha.test("Must be 200", () => { if (ha.response.code !== 200) throw new Error("expected 200"); });`,
+	)
+
+	_, _, _ = execCLIJSON(t, dataDir, "flow", "create", "--name", "PassFlow", "--steps", "API/Login,API/Profile")
+	_, _, _ = execCLIJSON(t, dataDir, "flow", "create", "--name", "FailFlow", "--steps", "API/Login,API/FailStep")
+
+	// 1. PassFlow --compact --json: omits top-level step_results, hides body on passed steps, redacts stdout secrets, preserves real token for Profile and disk
+	code, passRes, rawPassStdout := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--compact")
+	if code != 0 || !passRes.Success {
+		t.Fatalf("flow run PassFlow --compact failed: %+v", passRes)
+	}
+	if strings.Contains(rawPassStdout, "flow-secret-tok") || strings.Contains(rawPassStdout, "flow-client-secret") {
+		t.Fatalf("expected flow secrets redacted from stdout, got:\n%s", rawPassStdout)
+	}
+	if seenProfileAuth != "Bearer flow-secret-tok" {
+		t.Fatalf("expected Profile step to receive real token before redaction, got %q", seenProfileAuth)
+	}
+	passData := passRes.Data.(map[string]interface{})
+	if _, hasTopSteps := passData["step_results"]; hasTopSteps {
+		t.Fatalf("expected top-level step_results omitted in compact flow output")
+	}
+	nodeResults := passData["node_results"].([]interface{})
+	step1 := nodeResults[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
+	step1Run := step1["run_output"].(map[string]interface{})
+	if _, hasBody := step1Run["body"]; hasBody {
+		t.Fatalf("expected passed step to omit body in flow --compact by default, got %+v", step1Run)
+	}
+	for _, omitted := range []string{"request", "resolved_request", "headers", "console_logs", "scoped_auth_updates"} {
+		if _, exists := step1Run[omitted]; exists {
+			t.Fatalf("expected %q omitted in compact step run_output", omitted)
+		}
+	}
+	envUpd := step1Run["env_updates"].(map[string]interface{})
+	if envUpd["jwt_token"] != redactedSecretPlaceholder || envUpd["public_step"] != "step1-ok" {
+		t.Fatalf("unexpected redacted env_updates on step1: %+v", envUpd)
+	}
+
+	// Verify real token was saved to FlowEnv on disk
+	_, envAfter, _ := execCLIJSON(t, dataDir, "env", "get", "FlowEnv")
+	foundJWT := false
+	for _, item := range envAfter.Data.(map[string]interface{})["variables"].([]interface{}) {
+		m := item.(map[string]interface{})
+		if m["key"] == "jwt_token" && m["value"] == "flow-secret-tok" {
+			foundJWT = true
+		}
+	}
+	if !foundJWT {
+		t.Fatalf("expected real jwt_token persisted on disk after flow run --compact")
+	}
+
+	// 2. PassFlow --compact --max-body 80 explicitly shows truncated body on passed steps
+	code, passBodyRes, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--compact", "--max-body", "80")
+	if code != 0 || !passBodyRes.Success {
+		t.Fatalf("flow run PassFlow --compact --max-body 80 failed: %+v", passBodyRes)
+	}
+	passBodyStep := passBodyRes.Data.(map[string]interface{})["node_results"].([]interface{})[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	pb, ok := passBodyStep["body"].(string)
+	if !ok || passBodyStep["body_truncated"] != true || !utf8.ValidString(pb) {
+		t.Fatalf("expected truncated valid UTF-8 body when --max-body 80 is passed, got %+v", passBodyStep)
+	}
+
+	// 3. FailFlow --compact --json: passed step hides body, failed step keeps truncated body + failure details, exit code 0 in --json
+	code, failRes, _ := execCLIJSON(t, dataDir, "flow", "run", "FailFlow", "--compact")
+	if code != 0 || !failRes.Success {
+		t.Fatalf("flow run FailFlow --compact --json failed: code=%d res=%+v", code, failRes)
+	}
+	failData := failRes.Data.(map[string]interface{})
+	if failData["status"] != "failed" {
+		t.Fatalf("expected flow status=failed, got %v", failData["status"])
+	}
+	failNodes := failData["node_results"].([]interface{})
+	s1Run := failNodes[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if _, hasBody := s1Run["body"]; hasBody {
+		t.Fatalf("expected passed step 1 in FailFlow to omit body, got %+v", s1Run)
+	}
+	s2 := failNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
+	if s2["status"] != "failed" || s2["failure_category"] == "" || s2["failure_reason"] == "" {
+		t.Fatalf("expected failed step metadata on step 2, got %+v", s2)
+	}
+	s2Run := s2["run_output"].(map[string]interface{})
+	s2Body, ok := s2Run["body"].(string)
+	if !ok || s2Run["body_truncated"] != true || !utf8.ValidString(s2Body) {
+		t.Fatalf("expected failed step 2 to retain truncated UTF-8 body, got %+v", s2Run)
+	}
+
+	// 4. Non-JSON FailFlow --compact exits with code 1
+	codeNonJSON, nonJSONOut, _ := execCLI(t, dataDir, "flow", "run", "FailFlow", "--compact")
+	if codeNonJSON != 1 || !strings.Contains(nonJSONOut, `"status": "failed"`) {
+		t.Fatalf("expected exit 1 in non-JSON mode for failed compact flow, got code=%d out:\n%s", codeNonJSON, nonJSONOut)
+	}
+
+	// 5. Validation error for negative --max-body and extra positional argument
+	code, badBodyRes, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--max-body", "-1")
+	if code != 1 || badBodyRes.Success || badBodyRes.Error == nil || badBodyRes.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION error for flow run --max-body -1, got code=%d res=%+v", code, badBodyRes)
+	}
+	code, flowExtraPos, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "extra-pos")
+	if code != 1 || flowExtraPos.Success || flowExtraPos.Error == nil || flowExtraPos.Error.Code != model.ErrValidation {
+		t.Fatalf("expected VALIDATION error for extra positional arg on `hecto flow run`, got code=%d res=%+v", code, flowExtraPos)
+	}
+
+	// 6. FailFlow --compact --max-body 0: passed step still omits body while failed step keeps 0-byte truncated body
+	code, failZeroRes, _ := execCLIJSON(t, dataDir, "flow", "run", "FailFlow", "--compact", "--max-body", "0")
+	if code != 0 || !failZeroRes.Success {
+		t.Fatalf("flow run FailFlow --compact --max-body 0 failed: %+v", failZeroRes)
+	}
+	fzNodes := failZeroRes.Data.(map[string]interface{})["node_results"].([]interface{})
+	fzStep1Run := fzNodes[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if _, hasBody := fzStep1Run["body"]; hasBody {
+		t.Fatalf("expected passed step to omit body under --compact --max-body 0, got %+v", fzStep1Run)
+	}
+	fzStep2Run := fzNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if fzStep2Run["body_truncated"] != true || !strings.HasPrefix(fzStep2Run["body"].(string), "... [truncated, total ") {
+		t.Fatalf("expected failed step to truncate at 0-byte prefix under --compact --max-body 0, got %+v", fzStep2Run)
+	}
+
+	// 7. Non-compact flow run --redact and --max-body (verifies walkUniqueFlowRunOutputs single truncation across node_results & step_results)
+	code, nonCmpRed, rawNonCmpRed := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--redact")
+	if code != 0 || !nonCmpRed.Success {
+		t.Fatalf("non-compact flow run --redact failed: %+v", nonCmpRed)
+	}
+	if strings.Contains(rawNonCmpRed, "flow-client-secret") {
+		t.Fatalf("expected non-compact flow run --redact to mask X-Client-Secret header, got:\n%s", rawNonCmpRed)
+	}
+	nonCmpData := nonCmpRed.Data.(map[string]interface{})
+	topSteps, hasTopSteps := nonCmpData["step_results"].([]interface{})
+	if !hasTopSteps || len(topSteps) != 2 {
+		t.Fatalf("expected non-compact flow run --redact to retain 2 top-level step_results, got %+v", nonCmpData["step_results"])
+	}
+	topStep1Run := topSteps[0].(map[string]interface{})["run_output"].(map[string]interface{})
+	if topStep1Run["env_updates"].(map[string]interface{})["jwt_token"] != redactedSecretPlaceholder {
+		t.Fatalf("expected top-level step_results[0] env_updates.jwt_token redacted, got %+v", topStep1Run["env_updates"])
+	}
+	topStep2Headers := topSteps[1].(map[string]interface{})["run_output"].(map[string]interface{})["resolved_request"].(map[string]interface{})["headers"].([]interface{})
+	if topStep2Headers[0].(map[string]interface{})["value"] != redactedSecretPlaceholder {
+		t.Fatalf("expected top-level step_results[1] Authorization redacted, got %+v", topStep2Headers)
+	}
+
+	code, nonCmpTrunc, _ := execCLIJSON(t, dataDir, "flow", "run", "PassFlow", "--max-body", "60")
+	if code != 0 || !nonCmpTrunc.Success {
+		t.Fatalf("non-compact flow run --max-body 60 failed: %+v", nonCmpTrunc)
+	}
+	ncData := nonCmpTrunc.Data.(map[string]interface{})
+	ncNodeStepBody := ncData["node_results"].([]interface{})[0].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})["body"].(string)
+	ncTopStepBody := ncData["step_results"].([]interface{})[0].(map[string]interface{})["run_output"].(map[string]interface{})["body"].(string)
+	if ncNodeStepBody != ncTopStepBody || strings.Count(ncTopStepBody, "... [truncated, total ") != 1 || !utf8.ValidString(ncTopStepBody) {
+		t.Fatalf("expected single UTF-8 truncation shared between node_results and step_results, got node=%q top=%q", ncNodeStepBody, ncTopStepBody)
+	}
+
+	// 8. Parallel row, skipped/disabled step, missing request (`RunOutput == nil`), and error URL redaction in flow compact mode
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "NetErrStep", "--method", "GET", "--url", "http://127.0.0.1:1/fail?api_key=flow-url-secret",
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "create",
+		"--folder", "API", "--name", "ToDelete", "--method", "GET", "--url", "{{base_url}}/profile",
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "flow", "create",
+		"--name", "EdgeFlow",
+		"--nodes-json", `[
+			{"steps":[{"request_id":"API/Login","enabled":true},{"request_id":"API/Profile","enabled":false}]},
+			{"steps":[{"request_id":"API/ToDelete","enabled":true},{"request_id":"API/NetErrStep","enabled":true}]}
+		]`,
+	)
+	_, _, _ = execCLIJSON(t, dataDir, "req", "delete", "API/ToDelete")
+
+	code, edgeRes, rawEdgeOut := execCLIJSON(t, dataDir, "flow", "run", "EdgeFlow", "--compact")
+	if code != 0 || !edgeRes.Success {
+		t.Fatalf("flow run EdgeFlow --compact failed: %+v", edgeRes)
+	}
+	if strings.Contains(rawEdgeOut, "flow-url-secret") {
+		t.Fatalf("expected flow error URL secret redacted from stdout, got:\n%s", rawEdgeOut)
+	}
+	edgeData := edgeRes.Data.(map[string]interface{})
+	if edgeData["status"] != "failed" || int(edgeData["steps_skipped"].(float64)) != 1 {
+		t.Fatalf("expected failed status and 1 skipped disabled step, got %+v", edgeData)
+	}
+	edgeNodes := edgeData["node_results"].([]interface{})
+	missingStep := edgeNodes[1].(map[string]interface{})["step_results"].([]interface{})[0].(map[string]interface{})
+	if _, hasRunOut := missingStep["run_output"]; hasRunOut {
+		t.Fatalf("expected deleted request step to have nil/omitted run_output, got %+v", missingStep)
+	}
+}
+
+func TestUpsertKVPair_PreservesSelectTypeAndOptions(t *testing.T) {
+	list := []model.KVPair{
+		{
+			Key:         "REGION",
+			Value:       "us-east-1",
+			Enabled:     false,
+			Description: "AWS Region",
+			Type:        "select",
+			Options:     []string{"us-east-1", "ap-southeast-1"},
+		},
+	}
+
+	updated := upsertKVPair(list, "REGION", "eu-central-1") // value outside options
+	if len(updated) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(updated))
+	}
+	if updated[0].Value != "eu-central-1" || !updated[0].Enabled {
+		t.Errorf("expected Value='eu-central-1' and Enabled=true, got %+v", updated[0])
+	}
+	if updated[0].Type != "select" || !slices.Equal(updated[0].Options, []string{"us-east-1", "ap-southeast-1"}) || updated[0].Description != "AWS Region" {
+		t.Errorf("expected Type/Options/Description preserved, got %+v", updated[0])
+	}
+
+	appended := upsertKVPair(updated, "EXTRA", "1")
+	if len(appended) != 2 || appended[1].Key != "EXTRA" || appended[1].Type != "" || appended[1].Options != nil {
+		t.Errorf("expected appended item with default empty Type/Options, got %+v", appended)
+	}
+}
+
+func TestCLI_UpdatePreservesSelectTypeAndOptions(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Create env, folder, and request via CLI first
+	code, envCr, _ := execCLIJSON(t, dataDir, "env", "create", "--name", "Staging", "--var", "API_STAGE=dev", "--activate")
+	if code != 0 || !envCr.Success {
+		t.Fatalf("env create failed: %+v", envCr)
+	}
+	envID := envCr.Data.(map[string]interface{})["id"].(string)
+
+	code, fCr, _ := execCLIJSON(t, dataDir, "folder", "create", "--name", "Orders")
+	if code != 0 || !fCr.Success {
+		t.Fatalf("folder create failed: %+v", fCr)
+	}
+	folderID := fCr.Data.(map[string]interface{})["id"].(string)
+
+	code, rCr, _ := execCLIJSON(t, dataDir, "req", "create", "--folder", "Orders", "--name", "CreateOrder", "--method", "POST", "--url", "https://api.example.com/orders")
+	if code != 0 || !rCr.Success {
+		t.Fatalf("req create failed: %+v", rCr)
+	}
+	reqID := rCr.Data.(map[string]interface{})["id"].(string)
+
+	// Seed select Type & Options on disk via storage/service (simulating UI configuration)
+	fs := storage.NewFileSystem()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfgSvc := service.NewConfigService(fs, logger)
+	cfgSvc.SetCustomConfigDir(dataDir)
+	cfg, err := cfgSvc.Initialize(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	collSvc := service.NewCollectionService(fs, logger)
+	envSvc := service.NewEnvironmentService(fs, logger)
+	reqSvc := service.NewRequestService(fs, logger)
+
+	coll, collRoot, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coll.Variables = []model.KVPair{
+		{Key: "COLL_MODE", Value: "sandbox", Enabled: true, Type: "select", Options: []string{"sandbox", "live"}},
+	}
+	if res := collSvc.UpdateCollection(cfg.CollectionsRoot, coll); !res.Success {
+		t.Fatalf("UpdateCollection failed: %+v", res.Error)
+	}
+
+	envObj := envSvc.Get(collRoot, envID).Data.(model.Environment)
+	envObj.Variables = []model.KVPair{
+		{Key: "API_STAGE", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "stg", "prod"}},
+	}
+	if res := envSvc.Save(collRoot, envObj); !res.Success {
+		t.Fatalf("envSvc.Save failed: %+v", res.Error)
+	}
+
+	folder := collSvc.LoadFolder(folderID).Data.(model.Folder)
+	folder.Variables = []model.KVPair{
+		{Key: "FOLDER_TIER", Value: "gold", Enabled: true, Type: "select", Options: []string{"silver", "gold"}},
+	}
+	folder.FolderEnvs = map[string][]model.KVPair{
+		envID: {
+			{Key: "TENANT", Value: "acme", Enabled: true, Type: "select", Options: []string{"acme", "globex"}},
+		},
+	}
+	folder.Headers = []model.KVPair{
+		{Key: "X-Folder-Mode", Value: "strict", Enabled: true, Type: "select", Options: []string{"strict", "lenient"}},
+	}
+	if res := collSvc.UpdateFolder(folder); !res.Success {
+		t.Fatalf("UpdateFolder failed: %+v", res.Error)
+	}
+
+	req := reqSvc.Get(reqID).Data.(model.Request)
+	req.URL = "https://api.example.com/:version/orders?mode=fast"
+	req.Headers = []model.KVPair{
+		{Key: "X-Role", Value: "user", Enabled: true, Type: "select", Options: []string{"admin", "user"}},
+	}
+	req.Params = []model.KVPair{
+		{Key: "mode", Value: "fast", Enabled: true, Type: "select", Options: []string{"fast", "safe"}},
+	}
+	req.PathParams = []model.KVPair{
+		{Key: "version", Value: "v1", Enabled: true, Type: "select", Options: []string{"v1", "v2"}},
+	}
+	req.Body = model.Body{
+		Type: "formdata",
+		FormData: []model.KVPair{
+			{Key: "kind", Value: "fast", Enabled: true, Type: "select", Options: []string{"fast", "standard"}},
+		},
+		URLEncoded: []model.KVPair{
+			{Key: "scope", Value: "read", Enabled: true, Type: "select", Options: []string{"read", "write"}},
+		},
+	}
+	if res := reqSvc.Save(req); !res.Success {
+		t.Fatalf("reqSvc.Save failed: %+v", res.Error)
+	}
+
+	// Update values via CLI (including values outside options)
+	if code, res, _ := execCLIJSON(t, dataDir, "collection", "update", "--set-var", "COLL_MODE=custom-coll"); code != 0 || !res.Success {
+		t.Fatalf("collection update failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "env", "update", "Staging", "--set-var", "API_STAGE=canary"); code != 0 || !res.Success {
+		t.Fatalf("env update failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "folder", "update", "Orders",
+		"--set-var", "FOLDER_TIER=platinum",
+		"--set-env-var", "Staging:TENANT=globex",
+		"--set-header", "X-Folder-Mode: lenient",
+	); code != 0 || !res.Success {
+		t.Fatalf("folder update failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "update", "Orders/CreateOrder",
+		"--set-header", "X-Role: auditor",
+		"--set-param", "mode=safe",
+		"--set-path-param", "version=v2",
+		"--set-form", "kind=express",
+		"--set-urlencoded", "scope=write",
+	); code != 0 || !res.Success {
+		t.Fatalf("req update failed: %+v", res)
+	}
+
+	// Reload from disk and verify Type & Options were preserved on every entity
+	collAfter, _, err := collSvc.ResolveCollectionSelector(cfg.CollectionsRoot, cfg.ActiveCollection, coll.ID)
+	if err != nil {
+		t.Fatalf("ResolveCollectionSelector failed: %v", err)
+	}
+	if len(collAfter.Variables) != 1 || collAfter.Variables[0].Value != "custom-coll" ||
+		collAfter.Variables[0].Type != "select" || !slices.Equal(collAfter.Variables[0].Options, []string{"sandbox", "live"}) {
+		t.Errorf("expected collection variable select metadata preserved after CLI update, got %+v", collAfter.Variables)
+	}
+
+	envAfter := envSvc.Get(collRoot, envID).Data.(model.Environment)
+	if len(envAfter.Variables) != 1 || envAfter.Variables[0].Value != "canary" ||
+		envAfter.Variables[0].Type != "select" || !slices.Equal(envAfter.Variables[0].Options, []string{"dev", "stg", "prod"}) {
+		t.Errorf("expected env variable select metadata preserved after CLI update, got %+v", envAfter.Variables)
+	}
+
+	folderAfter := collSvc.LoadFolder(folderID).Data.(model.Folder)
+	if folderAfter.Variables[0].Value != "platinum" || folderAfter.Variables[0].Type != "select" ||
+		!slices.Equal(folderAfter.Variables[0].Options, []string{"silver", "gold"}) {
+		t.Errorf("expected folder variable select metadata preserved, got %+v", folderAfter.Variables)
+	}
+	if folderAfter.FolderEnvs[envID][0].Value != "globex" || folderAfter.FolderEnvs[envID][0].Type != "select" ||
+		!slices.Equal(folderAfter.FolderEnvs[envID][0].Options, []string{"acme", "globex"}) {
+		t.Errorf("expected folder_envs select metadata preserved, got %+v", folderAfter.FolderEnvs[envID])
+	}
+	if folderAfter.Headers[0].Value != "lenient" || folderAfter.Headers[0].Type != "select" ||
+		!slices.Equal(folderAfter.Headers[0].Options, []string{"strict", "lenient"}) {
+		t.Errorf("expected folder header select metadata preserved, got %+v", folderAfter.Headers)
+	}
+
+	reqAfter := reqSvc.Get(reqID).Data.(model.Request)
+	if reqAfter.Headers[0].Value != "auditor" || reqAfter.Headers[0].Type != "select" ||
+		!slices.Equal(reqAfter.Headers[0].Options, []string{"admin", "user"}) {
+		t.Errorf("expected req header select metadata preserved, got %+v", reqAfter.Headers)
+	}
+	if len(reqAfter.Params) != 1 || reqAfter.Params[0].Value != "safe" || reqAfter.Params[0].Type != "select" ||
+		!slices.Equal(reqAfter.Params[0].Options, []string{"fast", "safe"}) {
+		t.Errorf("expected req param select metadata preserved after --set-param, got %+v", reqAfter.Params)
+	}
+	if len(reqAfter.PathParams) != 1 || reqAfter.PathParams[0].Value != "v2" || reqAfter.PathParams[0].Type != "select" ||
+		!slices.Equal(reqAfter.PathParams[0].Options, []string{"v1", "v2"}) {
+		t.Errorf("expected req path_param select metadata preserved after --set-path-param, got %+v", reqAfter.PathParams)
+	}
+	if reqAfter.Body.FormData[0].Value != "express" || reqAfter.Body.FormData[0].Type != "select" ||
+		!slices.Equal(reqAfter.Body.FormData[0].Options, []string{"fast", "standard"}) {
+		t.Errorf("expected req form_data select metadata preserved, got %+v", reqAfter.Body.FormData)
+	}
+	if reqAfter.Body.URLEncoded[0].Value != "write" || reqAfter.Body.URLEncoded[0].Type != "select" ||
+		!slices.Equal(reqAfter.Body.URLEncoded[0].Options, []string{"read", "write"}) {
+		t.Errorf("expected req urlencoded select metadata preserved, got %+v", reqAfter.Body.URLEncoded)
+	}
+}
+
+func TestRedactKVPairs_RedactsSelectOptionsOnSensitiveKeys(t *testing.T) {
+	extraKeys := map[string]bool{"x-custom-secret": true}
+
+	headers := []model.KVPair{
+		{Key: "Authorization", Value: "Bearer secret-1", Enabled: true, Type: "select", Options: []string{"Bearer secret-1", "Bearer secret-2"}},
+		{Key: "X-Custom-Secret", Value: "s1", Enabled: true, Type: "select", Options: []string{"s1", "s2"}},
+		{Key: "X-Env", Value: "dev", Enabled: true, Type: "select", Options: []string{"dev", "prod"}},
+		{Key: "X-Api-Key", Value: "plain-secret", Enabled: true},
+	}
+	redactHeaderKVPairs(headers, extraKeys)
+
+	if headers[0].Value != redactedSecretPlaceholder || !slices.Equal(headers[0].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected Authorization value and options redacted, got %+v", headers[0])
+	}
+	if headers[1].Value != redactedSecretPlaceholder || !slices.Equal(headers[1].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected X-Custom-Secret value and options redacted, got %+v", headers[1])
+	}
+	if headers[2].Value != "dev" || !slices.Equal(headers[2].Options, []string{"dev", "prod"}) {
+		t.Errorf("expected non-sensitive X-Env untouched, got %+v", headers[2])
+	}
+	if headers[3].Value != redactedSecretPlaceholder || headers[3].Options != nil {
+		t.Errorf("expected X-Api-Key with nil options to stay nil, got %+v", headers[3])
+	}
+
+	vars := []model.KVPair{
+		{Key: "API_TOKEN", Value: "tok-1", Enabled: true, Type: "select", Options: []string{"tok-1", "tok-2"}},
+		{Key: "x-custom-secret", Value: "v1", Enabled: true, Type: "select", Options: []string{"v1", "v2"}},
+		{Key: "APP_MODE", Value: "stg", Enabled: true, Type: "select", Options: []string{"dev", "stg"}},
+	}
+	redactVarKVPairs(vars, extraKeys)
+
+	if vars[0].Value != redactedSecretPlaceholder || !slices.Equal(vars[0].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected API_TOKEN value and options redacted, got %+v", vars[0])
+	}
+	if vars[1].Value != redactedSecretPlaceholder || !slices.Equal(vars[1].Options, []string{redactedSecretPlaceholder}) {
+		t.Errorf("expected x-custom-secret value and options redacted, got %+v", vars[1])
+	}
+	if vars[2].Value != "stg" || !slices.Equal(vars[2].Options, []string{"dev", "stg"}) {
+		t.Errorf("expected non-sensitive APP_MODE untouched, got %+v", vars[2])
+	}
+}
+
+func TestCLI_RequestExamples_Lifecycle_Run_And_Flow(t *testing.T) {
+	dataDir := t.TempDir()
+
+	var observedPaths []string
+	var observedMethods []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observedMethods = append(observedMethods, r.Method)
+		observedPaths = append(observedPaths, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	// Create request
+	code, createRes, _ := execCLIJSON(t, dataDir, "req", "create",
+		"--name", "SearchUsers",
+		"--method", "GET",
+		"--url", ts.URL+"/v1/users?role=member",
+	)
+	if code != 0 || !createRes.Success {
+		t.Fatalf("req create failed: %+v", createRes)
+	}
+	reqBytes, _ := json.Marshal(createRes.Data)
+	var createdReq model.Request
+	_ = json.Unmarshal(reqBytes, &createdReq)
+
+	// Create example & update its params and body
+	code, exCreateRes, _ := execCLIJSON(t, dataDir, "req", "example", "create", "SearchUsers", "--name", "AdminsOnly")
+	if code != 0 || !exCreateRes.Success {
+		t.Fatalf("req example create failed: %+v", exCreateRes)
+	}
+	code, exUpdRes, _ := execCLIJSON(t, dataDir, "req", "example", "update", "SearchUsers", "AdminsOnly",
+		"--set-param", "role=admin",
+		"--body-type", "json",
+		"--body", `{"scope":"admin"}`,
+	)
+	if code != 0 || !exUpdRes.Success {
+		t.Fatalf("req example update failed: %+v", exUpdRes)
+	}
+
+	// Update Default Base URL and verify Sync All preserves Example query & body
+	code, reqUpdRes, _ := execCLIJSON(t, dataDir, "req", "update", "SearchUsers", "--url", ts.URL+"/v2/users?role=member")
+	if code != 0 || !reqUpdRes.Success {
+		t.Fatalf("req update failed: %+v", reqUpdRes)
+	}
+	code, exEffRes, _ := execCLIJSON(t, dataDir, "req", "example", "get", "SearchUsers", "AdminsOnly", "--effective")
+	if code != 0 || !exEffRes.Success {
+		t.Fatalf("req example get --effective failed: %+v", exEffRes)
+	}
+	effBytes, _ := json.Marshal(exEffRes.Data)
+	var effReq model.Request
+	_ = json.Unmarshal(effBytes, &effReq)
+	if effReq.URL != ts.URL+"/v2/users?role=admin" || effReq.Body.Content != `{"scope":"admin"}` {
+		t.Errorf("unexpected effective example after Default Base URL update: url=%q body=%q", effReq.URL, effReq.Body.Content)
+	}
+
+	// Run CLI with --example
+	code, runRes, _ := execCLIJSON(t, dataDir, "run", "SearchUsers", "--example", "AdminsOnly")
+	if code != 0 || !runRes.Success {
+		t.Fatalf("hecto run --example failed: %+v", runRes)
+	}
+	if len(observedPaths) != 1 || observedPaths[0] != "/v2/users?role=admin" {
+		t.Errorf("expected /v2/users?role=admin executed, got %v", observedPaths)
+	}
+
+	// Create Flow referencing SearchUsers@AdminsOnly
+	code, flowCreateRes, _ := execCLIJSON(t, dataDir, "flow", "create", "--name", "AdminFlow", "--steps", "SearchUsers@AdminsOnly")
+	if code != 0 || !flowCreateRes.Success {
+		t.Fatalf("flow create with @example failed: %+v", flowCreateRes)
+	}
+	code, flowRunRes, _ := execCLIJSON(t, dataDir, "flow", "run", "AdminFlow")
+	if code != 0 || !flowRunRes.Success {
+		t.Fatalf("flow run failed: %+v", flowRunRes)
+	}
+	if len(observedPaths) != 2 || observedPaths[1] != "/v2/users?role=admin" {
+		t.Errorf("expected flow step to hit /v2/users?role=admin, got %v", observedPaths)
+	}
+
+	// Detach AdminsOnly to standalone request & verify flow now fails explicitly without fallback
+	code, detachRes, _ := execCLIJSON(t, dataDir, "req", "example", "detach", "SearchUsers", "AdminsOnly", "--name", "DetachedAdminSearch")
+	if code != 0 || !detachRes.Success {
+		t.Fatalf("req example detach failed: %+v", detachRes)
+	}
+	code, listExRes, _ := execCLIJSON(t, dataDir, "req", "example", "list", "SearchUsers")
+	if code != 0 || !listExRes.Success {
+		t.Fatalf("req example list failed: %+v", listExRes)
+	}
+	if listSlice, ok := listExRes.Data.([]interface{}); !ok || len(listSlice) != 0 {
+		t.Errorf("expected 0 remaining examples on SearchUsers after detach, got %+v", listExRes.Data)
+	}
+
+	// Running with deleted example selector must fail explicitly
+	code, missingRunRes, _ := execCLIJSON(t, dataDir, "run", "SearchUsers", "--example", "AdminsOnly")
+	if code == 0 || missingRunRes.Success {
+		t.Fatalf("expected error running deleted example, got code=%d res=%+v", code, missingRunRes)
+	}
+
+	// Flow run with detached/deleted example must report failed flow with deleted_example
+	code, flowAfterDetachRes, _ := execCLIJSON(t, dataDir, "flow", "run", "AdminFlow")
+	if code != 0 || !flowAfterDetachRes.Success {
+		t.Fatalf("expected JSON flow envelope even on step failure, got code=%d res=%+v", code, flowAfterDetachRes)
+	}
+	fBytes, _ := json.Marshal(flowAfterDetachRes.Data)
+	var fOut map[string]interface{}
+	_ = json.Unmarshal(fBytes, &fOut)
+	if fOut["status"] != "failed" {
+		t.Errorf("expected flow status=failed after referenced example detached, got %+v", fOut)
+	}
+}
+
+func TestCLI_RequestExamples_EdgeCases_Flags_FlowOverride_And_Redact(t *testing.T) {
+	dataDir := t.TempDir()
+
+	var capturedAPIKeys []string
+	var capturedQueries []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAPIKeys = append(capturedAPIKeys, r.Header.Get("X-Example-Key"))
+		capturedQueries = append(capturedQueries, r.URL.RawQuery)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	// Create request
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "create", "--name", "Orders", "--method", "POST", "--url", ts.URL+"/orders?base=1"); code != 0 || !res.Success {
+		t.Fatalf("req create failed: %+v", res)
+	}
+
+	// 1. Default naming avoids collision after deletion
+	_, ex1Res, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders")
+	_, ex2Res, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders")
+	if !ex1Res.Success || !ex2Res.Success {
+		t.Fatalf("example create failed")
+	}
+	if _, delRes, _ := execCLIJSON(t, dataDir, "req", "example", "delete", "Orders", "Example 1"); !delRes.Success {
+		t.Fatalf("example delete failed: %+v", delRes)
+	}
+	_, ex3Res, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders")
+	ex3Name := ex3Res.Data.(map[string]interface{})["name"].(string)
+	if ex3Name == "Example 2" {
+		t.Fatalf("expected non-colliding default name, got duplicate %q", ex3Name)
+	}
+
+	// 2. --from cloning + --sync + --url with query + --set-param + --set-var + unlinked apiKey auth
+	code, clonedRes, _ := execCLIJSON(t, dataDir, "req", "example", "create", "Orders", "--name", "VipSecret", "--from", "Example 2")
+	if code != 0 || !clonedRes.Success {
+		t.Fatalf("req example create --from failed: %+v", clonedRes)
+	}
+	// Passing --url and --sync url=true must return validation error
+	if codeErr, resErr, _ := execCLIJSON(t, dataDir, "req", "example", "update", "Orders", "VipSecret", "--url", ts.URL+"/bad", "--sync", "url=true"); codeErr == 0 || resErr.Success {
+		t.Fatalf("expected validation error when passing --url with --sync url=true, got %+v", resErr)
+	}
+	// Passing --url with query + --set-param keeps both query parameters; custom apiKey auth + --set-var
+	code, updRes, _ := execCLIJSON(t, dataDir, "req", "example", "update", "Orders", "VipSecret",
+		"--url", ts.URL+"/orders?a=1",
+		"--set-param", "b=2",
+		"--set-var", "tier=vip",
+		"--auth-type", "apiKey",
+		"--auth-key", "X-Example-Key",
+		"--auth-val", "super-secret-ex-key",
+		"--auth-in", "header",
+	)
+	if code != 0 || !updRes.Success {
+		t.Fatalf("req example update failed: %+v (%+v)", updRes, updRes.Error)
+	}
+
+	// Verify req get --example [--effective]
+	code, getRawRes, _ := execCLIJSON(t, dataDir, "req", "get", "Orders", "--example", "VipSecret")
+	if code != 0 || !getRawRes.Success || getRawRes.Data.(map[string]interface{})["name"] != "VipSecret" {
+		t.Fatalf("req get --example failed: %+v", getRawRes)
+	}
+	code, getEffRes, _ := execCLIJSON(t, dataDir, "req", "get", "Orders", "--example", "VipSecret", "--effective")
+	if code != 0 || !getEffRes.Success {
+		t.Fatalf("req get --example --effective failed: %+v", getEffRes)
+	}
+	effURL := getEffRes.Data.(map[string]interface{})["url"].(string)
+	if !strings.Contains(effURL, "a=1") || !strings.Contains(effURL, "b=2") {
+		t.Errorf("expected both a=1 and b=2 preserved in effective URL, got %q", effURL)
+	}
+
+	// Re-link url via --sync url=true and verify req example sync --all
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "example", "update", "Orders", "VipSecret", "--sync", "url=true"); code != 0 || !res.Success {
+		t.Fatalf("req example update --sync url=true failed: %+v", res)
+	}
+	if code, res, _ := execCLIJSON(t, dataDir, "req", "example", "sync", "Orders", "--all"); code != 0 || !res.Success {
+		t.Fatalf("req example sync --all failed: %+v", res)
+	}
+
+	// 3. hecto run --example --redact & hecto flow create --nodes-json (with example_id) & hecto flow run --example --redact
+	code, runRedactRes, _ := execCLIJSON(t, dataDir, "run", "Orders", "--example", "VipSecret", "--redact")
+	if code != 0 || !runRedactRes.Success {
+		t.Fatalf("hecto run --example --redact failed: %+v", runRedactRes)
+	}
+	runJSON, _ := json.Marshal(runRedactRes.Data)
+	if strings.Contains(string(runJSON), "super-secret-ex-key") {
+		t.Errorf("expected example custom apiKey redacted in hecto run output, got %s", string(runJSON))
+	}
+
+	reqID := ""
+	if code, reqRes, _ := execCLIJSON(t, dataDir, "req", "get", "Orders"); code == 0 && reqRes.Success {
+		reqID = reqRes.Data.(map[string]interface{})["id"].(string)
+	}
+	ex2ID := ex2Res.Data.(map[string]interface{})["id"].(string)
+	nodesJSON := fmt.Sprintf(`[{"id":"n1","steps":[{"id":"s1","request_id":%q,"example_id":%q,"enabled":true}]}]`, reqID, ex2ID)
+	if code, fcRes, _ := execCLIJSON(t, dataDir, "flow", "create", "--name", "RedactFlow", "--nodes-json", nodesJSON); code != 0 || !fcRes.Success {
+		t.Fatalf("flow create --nodes-json with example_id failed: %+v", fcRes)
+	}
+	// Run flow overriding step example with VipSecret and --redact
+	code, frRes, _ := execCLIJSON(t, dataDir, "flow", "run", "RedactFlow", "--example", "VipSecret", "--redact")
+	if code != 0 || !frRes.Success {
+		t.Fatalf("flow run --example --redact failed: %+v", frRes)
+	}
+	frJSON, _ := json.Marshal(frRes.Data)
+	if strings.Contains(string(frJSON), "super-secret-ex-key") {
+		t.Errorf("expected example custom apiKey redacted in hecto flow run output, got %s", string(frJSON))
+	}
+	if len(capturedAPIKeys) != 2 || capturedAPIKeys[0] != "super-secret-ex-key" || capturedAPIKeys[1] != "super-secret-ex-key" {
+		t.Errorf("expected actual HTTP requests to carry unredacted secret, got %v", capturedAPIKeys)
+	}
+	if len(capturedQueries) != 2 || !strings.Contains(capturedQueries[1], "a=1") || !strings.Contains(capturedQueries[1], "b=2") {
+		t.Errorf("expected flow run --example override query params a=1&b=2, got %v", capturedQueries)
+	}
+}

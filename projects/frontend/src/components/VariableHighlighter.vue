@@ -94,6 +94,7 @@ const collectionStore = hasPinia ? useCollectionStore() : null
 const requestStore = hasPinia ? useRequestStore() : null
 const injectedVars = inject<Ref<Map<string, string>> | ComputedRef<Map<string, string>> | Map<string, string> | null>('effectiveVariables', null)
 const injectedFolders = inject<Ref<FolderNodeLike[]> | ComputedRef<FolderNodeLike[]> | FolderNodeLike[] | null>('variableHierarchyFolders', null)
+const injectedScopeContext = inject<'request' | 'folder' | null>('variableScopeContext', null)
 
 const isComposing = ref(false)
 const liveInputValue = ref<string | null>(null)
@@ -124,11 +125,15 @@ const fallbackVariablesMap = computed(() => {
   const activeEnvObj = envStore?.activeEnvId
     ? envStore.environments.find(e => e.id === envStore.activeEnvId)
     : null
+  const includeRequestScope =
+    injectedScopeContext === 'request' ||
+    (injectedScopeContext !== 'folder' && Boolean(requestStore?.current) && !collectionStore?.activeFolderId)
   return resolveHierarchyVariables({
     collectionVariables: collectionStore?.activeCollection?.variables,
     activeEnvVariables: activeEnvObj?.variables ?? envStore?.variablesMap,
     pathFolders: resolvedHierarchyFolders.value,
-    activeEnvId: envStore?.activeEnvId
+    activeEnvId: envStore?.activeEnvId,
+    requestVariables: includeRequestScope ? (requestStore?.current?.variables || null) : null
   })
 })
 
@@ -146,7 +151,11 @@ let windowListenersAttached = false
 
 const isFocusInsidePopover = (): boolean => {
   if (typeof document === 'undefined' || !document.activeElement) return false
-  return Boolean((document.activeElement as HTMLElement).closest?.('[data-test="variable-hover-popover"]'))
+  return Boolean(
+    (document.activeElement as HTMLElement).closest?.(
+      '[data-test="variable-hover-popover"], [data-kvp-portal="true"]'
+    )
+  )
 }
 
 const clearHoverTimer = () => {

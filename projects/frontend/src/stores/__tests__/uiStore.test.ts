@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useUiStore } from '../uiStore'
+import { RESPONSE_WORD_WRAP_STORAGE_KEY, useUiStore } from '../uiStore'
 
 describe('uiStore - Unsaved Prompt', () => {
   beforeEach(() => {
@@ -248,5 +248,73 @@ describe('uiStore - Resizable Layout Panes', () => {
 
     store.clearTreeFilter()
     expect(store.filterTreeClearTrigger).toBe(2)
+  })
+})
+
+describe('uiStore - Response Word Wrap', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
+
+  it('defaults responseWordWrap to true when localStorage is empty or corrupt', () => {
+    const store1 = useUiStore()
+    expect(store1.responseWordWrap).toBe(true)
+
+    localStorage.setItem(RESPONSE_WORD_WRAP_STORAGE_KEY, 'abc')
+    setActivePinia(createPinia())
+    const store2 = useUiStore()
+    expect(store2.responseWordWrap).toBe(true)
+
+    localStorage.setItem(RESPONSE_WORD_WRAP_STORAGE_KEY, '')
+    setActivePinia(createPinia())
+    const store3 = useUiStore()
+    expect(store3.responseWordWrap).toBe(true)
+  })
+
+  it('restores false only when localStorage stores "false", and true when "true"', () => {
+    localStorage.setItem(RESPONSE_WORD_WRAP_STORAGE_KEY, 'false')
+    const store1 = useUiStore()
+    expect(store1.responseWordWrap).toBe(false)
+
+    localStorage.setItem(RESPONSE_WORD_WRAP_STORAGE_KEY, 'true')
+    setActivePinia(createPinia())
+    const store2 = useUiStore()
+    expect(store2.responseWordWrap).toBe(true)
+  })
+
+  it('updates reactive state and persists via setResponseWordWrap and toggleResponseWordWrap', () => {
+    const store = useUiStore()
+    expect(store.responseWordWrap).toBe(true)
+
+    store.toggleResponseWordWrap()
+    expect(store.responseWordWrap).toBe(false)
+    expect(localStorage.getItem(RESPONSE_WORD_WRAP_STORAGE_KEY)).toBe('false')
+
+    store.toggleResponseWordWrap()
+    expect(store.responseWordWrap).toBe(true)
+    expect(localStorage.getItem(RESPONSE_WORD_WRAP_STORAGE_KEY)).toBe('true')
+
+    store.setResponseWordWrap(false)
+    expect(store.responseWordWrap).toBe(false)
+    expect(localStorage.getItem(RESPONSE_WORD_WRAP_STORAGE_KEY)).toBe('false')
+  })
+
+  it('falls back safely to true when localStorage throws', () => {
+    const getSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage blocked')
+    })
+    const setSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage blocked')
+    })
+    try {
+      const store = useUiStore()
+      expect(store.responseWordWrap).toBe(true)
+      expect(() => store.setResponseWordWrap(false)).not.toThrow()
+      expect(store.responseWordWrap).toBe(false)
+    } finally {
+      getSpy.mockRestore()
+      setSpy.mockRestore()
+    }
   })
 })

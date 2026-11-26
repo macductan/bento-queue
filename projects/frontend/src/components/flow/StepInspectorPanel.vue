@@ -2,11 +2,14 @@
 import { computed } from 'vue'
 import { useFlowStore, findRequestInCollectionTree, getMethodBadgeClass } from '../../stores/flowStore'
 import { useCollectionStore } from '../../stores/collectionStore'
+import { useRequestStore } from '../../stores/requestStore'
 import { useUiStore } from '../../stores/uiStore'
+import { resolveEffectiveRequest } from '../../utils/requestExamples'
 import ResponseViewer, { type ResponseViewerOverrideData } from '../ResponseViewer.vue'
 
 const flowStore = useFlowStore()
 const collectionStore = useCollectionStore()
+const requestStore = useRequestStore()
 const uiStore = useUiStore()
 
 const selectedStepLookup = computed(() => {
@@ -21,6 +24,38 @@ const selectedStep = computed(() => {
 const requestInfo = computed(() => {
   if (!selectedStep.value) return null
   return findRequestInCollectionTree(collectionStore.tree, selectedStep.value.request_id)
+})
+
+const requestTreeNode = computed(() => {
+  if (!selectedStep.value) return null
+  return collectionStore.findNode(collectionStore.tree, selectedStep.value.request_id)
+})
+
+const effectiveIdleExample = computed(() => {
+  const exId = (selectedStep.value?.example_id || '').trim()
+  const node = requestTreeNode.value
+  if (!exId || !node || !Array.isArray(node.examples)) return null
+  const ex = node.examples.find(item => item.id === exId)
+  if (!ex) return null
+  return resolveEffectiveRequest(
+    {
+      id: node.id,
+      name: node.name,
+      method: node.method || 'GET',
+      url: node.url || '',
+      headers: (node.headers || []) as any,
+      params: [],
+      path_params: [],
+      variables: (node.variables || []) as any,
+      body: (node.body || { type: 'none', content: '' }) as any,
+      auth: node.auth,
+      auth_envs: node.auth_envs,
+      examples: node.examples,
+      created_at: node.created_at || '',
+      updated_at: ''
+    },
+    ex
+  )
 })
 
 const stepState = computed(() => {
@@ -48,6 +83,9 @@ const displayMethod = computed(() => {
   if (isStepStateMatchingCurrentRequest.value && stepState.value?.method) {
     return stepState.value.method.toUpperCase()
   }
+  if (effectiveIdleExample.value?.method) {
+    return effectiveIdleExample.value.method.toUpperCase()
+  }
   if (requestInfo.value) return requestInfo.value.method
   if (stepState.value?.method) return stepState.value.method.toUpperCase()
   return 'GET'
@@ -56,6 +94,9 @@ const displayMethod = computed(() => {
 const displayUrl = computed(() => {
   if (isStepStateMatchingCurrentRequest.value && stepState.value?.url) {
     return stepState.value.url
+  }
+  if (effectiveIdleExample.value?.url) {
+    return effectiveIdleExample.value.url
   }
   if (requestInfo.value) return requestInfo.value.url
   if (stepState.value?.url) return stepState.value.url
@@ -147,6 +188,7 @@ const handleOpenOriginalRequest = async () => {
     ;(collectionStore as any).expandPathToNode(reqId)
   }
   await collectionStore.selectRequest(reqId)
+  requestStore.selectExample(selectedStep.value.example_id || null)
 }
 
 const handleCloseInspector = () => {

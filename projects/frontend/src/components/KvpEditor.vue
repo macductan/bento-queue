@@ -2,12 +2,14 @@
 import { computed, nextTick, ref } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import VariableHighlighter from '@/components/VariableHighlighter.vue'
+import KvpValueSelectControl from '@/components/KvpValueSelectControl.vue'
 import { useI18n } from '@/i18n'
 
 const props = defineProps<{
   field?: 'params' | 'headers' | 'path_params'
   modelValue?: any[]
   readonlyKeys?: boolean
+  readonly?: boolean
   keyPrefix?: string
 }>()
 
@@ -17,6 +19,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const requestStore = useRequestStore()
+const isReadonly = computed(() => Boolean(props.readonly))
+const keysLocked = computed(() => Boolean(props.readonlyKeys || props.readonly))
 
 const rows = computed(() => {
   if (props.modelValue) return props.modelValue
@@ -29,7 +33,7 @@ const rows = computed(() => {
 })
 
 const displayRows = computed(() => {
-  if (props.readonlyKeys) {
+  if (keysLocked.value) {
     return rows.value
   }
   return [...rows.value, { key: '', value: '', enabled: true, _isPhantom: true }]
@@ -58,7 +62,7 @@ const getTargetArray = (): any[] | null => {
 }
 
 const ensureRealRow = (index: number) => {
-  if (props.readonlyKeys) return
+  if (keysLocked.value || isReadonly.value) return
   const arr = getTargetArray()
   if (!arr) return
   if (index >= rows.value.length) {
@@ -70,7 +74,8 @@ const ensureRealRow = (index: number) => {
 }
 
 const onCellInput = (index: number, part: 'key' | 'value', e: Event) => {
-  if (props.readonlyKeys && part === 'key') return
+  if (isReadonly.value) return
+  if (keysLocked.value && part === 'key') return
   const target = e.target as HTMLInputElement | HTMLTextAreaElement
   const v = target.value
   const arr = getTargetArray()
@@ -93,6 +98,54 @@ const onCellInput = (index: number, part: 'key' | 'value', e: Event) => {
   }
 }
 
+const onSelectValueUpdate = (index: number, val: string) => {
+  const arr = getTargetArray()
+  if (!arr) return
+  if (index >= rows.value.length) {
+    arr.push({ key: '', value: val, enabled: true })
+  } else {
+    const targetRow = rows.value[index]
+    if (targetRow && !targetRow._isAuto) {
+      targetRow.value = val
+    }
+  }
+  if (props.modelValue) {
+    emit('update:modelValue', arr)
+  }
+}
+
+const onRowTypeUpdate = (index: number, nextType: 'text' | 'select') => {
+  const arr = getTargetArray()
+  if (!arr) return
+  if (index >= rows.value.length) {
+    arr.push({ key: '', value: '', enabled: true, type: nextType })
+  } else {
+    const targetRow = rows.value[index]
+    if (targetRow && !targetRow._isAuto) {
+      targetRow.type = nextType
+    }
+  }
+  if (props.modelValue) {
+    emit('update:modelValue', arr)
+  }
+}
+
+const onRowOptionsUpdate = (index: number, nextOptions: string[]) => {
+  const arr = getTargetArray()
+  if (!arr) return
+  if (index >= rows.value.length) {
+    arr.push({ key: '', value: '', enabled: true, options: nextOptions })
+  } else {
+    const targetRow = rows.value[index]
+    if (targetRow && !targetRow._isAuto) {
+      targetRow.options = nextOptions
+    }
+  }
+  if (props.modelValue) {
+    emit('update:modelValue', arr)
+  }
+}
+
 const toggleRowEnabled = (index: number) => {
   const targetRow = rows.value[index]
   if (targetRow) {
@@ -104,7 +157,7 @@ const toggleRowEnabled = (index: number) => {
 }
 
 const addRow = () => {
-  if (props.readonlyKeys) return
+  if (keysLocked.value) return
   const arr = getTargetArray()
   if (!arr) return
   arr.push({ key: '', value: '', enabled: true })
@@ -115,7 +168,7 @@ const addRow = () => {
 }
 
 const removeRow = (index: number) => {
-  if (props.readonlyKeys) return
+  if (keysLocked.value) return
   const arr = getTargetArray()
   if (!arr) return
   const targetRow = rows.value[index]
@@ -136,7 +189,7 @@ const removeRow = (index: number) => {
 }
 
 const onValueTab = (e: KeyboardEvent, index: number) => {
-  if (props.readonlyKeys) return
+  if (keysLocked.value) return
   // If not shift key, jump to the next row's key input
   if (!e.shiftKey) {
     e.preventDefault()
@@ -170,13 +223,17 @@ const initResize = (el: any) => {
     <!-- Table Container with clear borders -->
     <div class="border border-border-default rounded-md overflow-hidden bg-surface-base">
       <!-- Table Header -->
-      <div class="flex items-center bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none">
-        <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default py-2">
+      <div
+        data-test="kvp-header-row"
+        class="grid items-stretch bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none"
+        :class="keysLocked ? 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]' : 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]'"
+      >
+        <div class="flex items-center justify-center border-r border-border-default py-2">
           <span class="sr-only">Kích hoạt</span>
         </div>
-        <div class="flex-1 px-3 py-2 border-r border-border-default">Key</div>
-        <div class="flex-[2] px-3 py-2">Value</div>
-        <div v-if="!readonlyKeys" class="w-10 shrink-0 border-l border-border-default py-2 text-center">
+        <div class="min-w-0 flex items-center px-3 py-2 border-r border-border-default">Key</div>
+        <div class="min-w-0 flex items-center px-3 py-2">Value</div>
+        <div v-if="!keysLocked" class="flex items-center justify-center border-l border-border-default py-2 text-center">
           <span class="sr-only">Xóa</span>
         </div>
       </div>
@@ -186,11 +243,15 @@ const initResize = (el: any) => {
         <div
           v-for="(row, index) in displayRows"
           :key="index"
-          class="flex items-stretch group transition-colors hover:bg-surface-hover/20 focus-within:bg-surface-hover/25"
-          :class="{ 'opacity-50': !row._isPhantom && !row.enabled }"
+          data-test="kvp-body-row"
+          class="grid items-stretch group transition-colors hover:bg-surface-hover/20 focus-within:bg-surface-hover/25"
+          :class="[
+            keysLocked ? 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]' : 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]',
+            { 'opacity-50': !row._isPhantom && !row.enabled }
+          ]"
         >
           <!-- Checkbox Column -->
-          <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1">
+          <div class="flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1">
             <button 
               v-if="row._isPhantom"
               type="button"
@@ -209,9 +270,13 @@ const initResize = (el: any) => {
               type="button"
               role="checkbox"
               :aria-checked="row.enabled"
-              @click="toggleRowEnabled(index)"
-              class="w-4 h-4 rounded-[4px] border flex items-center justify-center cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
-              :class="row.enabled ? 'bg-brand-primary border-brand-primary text-white' : 'bg-surface-input border-border-default text-transparent hover:border-border-focus'"
+              :disabled="isReadonly"
+              @click="!isReadonly && toggleRowEnabled(index)"
+              class="w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
+              :class="[
+                row.enabled ? 'bg-brand-primary border-brand-primary text-white' : 'bg-surface-input border-border-default text-transparent hover:border-border-focus',
+                isReadonly ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+              ]"
               :aria-label="t('kvp.toggleRow')"
             >
               <svg class="w-3.5 h-3.5 font-bold" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
@@ -222,7 +287,7 @@ const initResize = (el: any) => {
           
           <!-- Key Column -->
           <div 
-            class="flex-1 relative min-w-0 flex items-center border-r border-border-default bg-transparent cursor-text"
+            class="relative min-w-0 flex items-center border-r border-border-default bg-transparent cursor-text"
             @click="focusCell(index, 'key')"
           >
             <span
@@ -232,16 +297,16 @@ const initResize = (el: any) => {
             <input 
               type="text" 
               :value="row.key"
-              :readonly="row._isAuto || readonlyKeys"
+              :readonly="row._isAuto || keysLocked"
               :ref="el => { if (el) keyInputs[index] = el as HTMLInputElement }"
               @compositionstart="ensureRealRow(index)"
               @input="e => onCellInput(index, 'key', e)"
               @compositionend="e => onCellInput(index, 'key', e)"
               placeholder="Key"
-              class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted/60 caret-text-primary py-2 border-0 outline-none w-full min-h-[36px] block focus:ring-0"
+              class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted/60 caret-text-primary py-2 border-0 outline-none w-full min-w-0 min-h-[36px] block focus:ring-0"
               :class="[
                 keyPrefix ? 'pl-0.5 pr-3' : 'px-3',
-                { 'opacity-50 cursor-not-allowed': row._isAuto, 'text-sky-300 font-medium cursor-default': readonlyKeys }
+                { 'opacity-50 cursor-not-allowed': row._isAuto || isReadonly, 'text-sky-300 font-medium cursor-default': readonlyKeys }
               ]"
               spellcheck="false"
               autocomplete="off"
@@ -250,10 +315,12 @@ const initResize = (el: any) => {
           
           <!-- Value Column -->
           <div 
-            class="flex-[2] relative min-w-0 bg-transparent flex items-center cursor-text"
-            @click="focusCell(index, 'value')"
+            class="relative min-w-0 bg-transparent flex items-center"
+            :class="row.type === 'select' || isReadonly ? '' : 'cursor-text'"
+            @click="row.type !== 'select' && !isReadonly && focusCell(index, 'value')"
           >
             <VariableHighlighter
+              v-if="row._isAuto || isReadonly"
               :ref="el => { if (el) highlighterRefs[index] = el }"
               :value="row.value"
               overlay-class="px-3 py-2 mono-sm min-h-[36px] w-full border border-transparent rounded-none"
@@ -261,25 +328,50 @@ const initResize = (el: any) => {
               <textarea 
                 rows="1"
                 :value="row.value"
-                :readonly="row._isAuto"
+                readonly
                 :ref="el => { if (el) { valueInputs[index] = el as HTMLTextAreaElement; initResize(el) } }"
-                @compositionstart="ensureRealRow(index)"
-                @input="e => { autoResize(e); onCellInput(index, 'value', e) }"
-                @compositionend="e => { autoResize(e); onCellInput(index, 'value', e) }"
-                @paste="e => { nextTick(() => autoResize(e)) }"
                 @scroll="e => highlighterRefs[index]?.syncScroll(e)"
                 placeholder="Value"
-                class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted/60 caret-text-primary px-3 py-2 rounded-none border border-transparent outline-none w-full min-h-[36px] resize-none overflow-hidden block whitespace-pre-wrap break-all focus:ring-0"
-                :class="{ 'opacity-50 cursor-not-allowed': row._isAuto }"
+                class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted/60 caret-text-primary px-3 py-2 rounded-none border border-transparent outline-none w-full min-h-[36px] resize-none overflow-hidden block whitespace-pre-wrap break-all focus:ring-0 opacity-50 cursor-not-allowed"
                 spellcheck="false"
                 autocomplete="off"
-                @keydown.tab="row._isPhantom ? undefined : onValueTab($event, index)"
               ></textarea>
             </VariableHighlighter>
+            <KvpValueSelectControl
+              v-else
+              :model-value="row.value"
+              :type="row.type"
+              :options="row.options"
+              @update:model-value="val => onSelectValueUpdate(index, val)"
+              @update:type="nextType => onRowTypeUpdate(index, nextType)"
+              @update:options="nextOpts => onRowOptionsUpdate(index, nextOpts)"
+            >
+              <VariableHighlighter
+                :ref="el => { if (el) highlighterRefs[index] = el }"
+                :value="row.value"
+                overlay-class="px-3 py-2 mono-sm min-h-[36px] w-full border border-transparent rounded-none"
+              >
+                <textarea 
+                  rows="1"
+                  :value="row.value"
+                  :ref="el => { if (el) { valueInputs[index] = el as HTMLTextAreaElement; initResize(el) } }"
+                  @compositionstart="ensureRealRow(index)"
+                  @input="e => { autoResize(e); onCellInput(index, 'value', e) }"
+                  @compositionend="e => { autoResize(e); onCellInput(index, 'value', e) }"
+                  @paste="e => { nextTick(() => autoResize(e)) }"
+                  @scroll="e => highlighterRefs[index]?.syncScroll(e)"
+                  placeholder="Value"
+                  class="transparent-selection bg-transparent mono-sm text-transparent placeholder:text-text-muted/60 caret-text-primary px-3 py-2 rounded-none border border-transparent outline-none w-full min-h-[36px] resize-none overflow-hidden block whitespace-pre-wrap break-all focus:ring-0"
+                  spellcheck="false"
+                  autocomplete="off"
+                  @keydown.tab="row._isPhantom ? undefined : onValueTab($event, index)"
+                ></textarea>
+              </VariableHighlighter>
+            </KvpValueSelectControl>
           </div>
           
           <!-- Delete Action Column -->
-          <div v-if="!readonlyKeys" class="w-10 shrink-0 flex items-center justify-center border-l border-border-default bg-transparent">
+          <div v-if="!keysLocked" class="flex items-center justify-center border-l border-border-default bg-transparent">
             <button 
               v-if="!row._isPhantom && !row._isAuto"
               @click="removeRow(index)" 
@@ -296,7 +388,7 @@ const initResize = (el: any) => {
       </div>
     </div>
     
-    <div v-if="!readonlyKeys" class="flex items-center">
+    <div v-if="!keysLocked" class="flex items-center">
       <button 
         type="button"
         @click="addRow" 

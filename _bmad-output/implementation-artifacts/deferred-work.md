@@ -103,3 +103,11 @@
 - source_spec: `/home/dev/mdt/hecto-api/_bmad-output/implementation-artifacts/spec-git-auto-sync-and-remove-history.md`
   summary: Phối hợp khóa theo Collection giữa các CRUD service (`RequestService`, `CollectionService`, `EnvironmentService`, `FlowService`) với `GitSyncService`, thu hẹp `IndexRebuild` theo từng collection và mở rộng cơ chế `RecordSelfWrite` cho các lệnh Git kéo dài quá `DefaultSelfWriteWindow` (400ms).
   evidence: Kiến trúc `FileSystem.RecordSelfWrite()` và khóa service rời rạc đã tồn tại từ trước trong `projects/storage/watcher.go` và `projects/app.go`; việc tái cấu trúc đồng bộ hóa đa service vượt phạm vi vá cục bộ của thay đổi Auto Sync.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-example-request.md`
+  summary: Cân nhắc bổ sung tab/panel UI quản lý trực tiếp Tier-5 `request.variables` trong `RequestTabs.vue`/`RequestEditor.vue` để xem và chỉnh sửa các biến Request chưa xuất hiện dưới dạng `{{var}}`.
+  evidence: Thiết kế hiện tại từ `env-select-variable` giữ 6 tab trên `RequestTabs.vue` và quản lý `request.variables` qua `VariableHoverPopover.vue`, kèm toggle `sync_flags.variables` trên `ExampleSwitcher.vue`; thêm tab mới vượt phạm vi vá cục bộ (`low`).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-example-request.md`
+  summary: Bổ sung flag `--set-var`/`--unset-var` cho lệnh CLI `hecto req create` và `hecto req update` để chỉnh Tier-5 `request.variables` trên Default request đồng bộ với `hecto req example update`.
+  evidence: `handleReq` (`projects/cmd/hecto/main.go:2162-2359`) từ trước chưa có flag `--set-var`/`--unset-var` cho Request gốc; bổ sung flag CLI mới mở rộng public surface nên ghi nhận làm việc kế tiếp (`low`).

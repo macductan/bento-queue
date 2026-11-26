@@ -16,6 +16,7 @@ import {
   prepareRequestExecution,
   finalizeResponseExecution
 } from '../utils/headless-engine'
+import { resolveRequestForStepExecution } from '../utils/requestExamples'
 import type { ScriptExecutionResult, ScriptTestResult } from '../utils/scriptRunner'
 import type { ExecuteResponse, ExecutionLogRecord } from './responseStore'
 import type { TreeNode } from './collectionStore'
@@ -43,6 +44,8 @@ export interface FlowStepExecutionState {
   stepId: string
   nodeId: string
   requestId: string
+  exampleId?: string
+  exampleName?: string
   requestName?: string
   method?: string
   url?: string
@@ -1101,6 +1104,9 @@ export const useFlowStore = defineStore('flow', {
     changeStepRequest(stepId: string, newRequestId: string): boolean {
       const found = this.findStepInNodes(stepId)
       if (!found) return false
+      if (found.step.request_id !== newRequestId) {
+        delete found.step.example_id
+      }
       found.step.request_id = newRequestId
       return true
     },
@@ -1253,6 +1259,7 @@ export const useFlowStore = defineStore('flow', {
                 stepId: step.id,
                 nodeId: node.id,
                 requestId: step.request_id,
+                ...(step.example_id ? { exampleId: step.example_id } : {}),
                 status: 'idle'
               }
               this.stepStates[step.id] = initial
@@ -1482,10 +1489,14 @@ export const useFlowStore = defineStore('flow', {
             headers: deepClone((treeNode as any).headers || []),
             params: deepClone((treeNode as any).params || []),
             path_params: deepClone((treeNode as any).path_params || []),
+            variables: deepClone((treeNode as any).variables || []),
             body: deepClone(treeNode.body || { type: 'none', content: '' }) as any,
             auth: deepClone(treeNode.auth || { type: 'inherit' }),
             auth_envs: deepClone(treeNode.auth_envs),
             scripts: deepClone((treeNode as any).scripts),
+            ...(Array.isArray(treeNode.examples)
+              ? { examples: deepClone(treeNode.examples) }
+              : {}),
             created_at: treeNode.created_at || '',
             updated_at: ''
           }
@@ -1502,6 +1513,9 @@ export const useFlowStore = defineStore('flow', {
         step: model.FlowStep
         nodeId: string
         missing: boolean
+        exampleMissing?: boolean
+        exampleId?: string
+        exampleName?: string
         req: Request | null
         execReqMethod?: string
         execReqUrl?: string
@@ -1529,7 +1543,7 @@ export const useFlowStore = defineStore('flow', {
         }
       ): Promise<ExecutedStepRawResult> => {
         const stepStart = Date.now()
-        const { req, pathFolders, missing } = await resolveStepRequestAndFolders(
+        const { req: baseReq, pathFolders, missing } = await resolveStepRequestAndFolders(
           step.request_id,
           snapshot.allFolders
         )
@@ -1539,7 +1553,7 @@ export const useFlowStore = defineStore('flow', {
             step,
             nodeId,
             missing: false,
-            req,
+            req: baseReq,
             pathFolders,
             preScriptResult: null,
             postScriptResult: null,
@@ -1557,7 +1571,7 @@ export const useFlowStore = defineStore('flow', {
           }
         }
 
-        if (missing || !req) {
+        if (missing || !baseReq) {
           return {
             step,
             nodeId,
@@ -1579,6 +1593,33 @@ export const useFlowStore = defineStore('flow', {
             durationMs: 0
           }
         }
+
+        const stepResolution = resolveRequestForStepExecution(baseReq, step.example_id)
+        if (!stepResolution.request) {
+          return {
+            step,
+            nodeId,
+            missing: false,
+            exampleMissing: true,
+            exampleId: step.example_id,
+            req: baseReq,
+            pathFolders,
+            preScriptResult: null,
+            postScriptResult: null,
+            response: null,
+            errorObj: {
+              code: stepResolution.code || 'NOT_FOUND',
+              message: stepResolution.error || 'Example không tồn tại'
+            },
+            networkError: null,
+            scriptError: null,
+            testResults: [],
+            executionLogs: [],
+            scriptLogs: [],
+            durationMs: 0
+          }
+        }
+        const req = stepResolution.request
 
         const preOut = prepareRequestExecution({
           request: req,
@@ -1760,6 +1801,8 @@ export const useFlowStore = defineStore('flow', {
           step,
           nodeId,
           missing: false,
+          exampleId: stepResolution.example?.id,
+          exampleName: stepResolution.example?.name,
           req: preOut.effectiveRequest,
           execReqMethod: execReq.method,
           execReqUrl: execReq.url,
@@ -2095,13 +2138,18 @@ export const useFlowStore = defineStore('flow', {
 
             const verdict = r.missing
               ? evaluateStepVerdict({ requestMissing: true })
-              : evaluateStepVerdict({
-                  requestMissing: false,
-                  networkError: r.networkError,
-                  scriptError: r.scriptError,
-                  scriptTests: r.testResults,
-                  statusCode: r.response?.status_code ?? null
-                })
+              : r.exampleMissing
+                ? evaluateStepVerdict({
+                    exampleMissing: true,
+                    exampleError: r.errorObj?.message || null
+                  })
+                : evaluateStepVerdict({
+                    requestMissing: false,
+                    networkError: r.networkError,
+                    scriptError: r.scriptError,
+                    scriptTests: r.testResults,
+                    statusCode: r.response?.status_code ?? null
+                  })
 
             const stepStatus: FlowExecutionStatus = verdict.passed ? 'passed' : 'failed'
             if (verdict.passed) {
@@ -2130,6 +2178,8 @@ export const useFlowStore = defineStore('flow', {
               stepId: r.step.id,
               nodeId: node.id,
               requestId: r.step.request_id,
+              ...(r.exampleId ? { exampleId: r.exampleId } : {}),
+              ...(r.exampleName ? { exampleName: r.exampleName } : {}),
               requestName: r.req?.name,
               method: r.execReqMethod || r.req?.method,
               url: r.execReqUrl || r.req?.url,

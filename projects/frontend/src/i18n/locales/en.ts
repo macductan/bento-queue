@@ -168,6 +168,8 @@ export default {
   responseViewer: {
     collapseResponse: 'Collapse Response Pane',
     invalidJsonOrXml: 'Not valid JSON or XML',
+    wrapText: 'Wrap',
+    wrapTextTitle: 'Toggle word wrap',
     searchShortcut: 'Search in Response (Ctrl+F)',
     searchPlaceholder: 'Search in Response...',
     matchCase: 'Match Case',
@@ -241,6 +243,51 @@ export default {
     discard: 'Don\'t Save'
   },
   kvp: {
-    toggleRow: 'Toggle row'
+    toggleRow: 'Toggle row',
+    switchToSelect: 'Switch to Select box',
+    switchToText: 'Switch to Text input',
+    modeText: 'Text',
+    modeSelect: 'Select',
+    editOptions: 'Edit options',
+    optionsTitle: 'Select Options',
+    addOption: '+ Add option...',
+    addOptionPlaceholder: 'Enter new option...',
+    optionPlaceholder: 'Option value',
+    removeOption: 'Remove option',
+    noOptions: 'No options yet',
+    selectValuePlaceholder: 'Select value...',
+    outOfList: 'out of list',
+    emptyOptionError: 'Option cannot be empty',
+    duplicateOption: 'Option already exists'
+  },
+  examples: {
+    defaultLabel: 'Default',
+    newExample: 'New Example',
+    rename: 'Rename',
+    duplicate: 'Duplicate',
+    delete: 'Delete',
+    detach: 'Promote to Standalone Request',
+    syncFromDefault: 'Sync from Default',
+    syncAll: 'Sync All Examples',
+    syncAllTitle: 'Sync linked fields to all examples from Default',
+    syncConfigTitle: 'Linked Fields (Sync from Default)',
+    linkedBadge: 'Linked',
+    unlink: 'Unlink',
+    link: 'Link to Default',
+    linkedBanner: 'This section is linked to Default. Unlink "{group}" in Sync Settings to edit independently.',
+    urlLinkedHint: 'Base URL is linked to Default (switch to Default or unlink URL to edit; edit query params in Params tab).',
+    groups: {
+      url: 'Base URL',
+      method: 'Method',
+      auth: 'Auth',
+      scripts: 'Scripts',
+      body: 'Body',
+      params: 'Query Params',
+      path_params: 'Path Params',
+      headers: 'Headers',
+      variables: 'Variables'
+    },
+    flowExampleMissing: 'Linked Example was deleted or unavailable',
+    flowExampleLabel: 'Scenario'
   }
 }

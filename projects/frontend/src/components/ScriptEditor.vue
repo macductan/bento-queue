@@ -19,8 +19,11 @@ import {
   applyEditorToggleComment
 } from '@/utils/editorShortcuts'
 import { formatJavaScript } from '@/utils/jsFormatter'
+import { useI18n } from '@/i18n'
 
+const { t } = useI18n()
 const requestStore = useRequestStore()
+const isReadonly = computed(() => Boolean(requestStore.activeSyncFlags?.scripts))
 const responseStore = useResponseStore()
 const envStore = useEnvironmentStore()
 const collectionStore = useCollectionStore()
@@ -120,6 +123,7 @@ function gutterWidth(count: number): string {
 }
 
 function insertTemplate(template: string) {
+  if (isReadonly.value) return
   const isPre = selectedPhase.value === 'pre_request'
   const el = isPre ? preTextareaRef.value : postTextareaRef.value
   const currentVal = isPre ? preRequestCode.value : postResponseCode.value
@@ -151,6 +155,7 @@ function insertTemplate(template: string) {
 }
 
 function insertSnippet(target: 'pre' | 'post', snippet: string) {
+  if (isReadonly.value) return
   if (target === 'pre') {
     preRequestCode.value = preRequestCode.value
       ? `${preRequestCode.value}\n${snippet}`
@@ -164,6 +169,7 @@ function insertSnippet(target: 'pre' | 'post', snippet: string) {
 }
 
 function formatCurrentScript() {
+  if (isReadonly.value) return
   const isPre = selectedPhase.value === 'pre_request'
   const el = isPre ? preTextareaRef.value : postTextareaRef.value
   const code = isPre ? preRequestCode.value : postResponseCode.value
@@ -240,6 +246,7 @@ function onEditorInput(e: Event, phase: 'pre_request' | 'post_response') {
 }
 
 function applySuggestion(item: ScriptSuggestionItem) {
+  if (isReadonly.value) return
   const isPre = selectedPhase.value === 'pre_request'
   const el = isPre ? preTextareaRef.value : postTextareaRef.value
   const currentCode = isPre ? preRequestCode.value : postResponseCode.value
@@ -307,6 +314,7 @@ function onEditorDblClick(e: MouseEvent, _phase: 'pre_request' | 'post_response'
 }
 
 function onEditorKeydown(e: KeyboardEvent, phase: 'pre_request' | 'post_response') {
+  if (isReadonly.value) return
   const el = e.target as HTMLTextAreaElement
 
   // Ctrl+X / Cmd+X (Cut handler)
@@ -513,7 +521,8 @@ async function runScriptPreview() {
     collectionVariables: collectionStore.activeCollection?.variables,
     activeEnvVariables: envStore.variablesMap,
     pathFolders: pathNodes,
-    activeEnvId: envStore.activeEnvId
+    activeEnvId: envStore.activeEnvId,
+    requestVariables: req.variables
   })
 
   const isPre = selectedPhase.value === 'pre_request'
@@ -551,19 +560,24 @@ async function runScriptPreview() {
     uiStore.showToast(`Đã chạy thử ${label} Script`)
   }
 
-  // Apply request mutations if any
+  // Apply request mutations if any (never overwrite fields linked to Default on an active Example)
+  const exampleId = requestStore.activeExampleId ?? null
+  const syncFlags = requestStore.activeSyncFlags
+  const canMutateGroup = (flag: keyof NonNullable<typeof syncFlags>): boolean =>
+    !exampleId || !syncFlags || !syncFlags[flag]
+
   const mut = res.requestMutations
-  if (mut.url !== undefined) req.url = mut.url
-  if (mut.method !== undefined) req.method = mut.method
-  if (mut.params !== undefined) req.params = mut.params.map(p => ({ ...p }))
-  if (mut.path_params !== undefined) req.path_params = mut.path_params.map(p => ({ ...p }))
-  if (mut.headers !== undefined) req.headers = mut.headers.map(h => ({ ...h }))
-  if (mut.body !== undefined) {
+  if (mut.url !== undefined && canMutateGroup('url')) req.url = mut.url
+  if (mut.method !== undefined && canMutateGroup('method')) req.method = mut.method
+  if (mut.params !== undefined && canMutateGroup('params')) req.params = mut.params.map(p => ({ ...p }))
+  if (mut.path_params !== undefined && canMutateGroup('path_params')) req.path_params = mut.path_params.map(p => ({ ...p }))
+  if (mut.headers !== undefined && canMutateGroup('headers')) req.headers = mut.headers.map(h => ({ ...h }))
+  if (mut.body !== undefined && canMutateGroup('body')) {
     if (!req.body) req.body = { type: 'none', content: '' }
     if (mut.body.type !== undefined) req.body.type = mut.body.type
     if (mut.body.content !== undefined) req.body.content = mut.body.content
   }
-  if (mut.auth !== undefined) {
+  if (mut.auth !== undefined && canMutateGroup('auth')) {
     req.auth = mut.auth
   }
 
@@ -644,12 +658,28 @@ async function runScriptPreview() {
       </select>
 
       <div class="flex items-center gap-1.5">
+        <div
+          v-if="isReadonly"
+          data-test="scripts-linked-banner"
+          class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px]"
+        >
+          <span>{{ t('examples.linkedBadge') }}</span>
+          <button
+            type="button"
+            data-test="scripts-unlink-btn"
+            class="underline hover:text-amber-100 cursor-pointer"
+            @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'scripts', false)"
+          >
+            {{ t('examples.unlink') }}
+          </button>
+        </div>
         <button
           type="button"
           data-test="format-script-btn"
-          class="rounded border border-border-default bg-surface-base px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary cursor-pointer flex items-center gap-1"
+          :disabled="isReadonly"
+          class="rounded border border-border-default bg-surface-base px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-surface-hover hover:text-text-primary cursor-pointer flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
           title="Định dạng thụt lề và khoảng cách mã lệnh (Ctrl+Shift+F)"
-          @click="formatCurrentScript"
+          @click="!isReadonly && formatCurrentScript()"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 text-text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="4 7 4 4 20 4 20 7"></polyline>
@@ -718,11 +748,13 @@ async function runScriptPreview() {
           <textarea
             ref="preTextareaRef"
             v-model="preRequestCode"
+            :readonly="isReadonly"
             data-test="pre-request-script-input"
             spellcheck="false"
             autocomplete="off"
             wrap="off"
             class="transparent-selection relative z-10 w-full h-full min-h-0 resize-none rounded-r bg-transparent py-2.5 px-3 font-mono text-xs leading-relaxed text-transparent caret-text-primary focus:outline-none whitespace-pre overflow-auto"
+            :class="{ 'opacity-75 cursor-not-allowed': isReadonly }"
             @compositionstart="onCompositionStart"
             @compositionupdate="onCompositionUpdate"
             @compositionend="e => onCompositionEnd(e, 'pre_request')"
@@ -774,11 +806,13 @@ async function runScriptPreview() {
           <textarea
             ref="postTextareaRef"
             v-model="postResponseCode"
+            :readonly="isReadonly"
             data-test="post-response-script-input"
             spellcheck="false"
             autocomplete="off"
             wrap="off"
             class="transparent-selection relative z-10 w-full h-full min-h-0 resize-none rounded-r bg-transparent py-2.5 px-3 font-mono text-xs leading-relaxed text-transparent caret-text-primary focus:outline-none whitespace-pre overflow-auto"
+            :class="{ 'opacity-75 cursor-not-allowed': isReadonly }"
             @compositionstart="onCompositionStart"
             @compositionupdate="onCompositionUpdate"
             @compositionend="e => onCompositionEnd(e, 'post_response')"
@@ -820,10 +854,11 @@ async function runScriptPreview() {
     </div>
 
     <!-- Built-in Hints & API Quick Reference (Clickable Snippet Templates) -->
-    <div
+    <fieldset
       v-if="showHints"
+      :disabled="isReadonly"
       data-test="script-hints-box"
-      class="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border-default bg-surface-base/80 p-3 text-[11px]"
+      class="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border-default bg-surface-base/80 p-3 text-[11px] disabled:opacity-60"
     >
       <!-- 1. Environment -->
       <div class="space-y-1.5 p-2 rounded border border-border-default/50 bg-surface-raised/20">
@@ -1100,7 +1135,7 @@ async function runScriptPreview() {
           </button>
         </div>
       </div>
-    </div>
+    </fieldset>
 
     <!-- Execution Output & Logs -->
     <div

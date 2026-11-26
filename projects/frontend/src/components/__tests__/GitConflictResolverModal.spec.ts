@@ -533,6 +533,89 @@ describe('GitConflictResolverModal.vue', () => {
     expect(resolveGitConflictMock).toHaveBeenCalled()
     expect(loadFlowTreeSpy).toHaveBeenCalled()
   })
+
+  it('renders select/options differences and resolves examples[] conflicts without corrupting the examples array', async () => {
+    const uiStore = useUiStore()
+    const collectionStore = useCollectionStore()
+    collectionStore.activeCollectionId = 'default'
+    collectionStore.gitSyncStatus = {
+      has_git_repo: true,
+      branch: 'main',
+      has_changes: true,
+      has_conflicts: true,
+      conflict_files: ['req-ex.json'],
+      conflicts: [
+        {
+          file_path: 'req-ex.json',
+          entity_type: 'request',
+          entity_name: 'Orders',
+          conflict_type: 'field_conflict',
+          merged_preview: {
+            id: 'req-ex',
+            name: 'Orders',
+            method: 'POST',
+            url: 'https://api.example.com/orders',
+            headers: [
+              { key: 'X-Mode', value: 'fast', enabled: true, type: 'select', options: ['fast', 'safe'] }
+            ],
+            examples: [
+              {
+                id: 'ex-1',
+                name: 'VIP',
+                method: 'POST',
+                url: 'https://api.example.com/orders?tier=vip',
+                params: [{ key: 'tier', value: 'vip', enabled: true }],
+                body: { type: 'json', content: '{\n  "qty": 10\n}' }
+              }
+            ]
+          },
+          fields: [
+            {
+              field_path: 'headers.X-Mode#0',
+              label: 'Header: X-Mode',
+              base_value: { key: 'X-Mode', value: 'fast', enabled: true },
+              ours_value: { key: 'X-Mode', value: 'fast', enabled: true, type: 'select', options: ['fast', 'safe'] },
+              theirs_value: { key: 'X-Mode', value: 'turbo', enabled: true, type: 'select', options: ['fast', 'turbo'] }
+            },
+            {
+              field_path: 'examples.ex-1.body.content.qty',
+              label: 'Example (VIP) — Body JSON: qty',
+              base_value: 1,
+              ours_value: 10,
+              theirs_value: 20
+            },
+            {
+              field_path: 'examples.ex-1.params.tier#0',
+              label: 'Example (VIP) — Params: tier',
+              base_value: { key: 'tier', value: 'std', enabled: true },
+              ours_value: { key: 'tier', value: 'vip', enabled: true },
+              theirs_value: { key: 'tier', value: 'enterprise', enabled: true }
+            }
+          ]
+        }
+      ]
+    } as any
+
+    resolveGitConflictMock.mockResolvedValue({ success: true, data: {} })
+    uiStore.gitConflictModalOpen = true
+    const wrapper = mount(GitConflictResolverModal)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('[select: fast, safe]')
+    expect(wrapper.text()).toContain('[select: fast, turbo]')
+
+    await wrapper.find('[data-test="pick-all-files-theirs-btn"]').trigger('click')
+    await wrapper.find('[data-test="git-resolve-submit-btn"]').trigger('click')
+    await new Promise(r => setTimeout(r, 15))
+
+    expect(resolveGitConflictMock).toHaveBeenCalledTimes(1)
+    const resolvedPayload = resolveGitConflictMock.mock.calls[0][1]['req-ex.json']
+    expect(Array.isArray(resolvedPayload.examples)).toBe(true)
+    expect(resolvedPayload.examples).toHaveLength(1)
+    expect(JSON.parse(resolvedPayload.examples[0].body.content).qty).toBe(20)
+    expect(resolvedPayload.examples[0].params[0].value).toBe('enterprise')
+    expect(resolvedPayload.headers[0].options).toEqual(['fast', 'turbo'])
+  })
 })
 
 

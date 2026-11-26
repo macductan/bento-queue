@@ -274,3 +274,73 @@ func TestRequestDuplicate_PreservesAuth(t *testing.T) {
 		t.Errorf("expected basic auth credentials preserved, got %+v", dupReq.Auth.Basic)
 	}
 }
+
+func TestRequestExamples_Duplicate_Sync_And_Detach(t *testing.T) {
+	svc, fs, root := setupRequestService(t)
+	path := filepath.Join(root, "orders.json")
+	req := createTestRequest("req-orders", "Create Order", "POST")
+	req.URL = "https://v1.example.com/tenants/:tenant/orders"
+	req.PathParams = []model.KVPair{{Key: "tenant", Value: "default", Enabled: true}}
+	req.Body = model.Body{Type: "json", Content: `{"default":true}`}
+
+	ex := model.RequestExample{
+		ID:         "ex-orig-1",
+		Name:       "Sandbox",
+		Method:     "POST",
+		URL:        "https://v1.example.com/tenants/:tenant/orders?sandbox=1",
+		Params:     []model.KVPair{{Key: "sandbox", Value: "1", Enabled: true}},
+		PathParams: []model.KVPair{{Key: "tenant", Value: "sandbox-tenant", Enabled: true}},
+		Body:       model.Body{Type: "json", Content: `{"sandbox":true}`},
+		SyncFlags:  model.DefaultExampleSyncFlags(),
+	}
+	req.Examples = []model.RequestExample{ex}
+	if err := fs.WriteJSON(path, req); err != nil {
+		t.Fatalf("WriteJSON failed: %v", err)
+	}
+	fs.IndexSet(req.ID, path)
+
+	// 1. SyncAllExamplesFromDefault updates Base URL + path param keys while preserving ?sandbox=1 and tenant value & body
+	req.Method = "PUT"
+	req.URL = "https://v2.example.com/tenants/:tenant/orders/:order_id?ignored=yes"
+	service.SyncAllExamplesFromDefault(&req, nil)
+	if req.Examples[0].Method != "PUT" {
+		t.Errorf("expected synced method PUT, got %q", req.Examples[0].Method)
+	}
+	if req.Examples[0].URL != "https://v2.example.com/tenants/:tenant/orders/:order_id?sandbox=1" {
+		t.Errorf("expected Base URL updated with preserved sandbox query, got %q", req.Examples[0].URL)
+	}
+	if len(req.Examples[0].PathParams) != 2 || req.Examples[0].PathParams[0].Value != "sandbox-tenant" || req.Examples[0].PathParams[1].Key != "order_id" {
+		t.Errorf("expected path_params reconciled keeping sandbox-tenant, got %+v", req.Examples[0].PathParams)
+	}
+	if req.Examples[0].Body.Content != `{"sandbox":true}` {
+		t.Errorf("expected unlinked body preserved, got %q", req.Examples[0].Body.Content)
+	}
+
+	// Save synced request and verify Duplicate regenerates Example IDs
+	if saveRes := svc.Save(req); !saveRes.Success {
+		t.Fatalf("Save failed: %+v", saveRes.Error)
+	}
+	dupRes := svc.Duplicate(req.ID)
+	if !dupRes.Success {
+		t.Fatalf("Duplicate failed: %+v", dupRes.Error)
+	}
+	dupReq := dupRes.Data.(model.Request)
+	if len(dupReq.Examples) != 1 || dupReq.Examples[0].ID == "" || dupReq.Examples[0].ID == "ex-orig-1" {
+		t.Errorf("expected Duplicate to regenerate example ID, got %+v", dupReq.Examples)
+	}
+
+	// DetachExample creates standalone request and deletes example from source
+	detachRes := svc.DetachExample(req.ID, "Sandbox", "Standalone Sandbox")
+	if !detachRes.Success {
+		t.Fatalf("DetachExample failed: %+v", detachRes.Error)
+	}
+	detachMap := detachRes.Data.(map[string]interface{})
+	newReq := detachMap["request"].(model.Request)
+	if newReq.ID == req.ID || newReq.Name != "Standalone Sandbox" || newReq.Method != "PUT" || newReq.Body.Content != `{"sandbox":true}` {
+		t.Errorf("unexpected detached request: %+v", newReq)
+	}
+	afterSrc := svc.Get(req.ID).Data.(model.Request)
+	if len(afterSrc.Examples) != 0 {
+		t.Errorf("expected source request examples empty after Detach, got %+v", afterSrc.Examples)
+	}
+}

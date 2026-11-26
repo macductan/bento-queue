@@ -26,6 +26,11 @@ export function makeTabId(type: TabEntityType, entityId: string): string {
   return `${type}:${entityId}`
 }
 
+export function makeResponseCacheKey(requestId: string, exampleId?: string | null): string {
+  const ex = typeof exampleId === 'string' ? exampleId.trim() : ''
+  return ex ? `${requestId}::${ex}` : requestId
+}
+
 type FolderFlushHandler = () => Promise<boolean>
 
 const syncedRequestStores = new WeakSet<object>()
@@ -52,7 +57,7 @@ export const useTabStore = defineStore('tab', {
 
       watch(
         () => {
-          const cur = reqStore.current
+          const cur = reqStore.draft || reqStore.current
           if (!cur || !cur.id) return null
           return [cur.id, cur.name, cur.method, reqStore.isDirty] as const
         },
@@ -159,7 +164,7 @@ export const useTabStore = defineStore('tab', {
 
         this.tabs.splice(currentIdx, 1)
         if (targetTab.type === 'request') {
-          delete this.responseCache[targetTab.entityId]
+          this.clearResponseCacheForRequest(targetTab.entityId)
         }
 
         if (wasActive || this.activeTabId === tabId) {
@@ -236,7 +241,7 @@ export const useTabStore = defineStore('tab', {
       }
 
       for (const reqId of requestEntityIdsToClose) {
-        delete this.responseCache[reqId]
+        this.clearResponseCacheForRequest(reqId)
       }
 
       const activeWasClosed = Boolean(this.activeTabId && idsToClose.has(this.activeTabId))
@@ -305,10 +310,26 @@ export const useTabStore = defineStore('tab', {
       }
     },
 
-    saveResponseToCache(requestId: string) {
+    clearResponseCacheForRequest(requestId: string, exampleId?: string | null) {
+      if (!requestId) return
+      if (exampleId !== undefined) {
+        delete this.responseCache[makeResponseCacheKey(requestId, exampleId)]
+        return
+      }
+      delete this.responseCache[requestId]
+      const prefix = `${requestId}::`
+      for (const key of Object.keys(this.responseCache)) {
+        if (key.startsWith(prefix)) {
+          delete this.responseCache[key]
+        }
+      }
+    },
+
+    saveResponseToCache(requestId: string, exampleId?: string | null) {
       if (!requestId) return
       const resStore = useResponseStore()
-      this.responseCache[requestId] = {
+      const key = makeResponseCacheKey(requestId, exampleId)
+      this.responseCache[key] = {
         response: resStore.response ? JSON.parse(JSON.stringify(resStore.response)) : null,
         error: resStore.error ? { ...resStore.error } : null,
         loading: Boolean(resStore.loading),
@@ -316,9 +337,10 @@ export const useTabStore = defineStore('tab', {
       }
     },
 
-    restoreResponseFromCache(requestId: string) {
+    restoreResponseFromCache(requestId: string, exampleId?: string | null) {
       const resStore = useResponseStore()
-      const cached = requestId ? this.responseCache[requestId] : undefined
+      const key = requestId ? makeResponseCacheKey(requestId, exampleId) : ''
+      const cached = key ? this.responseCache[key] : undefined
       if (cached) {
         resStore.response = cached.response ? JSON.parse(JSON.stringify(cached.response)) : null
         resStore.error = cached.error ? { ...cached.error } : null
