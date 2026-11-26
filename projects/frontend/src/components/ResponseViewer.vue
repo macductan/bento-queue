@@ -481,7 +481,7 @@ const levelBadgeClass = (level: string) => {
       <div 
         v-if="activeTab === 'body' && currentResponse && !isEmptyResponse && !isBinaryResponse" 
         data-test="response-body-subtoolbar"
-        class="flex items-center justify-between px-4 py-1.5 border-b border-border-default bg-surface-base/60 shrink-0 min-h-[36px]"
+        class="flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 border-b border-border-default bg-surface-base/60 shrink-0 min-h-[36px]"
       >
         <!-- Left: Pretty | Raw -->
         <div class="flex items-center gap-2">
@@ -513,15 +513,37 @@ const levelBadgeClass = (level: string) => {
           </div>
         </div>
 
-        <!-- Right: Search & Copy -->
+        <!-- Right: Wrap, Search & Copy -->
         <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            data-test="toggle-response-wrap-btn"
+            :aria-pressed="uiStore.responseWordWrap"
+            :title="t('responseViewer.wrapTextTitle')"
+            @click="uiStore.toggleResponseWordWrap()"
+            class="flex items-center gap-1.5 ui-xs whitespace-nowrap shrink-0 transition-colors px-2 py-1 rounded border outline-none cursor-pointer"
+            :class="
+              uiStore.responseWordWrap
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover border-transparent'
+            "
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
+              <polyline points="16 16 14 18 16 20" />
+              <line x1="3" y1="18" x2="10" y2="18" />
+            </svg>
+            {{ t('responseViewer.wrapText') }}
+          </button>
+
           <button
             type="button"
             data-test="toggle-response-search-btn"
             :aria-pressed="isSearchOpen"
             :title="t('responseViewer.searchShortcut')"
             @click="toggleSearch"
-            class="flex items-center gap-1.5 ui-xs transition-colors px-2 py-1 rounded border outline-none cursor-pointer"
+            class="flex items-center gap-1.5 ui-xs whitespace-nowrap shrink-0 transition-colors px-2 py-1 rounded border outline-none cursor-pointer"
             :class="
               isSearchOpen
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
@@ -538,7 +560,7 @@ const levelBadgeClass = (level: string) => {
           <button 
             data-test="copy-response-btn"
             @click="copyBody" 
-            class="flex items-center gap-1.5 ui-xs text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-hover outline-none"
+            class="flex items-center gap-1.5 ui-xs whitespace-nowrap shrink-0 text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-hover outline-none"
           >
             <svg v-if="copyStatus === 'idle'" class="w-3.5 h-3.5" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
               <path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z" />
@@ -674,6 +696,7 @@ const levelBadgeClass = (level: string) => {
               ref="jsonViewerRef"
               :response="currentResponse"
               :mode="mode"
+              :word-wrap="uiStore.responseWordWrap"
               :search-query="isSearchOpen && activeTab === 'body' ? searchQuery : ''"
               :search-case-sensitive="searchCaseSensitive"
               :active-match-index="activeMatchIndex"
@@ -750,20 +773,26 @@ const levelBadgeClass = (level: string) => {
             {{ currentScriptError }}
           </div>
 
-          <div v-if="currentExecutionLogs.length > 0" class="border border-border-default rounded-md overflow-hidden bg-surface-base">
-            <table class="w-full text-left border-collapse font-mono text-xs" data-test="execution-logs-table">
+          <div v-if="currentExecutionLogs.length > 0" class="border border-border-default rounded-md overflow-x-auto bg-surface-base">
+            <table class="w-full min-w-[480px] table-fixed text-left border-collapse font-mono text-xs" data-test="execution-logs-table">
+              <colgroup>
+                <col class="w-28" />
+                <col class="w-32" />
+                <col class="w-20" />
+                <col />
+              </colgroup>
               <thead>
                 <tr class="border-b border-border-default bg-surface-raised text-text-muted text-[11px]">
-                  <th class="py-2 px-3 w-28">{{ t('responseViewer.logTime') }}</th>
-                  <th class="py-2 px-3 w-28">{{ t('responseViewer.logPhase') }}</th>
-                  <th class="py-2 px-3 w-20">{{ t('responseViewer.logLevel') }}</th>
+                  <th class="py-2 px-3">{{ t('responseViewer.logTime') }}</th>
+                  <th class="py-2 px-3">{{ t('responseViewer.logPhase') }}</th>
+                  <th class="py-2 px-3">{{ t('responseViewer.logLevel') }}</th>
                   <th class="py-2 px-3">{{ t('responseViewer.logDetail') }}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-subtle">
                 <template v-for="item in currentExecutionLogs" :key="item.id">
                   <tr class="hover:bg-surface-hover/50">
-                    <td class="py-2 px-3 text-text-muted whitespace-nowrap align-top">
+                    <td class="py-2 px-3 text-text-muted whitespace-nowrap truncate align-top">
                       {{ formatLogTime(item.timestamp) }}
                     </td>
                     <td class="py-2 px-3 align-top">
@@ -782,9 +811,9 @@ const levelBadgeClass = (level: string) => {
                         {{ item.level }}
                       </span>
                     </td>
-                    <td class="py-2 px-3 text-text-primary break-all align-top">
-                      <div class="flex items-start justify-between gap-2">
-                        <span>{{ item.message }}</span>
+                    <td class="py-2 px-3 text-text-primary align-top min-w-0">
+                      <div class="flex items-start justify-between gap-2 min-w-0">
+                        <span class="min-w-0 break-words [overflow-wrap:anywhere]">{{ item.message }}</span>
                         <button
                           v-if="item.detail"
                           type="button"
@@ -797,24 +826,24 @@ const levelBadgeClass = (level: string) => {
                       </div>
                       <div
                         v-if="item.detail && expandedLogIds[item.id]"
-                        class="mt-2 p-2.5 rounded bg-surface-input border border-border-default space-y-2 text-[11px]"
+                        class="mt-2 p-2.5 rounded bg-surface-input border border-border-default space-y-2 text-[11px] min-w-0 break-words [overflow-wrap:anywhere]"
                         data-test="http-log-detail-box"
                       >
                         <div>
                           <div class="font-semibold text-sky-400 mb-1">{{ t('responseViewer.outgoingRequest') }}</div>
-                          <div class="text-text-secondary">{{ item.detail.method }} {{ item.detail.url }}</div>
+                          <div class="text-text-secondary break-words [overflow-wrap:anywhere]">{{ item.detail.method }} {{ item.detail.url }}</div>
                           <div v-if="item.detail.requestHeaders?.length" class="mt-1 space-y-0.5">
-                            <div v-for="(h, hIdx) in item.detail.requestHeaders" :key="hIdx" class="text-text-muted">
+                            <div v-for="(h, hIdx) in item.detail.requestHeaders" :key="hIdx" class="text-text-muted break-words [overflow-wrap:anywhere]">
                               <span class="text-text-secondary">{{ h.key }}:</span> {{ h.value }}
                             </div>
                           </div>
-                          <pre v-if="item.detail.requestBody" class="mt-1 p-1.5 rounded bg-surface-base text-amber-200 overflow-x-auto whitespace-pre-wrap">{{ item.detail.requestBody }}</pre>
+                          <pre v-if="item.detail.requestBody" class="mt-1 p-1.5 rounded bg-surface-base text-amber-200 overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{{ item.detail.requestBody }}</pre>
                         </div>
                         <div v-if="item.detail.statusCode !== undefined" class="pt-2 border-t border-border-subtle">
                           <div class="font-semibold text-emerald-400 mb-1">
                             {{ t('responseViewer.incomingResponse') }} {{ item.detail.statusCode }} {{ item.detail.statusText }} ({{ item.detail.timeMs }}ms)
                           </div>
-                          <pre v-if="item.detail.responseBodyPreview" class="mt-1 p-1.5 rounded bg-surface-base text-emerald-200 overflow-x-auto whitespace-pre-wrap">{{ item.detail.responseBodyPreview }}</pre>
+                          <pre v-if="item.detail.responseBodyPreview" class="mt-1 p-1.5 rounded bg-surface-base text-emerald-200 overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{{ item.detail.responseBodyPreview }}</pre>
                         </div>
                       </div>
                     </td>

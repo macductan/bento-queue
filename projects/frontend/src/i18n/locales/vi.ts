@@ -168,6 +168,8 @@ export default {
   responseViewer: {
     collapseResponse: 'Đóng / Thu gọn khung Response',
     invalidJsonOrXml: 'Không phải JSON hoặc XML hợp lệ',
+    wrapText: 'Xuống dòng',
+    wrapTextTitle: 'Bật/tắt tự động xuống dòng',
     searchShortcut: 'Tìm kiếm trong Response (Ctrl+F)',
     searchPlaceholder: 'Tìm trong Response...',
     matchCase: 'Phân biệt hoa thường (Match Case)',

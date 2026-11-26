@@ -11,6 +11,7 @@ let nextToastId = 0
 
 export const SIDEBAR_WIDTH_STORAGE_KEY = 'hecto_sidebar_width'
 export const REQUEST_PANE_RATIO_STORAGE_KEY = 'hecto_request_pane_ratio'
+export const RESPONSE_WORD_WRAP_STORAGE_KEY = 'hecto_response_word_wrap'
 
 export const SIDEBAR_DEFAULT_WIDTH = 260
 export const SIDEBAR_MIN_WIDTH = 180
@@ -66,6 +67,20 @@ function readStoredNumber(key: string): number | null {
     return Number.isFinite(parsed) ? parsed : null
   } catch {
     return null
+  }
+}
+
+function readStoredBoolean(key: string, defaultValue: boolean): boolean {
+  if (typeof window === 'undefined') {
+    return defaultValue
+  }
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw === 'true') return true
+    if (raw === 'false') return false
+    return defaultValue
+  } catch {
+    return defaultValue
   }
 }
 
@@ -329,6 +344,18 @@ export const useUiStore = defineStore('ui', () => {
     setResponsePaneCollapsed(!responsePaneCollapsed.value)
   }
 
+  // Response viewer word wrap (persisted in localStorage, default true)
+  const responseWordWrap = ref<boolean>(readStoredBoolean(RESPONSE_WORD_WRAP_STORAGE_KEY, true))
+
+  function setResponseWordWrap(enabled: boolean) {
+    responseWordWrap.value = enabled
+    writeStoredValue(RESPONSE_WORD_WRAP_STORAGE_KEY, String(enabled))
+  }
+
+  function toggleResponseWordWrap() {
+    setResponseWordWrap(!responseWordWrap.value)
+  }
+
   // Locale state
   function getSafeInitialLocale(): Locale {
     if (typeof window !== 'undefined') {
@@ -443,6 +470,9 @@ export const useUiStore = defineStore('ui', () => {
     responsePaneCollapsed,
     responsePaneExplicitlyOpened,
     setResponsePaneCollapsed,
-    toggleResponsePaneCollapse
+    toggleResponsePaneCollapse,
+    responseWordWrap,
+    setResponseWordWrap,
+    toggleResponseWordWrap
   }
 })

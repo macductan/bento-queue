@@ -45,7 +45,15 @@ const onFocus = () => {
   });
 }
 const onBlur = () => {
-  setTimeout(() => isFocused.value = false, 150)
+  setTimeout(() => {
+    isFocused.value = false
+    if (urlInputRef.value) {
+      urlInputRef.value.style.height = ''
+      urlInputRef.value.scrollTop = 0
+      urlInputRef.value.scrollLeft = 0
+      highlighterRef.value?.syncScroll({ target: urlInputRef.value } as unknown as Event)
+    }
+  }, 150)
 }
 
 const isOpen = ref(false)
@@ -182,8 +190,12 @@ const autoResize = (e: Event) => {
 };
 const initResize = (el: any) => {
   if (el) {
-    el.style.height = 'auto';
-    el.style.height = el.scrollHeight + 'px';
+    if (isFocused.value) {
+      el.style.height = 'auto';
+      el.style.height = el.scrollHeight + 'px';
+    } else {
+      el.style.height = '';
+    }
   }
 };
 
@@ -336,12 +348,12 @@ const onUrlPaste = (e: ClipboardEvent) => {
       >
       <VariableHighlighter 
         ref="highlighterRef"
-        :wrap="true"
+        :wrap="isFocused"
         :single-line="false"
         :enable-path-params="true"
         :value="req.url" 
         style="font-variant-ligatures: none;"
-        overlay-class="px-3 pt-2 pb-3 font-mono text-sm w-full h-full"
+        overlay-class="px-3 py-[11px] font-mono text-sm w-full h-full"
       >
         <textarea
           :ref="el => { urlInputRef = el as HTMLTextAreaElement; initResize(el) }"
@@ -350,8 +362,11 @@ const onUrlPaste = (e: ClipboardEvent) => {
           :readonly="isUrlLinked"
           :title="isUrlLinked ? t('examples.urlLinkedHint') : undefined"
           rows="1"
-          class="transparent-selection w-full h-full bg-transparent px-3 pt-2 pb-3 font-mono text-sm text-transparent caret-text-primary outline-none resize-none overflow-hidden block whitespace-pre-wrap break-all"
-          :class="[isUrlLinked ? 'cursor-not-allowed opacity-80 pr-28' : '']"
+          class="transparent-selection w-full h-full bg-transparent px-3 py-[11px] font-mono text-sm text-transparent caret-text-primary outline-none resize-none overflow-hidden block"
+          :class="[
+            isFocused ? 'whitespace-pre-wrap break-all' : 'whitespace-pre',
+            isUrlLinked ? 'cursor-not-allowed opacity-80' : ''
+          ]"
           style="font-variant-ligatures: none;"
           spellcheck="false"
           autocomplete="off"
@@ -365,22 +380,23 @@ const onUrlPaste = (e: ClipboardEvent) => {
         ></textarea>
       </VariableHighlighter>
       </div>
-      <div
-        v-if="isUrlLinked"
-        data-test="url-linked-badge"
-        class="absolute right-2 top-1/2 -translate-y-1/2 z-20 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium"
-        :title="t('examples.urlLinkedHint')"
+    </div>
+
+    <div
+      v-if="isUrlLinked"
+      data-test="url-linked-badge"
+      class="shrink-0 self-center mx-2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-medium whitespace-nowrap"
+      :title="t('examples.urlLinkedHint')"
+    >
+      <span>{{ t('examples.linkedBadge') }}</span>
+      <button
+        type="button"
+        data-test="url-unlink-btn"
+        class="underline hover:text-amber-100 cursor-pointer"
+        @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'url', false)"
       >
-        <span>{{ t('examples.linkedBadge') }}</span>
-        <button
-          type="button"
-          data-test="url-unlink-btn"
-          class="underline hover:text-amber-100 cursor-pointer"
-          @click="requestStore.activeExampleId && requestStore.setExampleSyncFlag(requestStore.activeExampleId, 'url', false)"
-        >
-          {{ t('examples.unlink') }}
-        </button>
-      </div>
+        {{ t('examples.unlink') }}
+      </button>
     </div>
 
     <!-- Send/Abort Button -->

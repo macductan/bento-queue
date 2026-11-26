@@ -105,13 +105,16 @@ const getAuthBadgeTitle = (item: DefaultHeaderItem): string => {
       </div>
       <div v-else class="flex flex-col">
         <!-- Table Column Headers -->
-        <div class="flex items-center bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none">
-          <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default py-2">
+        <div
+          data-test="default-headers-header-row"
+          class="grid grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_11rem] items-stretch bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none"
+        >
+          <div class="flex items-center justify-center border-r border-border-default py-2">
             <span class="sr-only">Kích hoạt</span>
           </div>
-          <div class="flex-1 px-3 py-2 border-r border-border-default">Key</div>
-          <div class="flex-[2] px-3 py-2 border-r border-border-default">Value</div>
-          <div class="w-44 px-3 py-2 text-right">Source</div>
+          <div class="min-w-0 flex items-center px-3 py-2 border-r border-border-default">Key</div>
+          <div class="min-w-0 flex items-center px-3 py-2 border-r border-border-default">Value</div>
+          <div class="min-w-0 flex items-center justify-end px-3 py-2 text-right">Source</div>
         </div>
 
         <!-- Rows -->
@@ -119,11 +122,12 @@ const getAuthBadgeTitle = (item: DefaultHeaderItem): string => {
           <div 
             v-for="(item, idx) in items" 
             :key="`${item.key}-${idx}`"
-            class="flex items-stretch text-xs hover:bg-surface-hover/20 transition-colors group"
+            data-test="default-headers-body-row"
+            class="grid grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_11rem] items-stretch text-xs hover:bg-surface-hover/20 transition-colors group"
             :class="{ 'opacity-50': item.disabled || item.overridden }"
           >
             <!-- Inactive Checkbox -->
-            <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1.5">
+            <div class="flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1.5">
               <button
                 type="button"
                 role="checkbox"
@@ -145,20 +149,20 @@ const getAuthBadgeTitle = (item: DefaultHeaderItem): string => {
 
             <!-- Key -->
             <div 
-              class="flex-1 px-3 py-2 border-r border-border-default mono-sm truncate flex items-center"
+              class="min-w-0 px-3 py-2 border-r border-border-default mono-sm flex items-center"
               :class="item.disabled || item.overridden ? 'line-through text-text-muted' : 'text-text-secondary font-medium'"
               :title="item.key"
             >
-              {{ item.key }}
+              <span class="truncate">{{ item.key }}</span>
             </div>
 
             <!-- Value with Sensitive Masking for Auth -->
             <div 
-              class="flex-[2] px-3 py-2 border-r border-border-default mono-sm flex items-center justify-between gap-1.5 min-w-0"
+              class="min-w-0 px-3 py-2 border-r border-border-default mono-sm flex items-center justify-between gap-1.5"
               :class="item.disabled || item.overridden ? 'line-through text-text-muted' : 'text-text-muted'"
             >
               <span 
-                class="truncate" 
+                class="truncate min-w-0" 
                 :title="item.source === 'auth' && !isRevealed(item.key) ? 'Auth token is hidden. Click eye icon to show.' : item.value"
               >
                 {{ getDisplayValue(item) }}
@@ -181,7 +185,7 @@ const getAuthBadgeTitle = (item: DefaultHeaderItem): string => {
             </div>
 
             <!-- Source & Overridden Status -->
-            <div class="w-44 px-3 py-2 flex items-center justify-end gap-1.5 shrink-0 bg-surface-raised/5">
+            <div class="min-w-0 px-3 py-2 flex items-center justify-end gap-1.5 bg-surface-raised/5">
               <span 
                 v-if="item.overridden && !item.disabled" 
                 class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"

@@ -168,6 +168,8 @@ export default {
   responseViewer: {
     collapseResponse: 'Collapse Response Pane',
     invalidJsonOrXml: 'Not valid JSON or XML',
+    wrapText: 'Wrap',
+    wrapTextTitle: 'Toggle word wrap',
     searchShortcut: 'Search in Response (Ctrl+F)',
     searchPlaceholder: 'Search in Response...',
     matchCase: 'Match Case',

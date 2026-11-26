@@ -223,13 +223,17 @@ const initResize = (el: any) => {
     <!-- Table Container with clear borders -->
     <div class="border border-border-default rounded-md overflow-hidden bg-surface-base">
       <!-- Table Header -->
-      <div class="flex items-center bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none">
-        <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default py-2">
+      <div
+        data-test="kvp-header-row"
+        class="grid items-stretch bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none"
+        :class="keysLocked ? 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]' : 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]'"
+      >
+        <div class="flex items-center justify-center border-r border-border-default py-2">
           <span class="sr-only">Kích hoạt</span>
         </div>
-        <div class="flex-1 px-3 py-2 border-r border-border-default">Key</div>
-        <div class="flex-[2] px-3 py-2">Value</div>
-        <div v-if="!keysLocked" class="w-10 shrink-0 border-l border-border-default py-2 text-center">
+        <div class="min-w-0 flex items-center px-3 py-2 border-r border-border-default">Key</div>
+        <div class="min-w-0 flex items-center px-3 py-2">Value</div>
+        <div v-if="!keysLocked" class="flex items-center justify-center border-l border-border-default py-2 text-center">
           <span class="sr-only">Xóa</span>
         </div>
       </div>
@@ -239,11 +243,15 @@ const initResize = (el: any) => {
         <div
           v-for="(row, index) in displayRows"
           :key="index"
-          class="flex items-stretch group transition-colors hover:bg-surface-hover/20 focus-within:bg-surface-hover/25"
-          :class="{ 'opacity-50': !row._isPhantom && !row.enabled }"
+          data-test="kvp-body-row"
+          class="grid items-stretch group transition-colors hover:bg-surface-hover/20 focus-within:bg-surface-hover/25"
+          :class="[
+            keysLocked ? 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]' : 'grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]',
+            { 'opacity-50': !row._isPhantom && !row.enabled }
+          ]"
         >
           <!-- Checkbox Column -->
-          <div class="w-10 shrink-0 flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1">
+          <div class="flex items-center justify-center border-r border-border-default bg-surface-raised/10 py-1">
             <button 
               v-if="row._isPhantom"
               type="button"
@@ -279,7 +287,7 @@ const initResize = (el: any) => {
           
           <!-- Key Column -->
           <div 
-            class="flex-1 relative min-w-0 flex items-center border-r border-border-default bg-transparent cursor-text"
+            class="relative min-w-0 flex items-center border-r border-border-default bg-transparent cursor-text"
             @click="focusCell(index, 'key')"
           >
             <span
@@ -295,7 +303,7 @@ const initResize = (el: any) => {
               @input="e => onCellInput(index, 'key', e)"
               @compositionend="e => onCellInput(index, 'key', e)"
               placeholder="Key"
-              class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted/60 caret-text-primary py-2 border-0 outline-none w-full min-h-[36px] block focus:ring-0"
+              class="bg-transparent mono-sm text-text-primary placeholder:text-text-muted/60 caret-text-primary py-2 border-0 outline-none w-full min-w-0 min-h-[36px] block focus:ring-0"
               :class="[
                 keyPrefix ? 'pl-0.5 pr-3' : 'px-3',
                 { 'opacity-50 cursor-not-allowed': row._isAuto || isReadonly, 'text-sky-300 font-medium cursor-default': readonlyKeys }
@@ -307,7 +315,7 @@ const initResize = (el: any) => {
           
           <!-- Value Column -->
           <div 
-            class="flex-[2] relative min-w-0 bg-transparent flex items-center"
+            class="relative min-w-0 bg-transparent flex items-center"
             :class="row.type === 'select' || isReadonly ? '' : 'cursor-text'"
             @click="row.type !== 'select' && !isReadonly && focusCell(index, 'value')"
           >
@@ -363,7 +371,7 @@ const initResize = (el: any) => {
           </div>
           
           <!-- Delete Action Column -->
-          <div v-if="!keysLocked" class="w-10 shrink-0 flex items-center justify-center border-l border-border-default bg-transparent">
+          <div v-if="!keysLocked" class="flex items-center justify-center border-l border-border-default bg-transparent">
             <button 
               v-if="!row._isPhantom && !row._isAuto"
               @click="removeRow(index)" 

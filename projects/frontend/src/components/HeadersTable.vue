@@ -16,21 +16,25 @@ const items = computed(() => flattenHeaders(props.headers))
     </div>
     <div v-else class="border border-border-default rounded-md overflow-hidden bg-surface-base">
       <!-- Table Header -->
-      <div class="flex items-center bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none">
-        <div class="w-1/3 px-3 py-2 border-r border-border-default">Key</div>
-        <div class="w-2/3 px-3 py-2">Value</div>
+      <div
+        data-test="response-headers-header-row"
+        class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-stretch bg-surface-raised border-b border-border-default text-text-muted text-[11px] font-semibold uppercase tracking-wider select-none"
+      >
+        <div class="min-w-0 px-3 py-2 border-r border-border-default">Key</div>
+        <div class="min-w-0 px-3 py-2">Value</div>
       </div>
       <!-- Rows -->
       <div class="divide-y divide-border-default">
         <div 
           v-for="(item, index) in items" 
           :key="`${item.key}-${index}`"
-          class="flex hover:bg-surface-hover/20 transition-colors group"
+          data-test="response-headers-body-row"
+          class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-stretch hover:bg-surface-hover/20 transition-colors group"
         >
-          <div class="w-1/3 px-3 py-2 border-r border-border-default mono-sm text-slate-300 transition-colors group-hover:text-blue-300 break-all select-text">
+          <div class="min-w-0 px-3 py-2 border-r border-border-default mono-sm text-slate-300 transition-colors group-hover:text-blue-300 break-all select-text">
             {{ item.key }}
           </div>
-          <div class="w-2/3 px-3 py-2 mono-sm text-slate-400 break-all select-text">
+          <div class="min-w-0 px-3 py-2 mono-sm text-slate-400 break-all select-text">
             {{ item.value }}
           </div>
         </div>

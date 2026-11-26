@@ -190,6 +190,43 @@ describe('EnvModal', () => {
     expect(uiStore.envModalOpen).toBe(true)
     expect(saveSpy).not.toHaveBeenCalled()
   })
+
+  it('renders env-variables-table with table-fixed, colgroup, px-0 action columns, border-l delete column, and min-w-0 value cell', async () => {
+    const envStore = useEnvironmentStore()
+    const uiStore = useUiStore()
+    envStore.environments = [
+      { id: '1', name: 'Env 1', variables: [{ key: 'host', value: 'x'.repeat(120), enabled: true }], created_at: '', updated_at: '' } as any
+    ]
+    uiStore.envModalOpen = false
+
+    const wrapper = track(mount(EnvModal))
+    uiStore.envModalOpen = true
+    await wrapper.vm.$nextTick()
+
+    const table = wrapper.find('[data-test="env-variables-table"]')
+    expect(table.exists()).toBe(true)
+    expect(table.classes()).toContain('table-fixed')
+
+    const cols = table.findAll('colgroup col')
+    expect(cols.length).toBe(4)
+    expect(cols[0].classes()).toContain('w-10')
+    expect(cols[1].classes()).toContain('w-1/3')
+    expect(cols[3].classes()).toContain('w-10')
+
+    const headerCells = table.findAll('thead th')
+    expect(headerCells[0].classes()).toContain('px-0')
+    expect(headerCells[3].classes()).toContain('px-0')
+    expect(headerCells[3].classes()).toContain('border-l')
+    expect(headerCells[3].classes()).toContain('border-border-default')
+
+    const bodyCells = table.findAll('tbody tr:first-child td')
+    expect(bodyCells[0].classes()).toContain('px-0')
+    expect(bodyCells[1].classes()).toContain('min-w-0')
+    expect(bodyCells[2].classes()).toContain('min-w-0')
+    expect(bodyCells[3].classes()).toContain('px-0')
+    expect(bodyCells[3].classes()).toContain('border-l')
+    expect(bodyCells[3].classes()).toContain('border-border-default')
+  })
 })
 
 describe('EnvSelector', () => {

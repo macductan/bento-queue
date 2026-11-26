@@ -188,7 +188,7 @@ onUnmounted(() => {
         </div>
         
         <!-- Right Panel: Editor -->
-        <div class="w-2/3 flex flex-col bg-surface-base">
+        <div class="w-2/3 min-w-0 flex flex-col bg-surface-base">
           <template v-if="selectedEnv">
             <div class="p-4 border-b border-border-default">
               <label class="block text-xs font-medium text-text-muted mb-1">Tên Môi trường</label>
@@ -201,13 +201,19 @@ onUnmounted(() => {
             </div>
             
             <div class="flex-1 overflow-y-auto">
-              <table class="w-full text-left border-collapse">
+              <table data-test="env-variables-table" class="w-full table-fixed text-left border-collapse">
+                <colgroup>
+                  <col class="w-10" />
+                  <col class="w-1/3" />
+                  <col />
+                  <col class="w-10" />
+                </colgroup>
                 <thead class="sticky top-0 bg-surface-raised border-b border-border-default z-10">
                   <tr>
-                    <th class="w-10 px-3 py-2 border-r border-border-default"></th>
+                    <th class="w-10 px-0 py-2 border-r border-border-default"></th>
                     <th class="px-3 py-2 text-xs font-medium text-text-muted border-r border-border-default">Key</th>
                     <th class="px-3 py-2 text-xs font-medium text-text-muted">Value</th>
-                    <th class="w-10 px-3 py-2"></th>
+                    <th class="w-10 px-0 py-2 border-l border-border-default"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -216,7 +222,7 @@ onUnmounted(() => {
                     :key="vIdx"
                     class="border-b border-border-default group hover:bg-surface-hover"
                   >
-                    <td class="w-10 px-3 py-2 border-r border-border-default text-center">
+                    <td class="w-10 px-0 py-2 border-r border-border-default text-center">
                       <button 
                         v-if="vIdx < selectedEnv.variables.length - 1"
                         type="button"
@@ -232,16 +238,16 @@ onUnmounted(() => {
                         </svg>
                       </button>
                     </td>
-                    <td class="p-0 border-r border-border-default">
+                    <td class="p-0 min-w-0 border-r border-border-default">
                       <input 
                         v-model="vr.key" 
                         @input="handleInput"
                         type="text" 
-                        class="w-full bg-transparent px-3 py-2 text-text-primary focus:outline-none focus:bg-surface-input"
+                        class="w-full min-w-0 bg-transparent px-3 py-2 text-text-primary focus:outline-none focus:bg-surface-input"
                         placeholder="Key"
                       />
                     </td>
-                    <td class="p-0">
+                    <td class="p-0 min-w-0">
                       <KvpValueSelectControl
                         :model-value="vr.value"
                         :type="vr.type"
@@ -254,12 +260,12 @@ onUnmounted(() => {
                           v-model="vr.value" 
                           @input="handleInput"
                           type="text" 
-                          class="w-full bg-transparent px-3 py-2 text-text-primary focus:outline-none focus:bg-surface-input"
+                          class="w-full min-w-0 bg-transparent px-3 py-2 text-text-primary focus:outline-none focus:bg-surface-input"
                           placeholder="Value"
                         />
                       </KvpValueSelectControl>
                     </td>
-                    <td class="w-10 px-3 py-2 text-center">
+                    <td class="w-10 px-0 py-2 border-l border-border-default text-center">
                       <button 
                         v-if="vIdx < selectedEnv.variables.length - 1"
                         @click="removeVar(vIdx)"

@@ -443,6 +443,43 @@ describe('KvpEditor', () => {
     expect(wrapper.find('[data-test="kvp-mode-toggle-btn"]').exists()).toBe(false)
     expect((wrapper.vm as any)).toBeDefined()
   })
+
+  it('uses synchronized CSS Grid columns for header and body rows in 4-col and 3-col (keysLocked) modes', async () => {
+    const model: KVPair[] = [{ key: 'k', value: 'v', enabled: true }]
+    const wrapper = track(
+      mount(KvpEditor, {
+        props: { modelValue: model }
+      })
+    )
+    await nextTick()
+
+    const header4 = wrapper.find('[data-test="kvp-header-row"]')
+    const body4 = wrapper.findAll('[data-test="kvp-body-row"]')
+    expect(header4.classes()).toContain('grid')
+    expect(header4.classes()).toContain('items-stretch')
+    expect(header4.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]')
+    expect(body4.length).toBe(2) // row + phantom
+    for (const row of body4) {
+      expect(row.classes()).toContain('grid')
+      expect(row.classes()).toContain('items-stretch')
+      expect(row.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_2.5rem]')
+      const cells = row.findAll(':scope > div')
+      expect(cells.length).toBe(4)
+      expect(cells[1].classes()).toContain('min-w-0')
+      expect(cells[2].classes()).toContain('min-w-0')
+      expect(cells[1].find('input[type="text"]').classes()).toContain('min-w-0')
+    }
+
+    await wrapper.setProps({ readonlyKeys: true })
+    await nextTick()
+
+    const header3 = wrapper.find('[data-test="kvp-header-row"]')
+    const body3 = wrapper.findAll('[data-test="kvp-body-row"]')
+    expect(header3.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]')
+    expect(body3.length).toBe(1)
+    expect(body3[0].classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)]')
+    expect(body3[0].findAll(':scope > div').length).toBe(3)
+  })
 })
 
 

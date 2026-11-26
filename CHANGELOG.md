@@ -32,6 +32,26 @@ Tài liệu này ghi nhận toàn bộ lịch sử phát triển, kiến trúc c
 
 ---
 
+## [v1.23.0] - 2026-11-26
+
+### Added — Tự động xuống dòng (Word Wrap) mặc định cho Response Viewer
+- **Lưu trạng thái `responseWordWrap` mặc định `true` (`uiStore.ts`)**:
+  - Bổ sung `RESPONSE_WORD_WRAP_STORAGE_KEY` (`hecto_response_word_wrap`), trạng thái `responseWordWrap` (fallback an toàn về `true` khi `localStorage` trống, lỗi hoặc hỏng giá trị) cùng `setResponseWordWrap` và `toggleResponseWordWrap`.
+- **Nút bật/tắt Wrap & Hỗ trợ Pretty/Raw (`ResponseViewer.vue`, `JsonViewer.vue`, `jsonHighlight.ts`, `en.ts`, `vi.ts`)**:
+  - Thêm nút `toggle-response-wrap-btn` (song ngữ `en`/`vi`, responsive `flex-wrap`) trên thanh công cụ phụ của `ResponseViewer.vue`.
+  - Hỗ trợ word wrap đồng bộ cho cả **Pretty mode** (bố cục từng hàng flex độc lập `flex items-stretch` giúp chiều cao từng dòng tự giãn mà không bị đè chữ và chỉ số dòng luôn khớp chính xác khi xuống nhiều dòng thị giác, hàm `splitHtmlLinesSafe` trong `jsonHighlight.ts` xử lý an toàn thẻ `<span>`/`<mark>`, chuẩn hóa CRLF, void tags `br`/`hr`/`img`/`wbr`/`input`/`col`, và tự đóng thẻ ở EOF) và **Raw mode** (`whitespace-pre-wrap break-words [overflow-wrap:anywhere]`). Khi tắt wrap, khôi phục sticky gutter và cuộn ngang (`whitespace-pre`) mà vẫn giữ nguyên tìm kiếm (`Ctrl+F`) và `scrollToActiveMatch`.
+
+### Fixed — Sửa lỗi lệch cột và đứt viền dọc trên toàn bộ bảng dữ liệu
+- **Đồng bộ cột CSS Grid (`KvpEditor.vue`, `DefaultHeadersTable.vue`, `HeadersTable.vue`)**:
+  - Chuyển cả tiêu đề và các dòng dữ liệu sang CSS Grid dùng chung track cột và `items-stretch` (`KvpEditor`: 4 cột hoặc 3 cột khi `keysLocked` kèm `min-w-0` trên Key `<input>`; `DefaultHeadersTable`: 4 cột cố định kèm `min-w-0`; `HeadersTable`: 2 cột kèm `min-w-0`), khắc phục hoàn toàn lỗi lệch vạch phân cách dọc và đứt viền cột.
+- **Cố định cột bảng HTML (`EnvModal.vue`, `ResponseViewer.vue`)**:
+  - Chuẩn hóa bảng biến môi trường `env-variables-table` trong `EnvModal.vue` dùng `table-fixed` + `<colgroup>` (`w-10`, `w-1/3`, auto, `w-10`), `px-0` cho cột checkbox/delete, đồng bộ `border-l` cho cột xóa và `min-w-0` cho Key/Value.
+  - Chuẩn hóa bảng `execution-logs-table` trong `ResponseViewer.vue` dùng `table-fixed` + `<colgroup>` (`w-28`, `w-32`, `w-20`, auto) và `min-w-[480px]` trong wrapper `overflow-x-auto`, thêm `truncate` cho cột thời gian và wrap an toàn nội dung `http-log-detail-box` để tránh sập cột Detail trong pane hẹp (`StepInspectorPanel`).
+- **Sửa hiển thị thanh URL (`UrlBar.vue`)**: Chuyển badge `Linked · Ngắt liên kết` thành flex sibling (`shrink-0`) để chữ URL dài không đè lên badge và chỉ bật wrap nhiều dòng khi đang focus để không cắt nửa dòng chữ thứ hai trong khung `h-[44px]`.
+- **Tests**: Cập nhật và bổ sung unit/component tests đầy đủ cho `uiStore.test.ts`, `ResponseViewer.test.ts`, `KvpEditor.test.ts`, `DefaultHeadersTable.test.ts`, `HeadersTable.test.ts`, `EnvModal.test.ts`, và `UrlBar.test.ts`.
+
+---
+
 ## [v1.22.0] - 2026-11-25
 
 ### Added — Biến & KVPair dạng Select Box (Chọn nhanh 1-Click, Tầng Request độc lập & Kế thừa 5 tầng)

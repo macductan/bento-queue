@@ -152,4 +152,28 @@ describe('DefaultHeadersTable', () => {
     expect(wrapper.text()).not.toContain('token-req-2')
     expect(wrapper.text()).toContain('••••••••')
   })
+
+  it('uses synchronized 4-column CSS Grid on header and body rows with min-w-0 on Key/Value', async () => {
+    const items: DefaultHeaderItem[] = [
+      { key: 'X-Very-Long-Header-Key-' + 'k'.repeat(80), value: 'v'.repeat(120), source: 'folder', overridden: false }
+    ]
+    const wrapper = mount(DefaultHeadersTable, { props: { items } })
+    await wrapper.find('button').trigger('click')
+
+    const header = wrapper.find('[data-test="default-headers-header-row"]')
+    const bodyRows = wrapper.findAll('[data-test="default-headers-body-row"]')
+    expect(header.exists()).toBe(true)
+    expect(header.classes()).toContain('grid')
+    expect(header.classes()).toContain('items-stretch')
+    expect(header.classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_11rem]')
+
+    expect(bodyRows.length).toBe(1)
+    expect(bodyRows[0].classes()).toContain('grid')
+    expect(bodyRows[0].classes()).toContain('items-stretch')
+    expect(bodyRows[0].classes()).toContain('grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,2fr)_11rem]')
+    const cells = bodyRows[0].findAll(':scope > div')
+    expect(cells.length).toBe(4)
+    expect(cells[1].classes()).toContain('min-w-0')
+    expect(cells[2].classes()).toContain('min-w-0')
+  })
 })
